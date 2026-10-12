@@ -15,6 +15,7 @@ node_modules
 .ninja_log
 .ninja_deps
 /extra
+/qt/_aqt
 yarn-error.log
 ts/.svelte-kit
 .yarn

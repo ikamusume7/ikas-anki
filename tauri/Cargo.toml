@@ -1,0 +1,62 @@
+[package]
+name = "anki-tauri"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Anki 的 Tauri v2 跨平台外壳（Windows / Android）"
+license = "AGPL-3.0-or-later"
+
+# M0 骨架：声明为独立 workspace，避免影响 Anki 原有的构建系统。
+# 通过 path 依赖复用 rslib 与 proto，无需任何 FFI 层。
+[workspace]
+
+[build-dependencies]
+anki_proto_gen = { path = "../rslib/proto_gen" }
+prost-reflect = "0.14"
+inflections = "1"
+anyhow = "1"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anki_i18n = { path = "../rslib/i18n" }
+anki_proto = { path = "../rslib/proto" }
+prost = "0.13"
+anyhow = "1"
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "net",
+    "fs",
+    "io-util",
+    "macros",
+    "time",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mime_guess = "2"
+percent-encoding = "2"
+regex = "1"
+rand = "0.9"                                             # 生成本机 API 密钥
+
+# M2：平台交互端点
+arboard = "3"                                             # 剪贴板
+rfd = "0.15"                                             # 原生文件对话框与消息框
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+opener = { version = "0.8", features = ["reveal"] }      # 打开链接与在文件管理器中定位
+rodio = "0.20"                                           # 音频播放（替代 Qt 的 mpv）
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# rslib 的 TLS 后端按平台选择（与 build/configure/src/rust.rs 的 build_rsbridge 保持一致）
+[target.'cfg(target_os = "android")'.dependencies]
+anki = { path = "../rslib", features = ["rustls"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+anki = { path = "../rslib", features = ["native-tls"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
