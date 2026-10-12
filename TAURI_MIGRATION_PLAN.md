@@ -331,16 +331,18 @@ return outputType.fromBinary(outputBytes);
 
 ---
 
-### M2 — 平台能力补齐（2~3 周）· 主体完成
+### M2 — 平台能力补齐（2~3 周）· 已完成
 
-> 已完成：剪贴板、文件选择、图片转换、原生对话框、profile/meta 配置存储、
-> 音频播放（见 `tauri/src/platform/`）；窗口管理类端点显式降级为无副作用。
-> 待办：录音；窗口模型（多 WebView 或路由接管）；复习状态类端点。
+> **32 个平台端点全部有实现**：剪贴板（含 `text/uri-list`）、文件选择、图片转换、
+> 原生对话框、profile/meta 配置存储、音频播放与录音、TTS、窗口管理、复习状态同步。
+> 细节见 `tauri/README.md`（各节）与 `TAURI_HANDOVER.md` §6.3。
+> 唯一没验证的是 **Android 上的录音**（Qt/AnkiDroid 用 `MediaRecorder`，本方案统一
+> 用 `cpal`/oboe），需真机确认。
 >
 > **计划外补充**（原计划未预见，已一并完成）：
 > - **`bridgeCommand` / `pycmd` 通道**：前端交互的结构性依赖。Qt 通过
 >   QWebChannel 注入同名全局函数，Tauri 侧改为「注入脚本 + HTTP 端点」。
->   通道已打通，但命令处理器目前仅覆盖 `domDone` / `close`。
+>   通道已打通，且**按窗口分流**（复习命令只接受主窗口，见交接文档 §5.16）。
 > - **安全策略**：API 密钥、Host / Origin 校验、CSP 分级。
 > - **路径解析**：原先依赖编译期路径，现改为开发期用源码树、打包后用
 >   Tauri 资源目录。
@@ -349,9 +351,13 @@ return outputType.fromBinary(outputBytes);
 
 **退出标准**：编辑器中可插入图片（文件选择）、录音、播放、粘贴剪贴板内容；对话框正常。
 
+> 说明：这些能力本身已在 HTTP 层端到端验证（`tauri/tools/verify-m2.ps1`）；
+> 但**编辑器界面本身**还没接（`ts/routes/editor/` 及其外层窗口属 M3），
+> 所以「在编辑器里点按钮走完整流程」要等 M3。
+
 ---
 
-### M3 — 编辑器与导入导出（3~4 周）
+### M3 — 编辑器与导入导出（3~4 周）· 进行中
 
 | # | 任务 |
 | --- | --- |
@@ -359,6 +365,12 @@ return outputType.fromBinary(outputBytes);
 | 2 | 导入导出：`.apkg` / `.colpkg` / CSV（逻辑在 rslib，文件访问需适配各端） |
 | 3 | 图像遮挡（`ts/routes/image-occlusion/`，54 文件） |
 | 4 | Android 上文件选择改走 SAF，处理 `content://` URI |
+
+> **已完成的第一步**：「编辑当前卡片」窗口（`tauri/src/editor.rs` +
+> `tools/verify-editor.ps1`）—— 复习界面底部栏的「编辑」已可用，能载入 note、
+> 改字段并保存。关键结论：**编辑器外层窗口完全在 Web 里**，宿主只需开窗 + 在
+> `editorReady` 后注入 `loadNote`；剩余缺口是 AddCards / 浏览器 / 「字段…」「卡片…」
+> 对话框（都要新的 Svelte 界面）。详见 `tauri/README.md` 的「编辑器」与交接文档 §5.18。
 
 **退出标准**：双端可导入 `.apkg`、导出 `.colpkg`、编辑并保存笔记。
 

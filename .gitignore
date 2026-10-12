@@ -25,3 +25,7 @@ ts/.svelte-kit
 docs/_build/
 docs/autoapi/
 .complexipy_cache
+
+# 由 anki_i18n 的 build script 生成（STRINGS_TS 的输出路径落在源码树里）；
+# 实际被前端使用的那一份是复制到 out/ts/lib/generated/ 的，见 tauri/README.md
+ts/lib/generated/ftl.ts

@@ -44,9 +44,28 @@ rfd = "0.15"                                             # 原生文件对话框
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 opener = { version = "0.8", features = ["reveal"] }      # 打开链接与在文件管理器中定位
 rodio = "0.20"                                           # 音频播放（替代 Qt 的 mpv）
+cpal = "0.15"                                            # 音频采集（替代 Qt 的 QAudioSource）
+hound = "3"                                              # WAV 编码
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# profile / meta 配置：与桌面版共用 prefs21.db。
+# 该文件是 SQLite（表 profiles），data 列是 `pickle.dumps(obj, protocol=4)`，
+# 所以既要 sqlite 也要 pickle 读写。
+rusqlite = { version = "0.36.0", features = ["bundled"] }
+serde-pickle = "1"
+
+# 剪贴板的 `text/uri-list`：`arboard` 不暴露任意格式，只能直接问 Windows 要
+# `CF_HDROP`（在资源管理器里"复制"文件时写入的格式）。
+# 版本与主 workspace 的 `windows` 保持一致，避免编译出两份。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_UI_Shell",
+] }
 
 # rslib 的 TLS 后端按平台选择（与 build/configure/src/rust.rs 的 build_rsbridge 保持一致）
 [target.'cfg(target_os = "android")'.dependencies]

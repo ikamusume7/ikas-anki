@@ -11,6 +11,7 @@
 
 mod backend;
 mod bridge;
+mod editor;
 mod legacy;
 mod method_table;
 mod paths;
@@ -18,6 +19,7 @@ mod platform;
 mod reviewer;
 mod server;
 mod state;
+mod windows;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -99,7 +101,8 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
 
     // 注入脚本需要 API 密钥，先取出再移交状态
     let api_key = state.api_key.to_string();
-    let port = server::spawn(state).context("启动本地 HTTP 服务失败")?;
+    // `spawn` 会持有状态，后续还要用它打开附加窗口，因此传克隆
+    let port = server::spawn(state.clone()).context("启动本地 HTTP 服务失败")?;
 
     let url = if page == "reviewer" {
         let id = legacy::reviewer_page(port);
@@ -111,14 +114,39 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     tracing::info!("窗口将加载: {url}");
 
     let parsed: tauri::Url = url.parse()?;
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(parsed))
+    WebviewWindowBuilder::new(app, windows::MAIN, WebviewUrl::External(parsed))
         .title("Anki")
         .inner_size(1200.0, 820.0)
-        // 在任何页面脚本之前注入：补鉴权头 + 提供 bridgeCommand
-        .initialization_script(bridge::script(&api_key))
+        // 在任何页面脚本之前注入：补鉴权头 + 提供 bridgeCommand，
+        // 并把窗口标签交给脚本（`/_anki/pycmd` 据此判断命令来自哪个窗口）
+        .initialization_script(bridge::script(&api_key, windows::MAIN))
         .build()?;
 
+    open_extra_windows(&state);
+
     Ok(())
+}
+
+/// 开发/测试入口：把需要窗口的页面直接开出来
+/// （`ANKI_OPEN_ROUTES=deck-options/1,preferences`）。
+///
+/// 产品内的入口还没实现 —— 打开牌组选项要经过牌组浏览器，而牌组浏览器在新版 Anki
+/// 里是原生 Qt 界面（没有对应的 Web 页面）。所以这里提供一个与 `ANKI_START_PAGE`
+/// 同类的测试入口，让「多窗口 + 模态 + 关闭 Hook」这条链路可以端到端验证。
+fn open_extra_windows(state: &AppState) {
+    let routes = std::env::var("ANKI_OPEN_ROUTES").unwrap_or_default();
+    for route in routes.split(',').map(str::trim).filter(|it| !it.is_empty()) {
+        let label = windows::label_for_route(route);
+        // 只有牌组选项与导入在 Qt 里是 ApplicationModal
+        let modal = matches!(label.as_str(), windows::DECK_OPTIONS | windows::IMPORT);
+        let spec = windows::WindowSpec::new(label, route).modal(modal);
+        if let Err(error) = windows::open(state, &spec) {
+            tracing::warn!("打开附加窗口失败（{route}）: {error:#}");
+        }
+    }
+    if !routes.is_empty() {
+        tracing::info!("已打开的窗口: {:?}", windows::open_labels(state));
+    }
 }
 
 fn init_tracing() {

@@ -42,13 +42,22 @@ pub async fn handle_rpc(
         return response;
     }
 
-    // 1. rslib 服务方法
-    if let Some((service, index)) = method_table::lookup(&method) {
-        return match state.backend.run(service, index, body.to_vec()).await {
-            Ok(output) => ([(header::CONTENT_TYPE, "application/binary")], output).into_response(),
-            // rslib 的错误是已编码的 BackendError protobuf，原样回传给前端
-            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
-        };
+    // 1. rslib 服务方法。
+    //
+    // 例外：与平台层**同名**的端点由平台层接管 —— 对照 Qt，`post_handler_list` 里的
+    // 处理器会盖过后端服务（`_handle_dynamic_request` 先查处理器表）。若不做这个例外，
+    // `getConfigJson` 之类两边都有的名字会被 rslib 接走，语义与 Qt 不一致
+    // （Qt 缺键返回 null，rslib 报错）。见 `platform::SHADOWED_METHODS`。
+    if !platform::SHADOWED_METHODS.contains(&method.as_str()) {
+        if let Some((service, index)) = method_table::lookup(&method) {
+            return match state.backend.run(service, index, body.to_vec()).await {
+                Ok(output) => {
+                    ([(header::CONTENT_TYPE, "application/binary")], output).into_response()
+                }
+                // rslib 的错误是已编码的 BackendError protobuf，原样回传给前端
+                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+            };
+        }
     }
 
     // 2. 平台端点：原生对话框与剪贴板是阻塞调用，放到阻塞线程池

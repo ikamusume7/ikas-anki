@@ -11,6 +11,7 @@ use tauri::AppHandle;
 
 use crate::backend::AppBackend;
 use crate::paths::AppPaths;
+use crate::platform::record::Recorder;
 use crate::reviewer::Reviewer;
 
 /// 在 HTTP 处理器与窗口之间共享的应用状态。
@@ -35,6 +36,8 @@ pub struct AppState {
     pub reviewer: Arc<Reviewer>,
     /// 当前窗口是否承载复习界面；决定 `domDone` 是否触发复习。
     pub reviewer_active: Arc<AtomicBool>,
+    /// 录音会话状态。
+    pub recorder: Arc<Recorder>,
 }
 
 impl AppState {
@@ -56,6 +59,7 @@ impl AppState {
             collection_open: Arc::new(AtomicBool::new(false)),
             reviewer: Arc::new(Reviewer::default()),
             reviewer_active: Arc::new(AtomicBool::new(false)),
+            recorder: Arc::new(Recorder::default()),
         }
     }
 

@@ -14,26 +14,41 @@
 //!    宿主侧动作。这里用 HTTP 打通，语义保持「传入命令字符串 + 可选回调」。
 //!
 //! 脚本在页面任何脚本之前执行，因此 `window.fetch` 的补丁对所有代码生效。
+//!
+//! 3. **窗口身份**：多窗口模型下（见 `crate::windows`）同一个进程里有多个页面
+//!    在发桥接命令，而 `POST /_anki/pycmd` 是一条共用的通道。Qt 里每个 WebView
+//!    有自己的 `AnkiWebPage` 对象，命令天然归属该窗口；这里改为让脚本在每个
+//!    请求上带 `X-Anki-Window: <窗口标签>`，宿主据此判断命令来自哪个窗口。
+//!    没有这个头，任意页面加载时发的 `domDone` 都会被当成复习界面启动。
 
-/// 占位符在注入时替换为真实的 API 密钥。
+/// 占位符在注入时替换为真实的 API 密钥与窗口标签。
 const SCRIPT: &str = r#"
 (function () {
     var API_KEY = "__API_KEY__";
+    var WINDOW_LABEL = "__WINDOW_LABEL__";
     var originalFetch = window.fetch;
 
     function isInternal(url) {
         return typeof url === "string" && url.indexOf("/_anki/") === 0;
     }
 
-    // 1) 为内部请求补上鉴权头
+    function internalHeaders(extra) {
+        return Object.assign(
+            {
+                Authorization: "Bearer " + API_KEY,
+                "X-Anki-Window": WINDOW_LABEL,
+            },
+            extra,
+        );
+    }
+
+    // 1) 为内部请求补上鉴权头与窗口身份
     window.fetch = function (input, init) {
         try {
             var url = typeof input === "string" ? input : (input && input.url) || "";
             if (isInternal(url)) {
                 init = init || {};
-                init.headers = Object.assign({}, init.headers, {
-                    Authorization: "Bearer " + API_KEY,
-                });
+                init.headers = internalHeaders(init.headers);
             }
         } catch (error) {
             console.error("bridge: failed to attach auth header", error);
@@ -43,12 +58,17 @@ const SCRIPT: &str = r#"
 
     // 2) 提供 bridgeCommand / pycmd
     window.bridgeCommand = window.pycmd = function (arg, callback) {
+        // 类型作答：把输入框内容附在命令后面（外壳侧的适配，前端代码不用改）。
+        // 对照 Qt：那边用 evalWithCallback("getTypedAnswer();") 取回输入值。
+        if (arg === "ans") {
+            var input = document.getElementById("typeans");
+            if (input && typeof input.value === "string") {
+                arg = "ans:" + input.value;
+            }
+        }
         originalFetch("/_anki/pycmd", {
             method: "POST",
-            headers: {
-                "Content-Type": "text/plain",
-                Authorization: "Bearer " + API_KEY,
-            },
+            headers: internalHeaders({ "Content-Type": "text/plain" }),
             body: String(arg),
         })
             .then(function (response) {
@@ -85,6 +105,8 @@ const SCRIPT: &str = r#"
 })();
 "#;
 
-pub fn script(api_key: &str) -> String {
-    SCRIPT.replace("__API_KEY__", api_key)
+pub fn script(api_key: &str, window_label: &str) -> String {
+    SCRIPT
+        .replace("__API_KEY__", api_key)
+        .replace("__WINDOW_LABEL__", window_label)
 }
