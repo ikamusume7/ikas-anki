@@ -13,24 +13,42 @@
 
 在 `tauri/` 下新增了一个 Tauri v2 外壳，**复用现有的 `ts/` 前端与 `rslib/` 后端**，
 在 Windows 上已经能跑通「打开集合 → 复习一张卡片 → 评分 → 下一张」的完整闭环，
-并已接入「编辑当前卡片」的编辑器窗口。
+并已接入编辑器外壳的「编辑当前卡片」与**「添加卡片」**两个窗口。
 
 - **M0 完成**：骨架、方法表、HTTP 服务、窗口
 - **M1 完成**：集合打开、静态资源、媒体、CSP 分级、legacy 页面机制、最小复习会话、底部工具栏
 - **M2 完成**：mediasrv 的 32 个平台端点全部有实现 —— 剪贴板（含 `text/uri-list`）、
   文件选择、图片、原生对话框、profile / meta 配置（直接读写桌面版 `prefs21.db`）、
   音频播放与**录音**、**TTS**、**窗口管理（多窗口模型）**、复习状态同步
-- **M3 进行中**：编辑器外壳的第一步「编辑当前卡片」已可用（`src/editor.rs`）；
-  导入导出、图像遮挡、Android 未开始
+- **M3 进行中**：编辑器、浏览器、牌组列表都已可用。
+  - 编辑器：「编辑当前卡片」（`mode=current`）、**「添加卡片」（`mode=add`，含「丢弃输入」
+    确认）**、浏览器里的编辑区（`mode=browser`）、以及**图像遮挡**（内嵌在编辑器页面里的
+    遮罩编辑器，见 `tauri/README.md` 的「图像遮挡」）。
+  - 浏览器：**页面是新写的**（`ts/routes/browser/`），入口有复习界面 `b`、
+    图表 `browserSearch`、`searchInBrowser` 端点；功能含搜索/排序/多选、笔记模式、
+    列清单 / 列宽 / 列顺序、**完整的动作表**（加/移除标签、清除未使用标签、标记、旗标、
+    暂停、埋藏、重置、设置到期日、重新定位、立即评分、改牌组、删除、复制笔记、
+    卡片信息、更改笔记类型、查找替换、跳转、反选/全选/选中笔记）、撤销重做、
+    **导出 apkg/colpkg**，以及**预览与卡片信息两个独立窗口**。
+  - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
+    牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/删除）、
+    底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与两处**顶部工具栏**
+    （牌组/添加/浏览/统计）。
+  - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通。
+  - 未做：主窗口菜单栏与同步、字段·卡片对话框、自定义学习、导出 CSV/纯文本、
+    查找重复、管理笔记类型、启动行为（检查/备份）、Android
 - **M4 未开始**：打包与 Android
 
-**当前可直接验证**（三个一键脚本，详见 §2.4）：
+**当前可直接验证**（六个一键脚本，详见 §2.4）：
 
 | 脚本 | 覆盖 |
 | --- | --- |
 | `tauri/tools/verify-reviewer.ps1` | 复习界面：启动 → 补卡片 → 截真实窗口 → 布局断言 |
 | `tauri/tools/verify-m2.ps1` | 平台能力：剪贴板文件列表 / TTS 合成 / 录音闭环 + 多窗口命令归属 |
-| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 |
+| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
+| `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
+| `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带 |
+| `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → `d`/`s`/`study` 切页 |
 
 ---
 
@@ -90,6 +108,14 @@ cargo build
 .\target\debug\anki-tauri.exe
 ```
 
+> 可执行文件在 **`tauri/target/debug/anki-tauri.exe`**（`tauri/` 是独立 workspace，
+> `cd tauri; cargo build` 用的是它自己的 `target/`）。四个验证脚本的 `-Exe` 默认值就是
+> 这个路径，直接跑即可。
+>
+> （本文档早前写的 `out/rust/debug/anki-tauri.exe` 是错的：`out/rust` 是 §2.1 里
+> `CARGO_TARGET_DIR=out/rust` 编译 `anki_proto` / `anki_i18n` 的产物目录，里面没有外壳
+> 二进制。）
+
 ### 2.3 调试用环境变量
 
 | 变量 | 默认 | 用途 |
@@ -106,9 +132,27 @@ cargo build
 pwsh -File tauri/tools/verify-reviewer.ps1   # 复习界面 + 布局断言
 pwsh -File tauri/tools/verify-m2.ps1         # 平台能力 + 多窗口命令归属
 pwsh -File tauri/tools/verify-editor.ps1     # 编辑器窗口 + 改字段保存
+pwsh -File tauri/tools/verify-addcards.ps1   # 添加卡片窗口 + 添加落库 + 关闭契约
+pwsh -File tauri/tools/verify-browser.ps1    # 浏览器窗口 + 表格 + 编辑器联动
 ```
 
-三条都会自己启动外壳、用隔离集合、跑断言、结束进程。复习界面那条期望看到：
+五条都会自己启动外壳、用隔离集合、跑断言、结束进程。三个前置：
+
+- **浏览器页面是 SvelteKit 产物**：改了 `ts/routes/browser/` 必须重跑
+  `corepack yarn build`（§2.1 第 3 步），否则外壳发出去的是旧页面；
+
+- Playwright 的 Chromium 内核要装过（`node node_modules/playwright/cli.js install
+  chromium-headless-shell`），否则 `visual-check.mjs` / `editor-check.mjs` /
+  `addcards-check.mjs` 会报 `Executable doesn't exist`；
+- `verify-m2.ps1` 的**录音**断言需要本机有可用的输入设备，没有麦克风时会以
+  `recordAudio → HTTP 500 找不到可用的录音设备` 失败（其余断言照常通过）。
+  没设备时 `recordAudio` 会**一直挂着**，所以 `m2-check.mjs` 里那条请求必须立刻
+  挂一个 `.catch()`（否则 node 按 unhandled rejection 自杀，还会带出 libuv 的
+  `!(handle->flags & UV_HANDLE_CLOSING)` 断言 —— 看着像被测程序崩了，其实是脚本
+  自己的问题）；收尾靠脚本末尾的 `process.exit()`，**不要去 `abort()`** 那条挂在
+  半路的请求（Windows 上同样会触发那个断言）。
+
+复习界面那条期望看到：
 
 ```text
 界面语言: zh-CN
@@ -125,15 +169,14 @@ domDone: 复习模式=true
 $env:ANKI_API_PORT="40001"; $env:ANKI_API_KEY="test-key-123"
 $env:ANKI_COLLECTION="$PWD/out/tauri-test/collection.anki2"
 $env:ANKI_START_PAGE="reviewer"
-$p = Start-Process -FilePath out/rust/debug/anki-tauri.exe -PassThru `
+$p = Start-Process -FilePath tauri/target/debug/anki-tauri.exe -PassThru `
      -RedirectStandardOutput out/run.log -RedirectStandardError out/run.err
 Start-Sleep 18
 Get-Content out\run.log -Encoding utf8 | Select-String "队列|渲染完成|底部栏|界面语言"
 Stop-Process -Id $p.Id -Force
 ```
 
-> 可执行文件在 `out/rust/debug/anki-tauri.exe` —— 构建流程设了
-> `CARGO_TARGET_DIR=out/rust`，不是 `tauri/target/`。
+> 可执行文件在 `tauri/target/debug/anki-tauri.exe`（见 §2.2 的说明）。
 >
 > `out/tauri-test/` 是隔离的测试数据目录，**不会污染真实 profile**。
 > 里面已有 `collection.anki2` 与 `collection.media/`。
@@ -247,6 +290,52 @@ pickle），不再有第二份存储。
 
 打开窗口的产品内入口还没实现（要经过牌组浏览器，而它是原生 Qt 界面），因此提供
 `ANKI_OPEN_ROUTES=deck-options/1`（与 `ANKI_START_PAGE` 同类）供端到端验证。
+（浏览器窗口本身已经有产品内入口了，见下面 §3.7；牌组选项 / 导入仍只能靠
+`ANKI_OPEN_ROUTES`。）
+
+### 3.7 浏览器：唯一"宿主 + 新写页面"的窗口
+
+前几节的窗口都是**复用上游页面**（deck-options / editor / import-* 在 `ts/routes/`
+里已经存在），浏览器不是：Qt 的浏览器整条链路都是原生 Qt 控件
+（`qt/aqt/browser/`），所以页面是新写的（`ts/routes/browser/`，见 `tauri/README.md`
+的「浏览器」）。四处与上游不同的决定，改动前务必知道：
+
+1. **编辑区是独立窗口**（标签 `browser-editor`）：Qt 把编辑器嵌在浏览器窗口里，而
+   `/editor/` 是不可信页面（CSP 带 `frame-ancestors 'none'`），iframe 会被 WebView
+   直接拒绝。关闭浏览器窗口时会连带关掉它。
+2. **搜索词由页面问、宿主答**：页面报到（`browserReady`）后宿主在**响应**里把首屏
+   搜索词交回去；窗口已存在时改走 `eval` 注入 `loadSearch(...)`。这样两条路径都幂等，
+   躲开了"注入时页面还没就绪"的时序问题。
+3. **表格要先把列告诉后端**：读集合配置 `activeCols`（缺省 4 列）→
+   `setActiveBrowserColumns` → 之后才能逐行 `browserRowForId`。少了中间那步，
+   整张表格会空白并弹错误框（见 §5.21）。
+4. **结果清单只有页面有，宿主持不了**：所以"预览的上一张/下一张"、编辑器的预览按钮
+   都要绕一圈 —— 宿主 `eval` 页面的 `previewNeighbor(±1, cid)` / `previewCurrent()`，
+   页面算出目标再回一条 `preview:<cid>`。Qt 也是这个形状（预览器问浏览器父窗口要
+   前后卡片，`previewer.py:412-430`）。
+5. **动作表本可以全在前端做，只有四处必须回宿主**：卡片信息（`cardInfo:<cid>` 开
+   `card-info/<cid>` 窗口）、复制笔记（`addCopy:<nid>:<deckId>` 开「添加卡片」并注入
+   该笔记）、更改笔记类型（`changeNoteType:<nid>,...` 开 `change-notetype/<id>` 窗口）、
+   关闭（`close`）。其余动作（标记/旗标/暂停/埋藏/重置/到期日/重排/评分/
+   标签/改牌组/删除/查找替换/跳转）都是页面直接调 RPC —— 后端已经有现成的方法，
+   宿主不必中转。
+6. **导出全在页面里做，宿主只补"选保存路径"**：对话框、选项、导出 RPC 都在
+   `ts/routes/browser/` 里（对照 `browser.py:377` 与 `import_export/exporting.py`），
+   只有"原生保存框"必须问宿主 —— 为此加了**外壳自己的端点** `saveFileDialog`
+   （上游没有：Qt 的对话框直接调 `getSaveFile()`）。请求复用
+   `OpenFilePickerRequest`，`key` 字段按外壳约定传建议文件名；`ANKI_SAVE_PATH`
+   指向目录时直接返回 `<目录>/<建议文件名>`，好让验证脚本绕过原生对话框。
+7. **"窗口感知的端点"复用现有页面**：`card-info/<cid>` 与 `change-notetype/<id>` 都是
+   仓库里已有的路由，宿主只负责开窗与（必要时）关窗。其中 `changeNotetype` 必须由
+   宿主接管：页面提交的请求里**没有 `note_ids`**（它不知道选了哪些笔记），宿主开窗时
+   记下、请求到达时补上、成功后关窗（`changenotetype.py:68-85` +
+   `mediasrv.py:772`）。凡是"页面只给局部信息、其余由宿主补齐"的端点，都该走这条路
+   （也在 `server/api.rs` 里单独接，因为要 async 调后端 + 关窗）。
+
+页面侧的其它要点（排序交给后端、批量动作的 id 映射、删除没有确认框、列清单写在
+`activeCols`）见 `tauri/README.md` 的「浏览器」；`searchInBrowser` 端点在
+`server/api.rs` 里单独处理（不在 `platform::dispatch`）：它要调异步 RPC
+`buildSearchString`，而平台层跑在阻塞线程池上。
 
 ---
 
@@ -260,13 +349,26 @@ tauri/src/
 ├─ backend.rs         rslib 桥接：open_collection / call(method) / run(service, method)
 ├─ method_table.rs    方法名 → 索引（build.rs 生成）
 ├─ bridge.rs          注入脚本（鉴权头 + 窗口身份 + bridgeCommand）
-├─ legacy.rs          legacy 页面注册与 HTML 组装
-├─ editor.rs          编辑器窗口（开窗 + `editorReady` 后注入 `loadNote`）
+├─ legacy.rs          legacy 页面注册与 HTML 组装（复习页 / 录音页 / 预览页）
+├─ main_window.rs     主窗口的入口与**页面切换**：牌组列表 ⇄ 复习页（`decks`/`overview`/
+│                     `study`），以及统计（`graphs/`）与设置（`preferences/`），
+│                     对应 Qt 的全局快捷键 `d`/`s`/`t`/`Ctrl+P`
+├─ assets/            注入页面用的脚本：reviewer-menu.js（复习菜单/表单）、
+│                     reviewer-toolbar.js（顶部工具栏）。**改了要重新 cargo build**
+│                     （include_str! 编进二进制），见 §5.29
+├─ browser.rs         浏览器窗口（开窗 + 首屏搜索 + 双击某行 → 打开编辑区 +
+│                     预览/翻页的转发 + 卡片信息/更改笔记类型/复制笔记三个窗口）
+├─ preview.rs         预览窗口（渲染问题/答案、翻面、前后卡片、重播音频）
+├─ editor.rs          编辑器窗口（编辑当前 / 添加卡片 / 浏览器编辑区：开窗 +
+│                     `editorReady` 后按窗口标签注入 `loadNote`）
 ├─ reviewer.rs        复习会话
+├─ reviewer_menu.rs   复习界面的「更多」/右键菜单（宿主拼数据 + 执行动作；菜单脚本在
+│                     `tauri/assets/reviewer-menu.js`，用 `include_str!` 引用）
 ├─ paths.rs           资源路径（开发/打包双模式）
 ├─ state.rs           共享状态
 ├─ windows.rs         窗口模型（多窗口 / 单实例 / 模态 / 几何记忆）
-├─ platform/          平台端点（FrontendService）
+├─ platform/          平台端点（FrontendService，32 个上游端点 + 外壳新增的
+│                     `saveFileDialog`）
 │  ├─ audio.rs        playFile（rodio 队列播放）
 │  ├─ clipboard.rs    readClipboard / writeClipboard
 │  ├─ config.rs       get/setProfileConfigJson、get/setMetaJson
@@ -274,6 +376,7 @@ tauri/src/
 │  ├─ record.rs       recordAudio（cpal 采集 + WAV，会话挂在 state.recorder）
 │  ├─ scheduling.rs   getSchedulingStatesWithContext / setSchedulingStates
 │  ├─ dialogs.rs      openFilePicker / askUser / showMessageBox / openLink
+│  │                  + **saveFileDialog**（外壳新增，导出对话框问保存路径用）
 │  └─ media.rs        convertPastedImage / openMedia / showInMediaFolder
 └─ server/
    ├─ mod.rs          路由、Host/Origin 中间件、服务启动
@@ -283,10 +386,22 @@ tauri/src/
    └─ pycmd.rs        POST /_anki/pycmd
 
 tauri/tools/           验证脚本：verify-reviewer.ps1（复习界面）、verify-m2.ps1
-                       （平台能力）、verify-editor.ps1（编辑器窗口）、
+                       （平台能力）、verify-editor.ps1（编辑当前卡片）、
+                       verify-addcards.ps1（添加卡片）、verify-browser.ps1（浏览器）、
+verify-decks.ps1（牌组列表）、
                        capture-window.ps1（截真实窗口，多窗口用 -TitleLike 选择）、
-                       visual-check.mjs / m2-check.mjs / editor-check.mjs、
-                       seed-card.mjs、set-tts-template.mjs、check-prefs21.mjs
+                       visual-check.mjs / m2-check.mjs / editor-check.mjs /
+                       addcards-check.mjs / browser-check.mjs、seed-card.mjs、
+                       set-tts-template.mjs、check-prefs21.mjs
+
+ts/routes/decks/      新写的牌组列表页面（主窗口默认页）：+page.svelte（牌组树、计数、
+                      折叠、概览面板、齿轮菜单、底部三按钮、快捷键 d/s/t/a/b）
+ts/routes/browser/    新写的浏览器页面：+page.svelte（搜索/排序/多选/动作表/快捷键）、
+                       Toolbar.svelte、Sidebar.svelte、ResultRow.svelte（逐行取数）、
+                       ContextMenu.svelte（行右键菜单，`data-action` 供验证脚本点击）、
+                       FormModal.svelte（到期日/重排/重置/查找替换共用的表单弹框）、
+                       menu.ts（菜单与表单的类型）、DeckPickerModal.svelte、
+                       TagsModal.svelte（加/移除标签）
 ```
 
 ### 4.2 安全策略（已对照 mediasrv 实现）
@@ -521,6 +636,202 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 修法：读路径也用读写方式打开（Qt 那边就是普通 `sqlite3.connect()`）。已并入
 `Prefs21::connect()`，读写两条路径共用。
 
+### 5.20 Playwright 抓到的响应体可能是空的（不是服务端的错）
+
+写「添加卡片」的检查时踩到的：`page.waitForResponse("**/_anki/addNote")` 拿到的响应是
+`HTTP 200` + **0 字节**，`response.body()` 也是空 —— 看起来像后端没返回内容。实际上：
+
+- 页面自己拿到了正常响应（`addNote` 之后表单被 `loadNote` 重置、note 也确实进了集合）；
+- 同一个请求用 curl 直发，响应是 29 字节的正常 `AddNoteResponse`。
+
+结论：**别用"读响应体"来断言这类成功**。改成两条更硬的证据：
+
+1. 用 `page.route(..., route.continue())` 拦下请求，读**请求体**（`postDataBuffer()`，
+   能直接 `AddNoteRequest.fromBinary` 解出页面交上来的字段）；
+2. 回到集合里查（`searchNotes` → `getNote`），断言 note 真的存在、内容正确，再删掉。
+
+顺带两个同源的小坑：`route.request().postDataBuffer()` 在请求体**为空**（例如
+`Bool{val:false}`，protobuf 零字节）时返回 `null`，必须先兜底成空 `Uint8Array`；
+`Get-Content -Raw` 读**空日志文件**返回 `$null`，`[regex]::Matches($null, …)` 会抛异常
+（PowerShell 里 `-match` 不会，所以老脚本没暴露这个问题）。
+
+### 5.21 浏览器的表格：缺 `setActiveBrowserColumns` 会整张空白
+
+写浏览器页面时踩到的：`browserRowForId` 直接回 500 `Active browser columns not set.`
+（`rslib/src/browser_table.rs:276-285`），表现出来是**表格整张空白**。
+
+正确顺序（对照 `pylib/anki/collection.py:890-896` 的 `load_browser_card_columns()`）：
+
+1. 读集合配置 `activeCols`（缺省 `["noteFld","template","cardDue","deck"]`，
+   见 `pylib/anki/browser.py:33`）；
+2. `setActiveBrowserColumns({vals: [...]})` —— 它只是把列清单塞进
+   `CollectionState.active_browser_columns`（`rslib/src/search/service/mod.rs:130-133`），
+   **不落库**，所以每次开页面都要重新设；
+3. 再 `browserRowForId`（逐行；后端没有批量接口）。
+
+另外：这个 500 会被 `post.ts` 的默认 `alertOnError` 变成 `alert()`，**卡住页面的 JS
+事件循环** —— 与 §5.18 同一个坑。浏览器页面对所有 RPC 都显式传了
+`{ alertOnError: false }`，把错误留在表格里显示。
+
+### 5.22 文案显示成 `missing-key: xxx` = 页面没加载那个 i18n 模块
+
+新写的页面必须在 `setupI18n({ modules: [...] })` 里列全用到的**模块**（模块 = ftl
+文件名）：浏览器页面一开始只加载了 BROWSING / DECKS / NOTETYPES，工具栏上的
+`actions-delete` / `actions-preview` 就直接渲染成 `missing-key: actions-delete`。
+现象很容易漏掉 —— 自动化断言抓不到（它们按 id/选择器定位，不看文案），只有截图才看得出来。
+
+对照 `ts/routes/editor/base.ts` 的 `editorModules` 按需加：`ModuleName.ACTIONS`、
+`ModuleName.EDITING` 等。另外 Rust 侧要读 `ftl/qt` 的文案（`qt-misc-*`）时，类型化方法
+不存在，得用 `I18n::translate`（见 §7.4）。
+
+### 5.23 虚拟列表会复用行组件，行数据必须跟着 id 重新取
+
+`VirtualTable` 的行是 `{#each slice as index (index)}` —— **以行号为 key**。搜索换了一次
+结果（"2 行 → 1 行"这种）之后，行号 0 对应的卡片已经变了，但 Svelte 复用同一个
+`ResultRow` 实例，只在 `onMount` 里取数的写法就会一直显示**上一次搜索的内容**。
+
+现象很有迷惑性：搜索框里是新词、状态栏的总数也对，只有表格内容是旧的（`verify` 的
+「搜到了新建的测试 note」就是这么抓出来的）。修法：把取数搬到 `$: if (loadedId !== id)`
+的响应式语句里，并在返回时再确认一次 `loadedId === cardId`（期间又换卡片就丢弃）。
+
+### 5.24 给浏览器加动作时的两个小坑
+
+1. **`BrowserRow` 不带 id**：它只有 `cells` / `color` / 字体（`proto/anki/search.proto`
+   的 `BrowserRow`）。行的 id 一直都在结果列表里（卡片模式 cid、笔记模式 nid），
+   所以「当前行的 note」要 `getCard` 反查、「当前行的卡片」要 `cardsOfNote` 展开；
+   旗标 / 暂停 / 埋藏可以从 `color` 推（`flag = color - FLAG_RED + 1`），但**标记要从
+   笔记标签里读**（既标记又有旗标时颜色只显示其中一个）。
+2. **`qt` 仓库的文案在 TS 侧没有类型化函数**：生成器只给核心仓库生成函数
+   （`rslib/i18n/write_strings.rs` 的 `is_core()`），而 `qt-accel-*`（Undo / Redo /
+   Info / Set Due Date / Find…）都住在 `ftl/qt/qt-accel.ftl`。要用就得
+   `import { translate } from "@generated/ftl-helpers"` 按 **key** 取，并把
+   `ModuleName.QT_ACCEL` 加进 `setupI18n`（否则拿到的是 `missing key: ...`）。
+   Rust 侧同理：`I18n::translate`（§7.4 把它放开为 `pub`）。文案里的 `&` 是 Qt 的
+   助记符，网页上要替换掉。
+
+### 5.27 三件复习菜单相关的坑
+
+1. **会话里的 `card` 是快照**：`Reviewer` 的 `session().card` 是显示这张卡时取回来的，
+   菜单改过旗标之后它不会变 —— 拿它算 toggle（"同旗标再点一次 = 清除"）必然判错，
+   勾选态也会永远停在最初。凡是要读**会被自己改掉**的字段，都重新 `getCard`
+   （`reviewer_menu::fresh_flag`）。
+2. **宿主注入的脚本怎么测**：菜单画在页面里、但脚本由宿主 `eval` 注入 WebView2，
+   Playwright 看不到那份 DOM。做法是把脚本放进 `tauri/assets/reviewer-menu.js`、
+   宿主用 `include_str!` 引用，验证脚本**读同一个文件**塞进空页面测
+   （渲染 / 勾选态 / 子菜单 / 表单回传 / 右键）——"测的不是跑的那份"就避免了。
+   没被覆盖的是"注入本身"，那部分靠 `verify-reviewer.ps1` 截真实窗口的菜单来兜底。
+3. **node 退出时的 libuv 断言**（`!(handle->flags & UV_HANDLE_CLOSING)`）：
+   脚本里对本地服务发过 `fetch` 之后直接 `process.exit()`，keep-alive 的 socket
+   句柄会在退出时触发它 —— 看起来像被测程序崩了，其实是被自己脚手的连接。给请求加上
+   `Connection: close` 就干净了（`reviewer-menu-check.mjs`）。同一现象在
+   `m2-check.mjs` 里也见过（那里是挂着的 `recordAudio`）。
+
+### 5.26 页面用的 i18n 模块要漏一个，连文件名都会坏
+
+`setupI18n({ modules })` 是按页面**用到**的文案列模块的（见 `+page.svelte` 的
+`onMount`）。漏掉哪个模块，那个 key 就渲染成 `missing key: <key>` —— 界面上只是难看，
+但**如果这个字符串被拿去做别的事就会出事**：导出对话框用
+`tr.exportingCollection()` 拼建议文件名，没加载 `EXPORTING` 模块时文件名成了
+`missing key: exporting-collection-2026-…`，里面那个**冒号在 Windows 上非法**，
+于是"保存路径"是个无效路径、导出必然失败，而日志里只有一行
+`ANKI_SAVE_PATH 生效，跳过保存对话框: …missing key: …`。
+
+两个教训：
+- 新页面/新对话框的文案，先确认对应 `ModuleName` 已加到 `setupI18n`；
+- 验证脚本里加一条"界面上没有 `missing key`"的断言（`browser-check.mjs` 的
+  「导出对话框的文案已本地化」就是干这个的）—— 比事后看日志快得多。
+
+### 5.25 Svelte 不追踪函数体里的响应式变量（行高亮不刷新）
+
+`ResultRow` 的行高亮原来是 `selected={isSelected(id)}`：`isSelected` 里读的 `selected`
+**不算模板表达式的依赖**（Svelte 只看表达式里直接引用的变量），于是"只改 `selected`、
+不动别的状态"时高亮不刷新 —— Ctrl+A 全选、反选都能复现：状态栏的「已选取 N 张」和
+`browserTitle` 都对，只有表格里的高亮是旧的。
+
+修法：传数组让表达式直接引用它（`selectedIds={selected}`，组件内
+`class:selected={selectedIds.includes(id)}`）。
+
+顺带记两条同时踩到的验证经验：
+
+- 断言要**同时看页面状态与 DOM**（状态栏计数 + `browserTitle` 是前者，`tr.selected`
+  是后者），只看一个会漏掉这类"状态对了但没画出来"的 bug；
+- 虚拟列表 `VirtualTable` 会在首尾插**撑高度的空 `<tr>`**（只有一个没有 `title` 的
+  `<td>`），`browser-check.mjs` 里数行要过滤掉它们（`tbody tr:has(td[title])`），
+  否则会多算一行。
+
+### 5.28 主窗口切页：先撤复习态，再导航
+
+给主窗口加第二个页面（牌组列表 `/decks/`）时最容易踩的坑：切页是**整页导航**
+（`window.location.href`，与卡片信息窗口换卡片同一招），而 `domDone` 是**每个页面
+都会发**的（`bridge.rs` 的初始化脚本在每次导航后重跑）。`pycmd.rs` 的 `domDone` 分支
+只看 `reviewer_active`：它是**进程级、只在启动时写过一次**的原子标志。所以：
+
+- 从复习页切到牌组列表（`d` / `overview`）**必须先把 `reviewer_active` 置回 false**
+  （`main_window.rs::show_decks_page`），否则牌组列表的 `domDone` 会照着复习页的流程
+  去 `reviewer::start`，往不存在的 `#qa` / `#bottom-container` 注入 DOM；
+- 切回复习页（`study`）则要先置 true，再导航 —— 顺序不能反，`domDone` 可能比你的
+  下一条语句先到。
+
+另外两条同源的小事：
+
+- 复习页是 legacy 页面（`legacy::reviewer_page(port)` 每调一次就注册一份新 HTML），
+  所以 URL 用 `OnceLock` 缓存；启动页就是复习界面时由 `main.rs` 先 `remember_reviewer_url`
+  （否则同一个复习页会被注册两次）。
+- 新页面要记得加进 `server/assets.rs` 的 `SVELTEKIT_ROUTES` 白名单，展示用户内容
+  （牌组名）的还要加进 `UNTRUSTED_SVELTEKIT_ROUTES`（多一份 script hash 校验）。
+
+还有两条前端小坑：`addDeck(Deck)` 的 `kind` 是**必填 oneof**（缺了后端报
+`missing kind`）；SvelteKit 会把 `/decks/?deck=1` 规范化成 `/decks?deck=1`，
+验证脚本的正则两种都要接受。
+
+### 5.29 注入文件的两个坑：模板字符串里的反引号、`include_str!` 要重建
+
+给复习界面加顶部工具栏（`assets/reviewer-toolbar.js`）时连踩三次，都值得记住：
+
+1. **间距要落在真正放链接的那一层**。第一版照抄 Qt 的 `_body` 结构
+   （`.header > .toolbar > a`），却把 `display:flex; gap` 写在 `.header` 上 ——
+   `.header` 只有一个孩子（`.toolbar`），`justify-content:center` 生效、`gap` 不生效，
+   四个链接挤成一串。**只断言 CSS 属性是查不出来的**（`getComputedStyle(...).gap`
+   照样返回 `20px`），得断言相邻元素的 `getBoundingClientRect()` 差值
+   （`reviewer-menu-check.mjs` 里就是这么改的）。另外这里改用 `margin` 而不是 `gap`：
+   不受 Chromium 版本影响，语义也更贴（间距属于链接自己）。
+2. **模板字符串里不能出现反引号**。这份脚本用 `` const CSS = `...` `` 装样式，
+   我在其中的 CSS 注释里写了 `` `gap` ``，直接提前结束模板串 ⇒ 整个脚本语法错误 ⇒
+   工具栏**整个消失**（而宿主那边照旧"注入成功"）。写这种文件时顺手 `node --check`
+   一下最省事。
+3. **`include_str!` 的内容改了必须重新 `cargo build`**：只改 `assets/*.js` 而不重建，
+   跑的还是旧二进制里那份（我因此白看了两张"没变化"的截图）。验证脚本读的是**源文件**，
+   所以那种情况下 `reviewer-menu-check.mjs` 会**通过**而真实窗口不对 —— 这类"测的不是
+   跑的那份"要用「改完就重建」+ 真实窗口截图兜底（§5.27 第 2 条的另一面）。
+
+顺带修掉一个隐患：宿主每次 `start()` 都会 `eval` 整份脚本，顶层的 `const` 第二次会
+被判重复声明（抛 SyntaxError）。文件整体包了一层 IIFE，`window.installToolbar` 仍挂在
+全局，验证脚本照旧能用。
+
+### 5.30 图像遮挡：先核对"有没有界面"，再动手
+
+`tauri/PARITY.md` 原来写着「编辑器里的『遮挡』按钮要走 `qt/aqt/image_occlusion.py`」——
+**这个仓库里根本没有那个文件**，也没有 `dialogs.py` 里的 Occlusion 对话框。这个版本的
+遮挡编辑器是**内嵌在编辑器页面**里的（`NoteEditor.svelte:1470-1488` 渲染
+`ImageOcclusionPage`），工具栏的 `image-occlusion-button` 只切一个 store；Qt 侧对应的是
+`editor.py:500-535` 的 `setup_mask_editor`（同样往页面里 eval）。所以"接入"根本不需要
+开窗口，只需要一条 `openFilePicker` 端点 —— 这类"清单上的臆测"最好先花五分钟核对上游，
+省得照着不存在的文件设计。**做之前先 grep 上游文件是否存在。**
+
+同一件事上还有三个小经验：
+
+1. **add 模式与 edit 模式的取图路径不同**：add 走 `getImageForOcclusion({path})`（读文件），
+   edit 走 `getImageOcclusionNote(noteId)`（读**已保存**的笔记）。编辑已有笔记时刚换的图
+   还没落库 ⇒ 掩码编辑器拿到空图（`data:image/png;base64,`，22 字符）。这是上游的时序，
+   与本外壳无关；检查脚本因此走 add 模式。
+2. **断言"图片真的渲染了"要卡住长度**：空图与真图的 src 都通过 `startsWith("data:image/")`
+   —— 只有长度能区分（空 ~22 字符，100x80 纯色 PNG ~360 字符）。另外 1x1 的测试图太小，
+   索性用 Chromium 现截一张 100x80 的图当 fixture（`occlusion-check.mjs` 里就这么做的）。
+3. **`ioMaskEditorVisible` 的初值不一定是 false**：遮挡笔记类型下页面可能一进来就是掩码
+   编辑器状态，检查脚本"点一下工具栏按钮"会把它**关掉**。要先看状态、缺了才点（上面的
+   检查脚本里就是这么写的）。顺带：点工具栏的「重置」会弹原生 `confirm`，Playwright 要
+   `page.on("dialog", d => d.accept())` 才能过。
+
 ---
 
 ## 6. 剩余工作
@@ -538,27 +849,42 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 | ~~**计时与时间盒**~~ | **已完成**：`showQuestion(button, maxTime)` 的 `maxTime` 取自牌组 `timer` / `maxTaken`；`showAnswer` 传 `stopTimerOnAnswer` |
 | ~~**按钮下次间隔**~~ | **已完成**：用 `DescribeNextStates` 在按钮上标注「<1分 / 10分 / 1天 / 3天」 |
 | ~~**按钮数量**~~ | **无需改动**：v3 下 Qt 的 `answerButtons()` 恒返回 4（2/3 个是 v2 遗留，v3 对 v2 是 assert 拒绝） |
+| ~~**`more`（更多菜单）**~~ | **已实现**：底部栏「更多」与卡片右键 → 13 项菜单 + 旗标子菜单 + 重置/到期日表单（`reviewer_menu.rs` + `assets/reviewer-menu.js`）。差上一张卡片信息、音频 5 项、自动前进，见 `tauri/PARITY.md` 的 2.2-2.4 |
 | ~~**`edit`**~~ | **已完成**：打开「编辑当前卡片」窗口。编辑器外层窗口全在 Web 里，宿主只需开窗 + `editorReady` 后注入 `loadNote`，见 `tauri/README.md` 的「编辑器」 |
-| **`more`** | 仍 no-op：要打开更多菜单，需要新的界面 |
+| ~~**`more`**~~ | **已实现**（复习界面）：13 项菜单 + 旗标子菜单 + 两个表单对话框，见 `tauri/README.md` 的「复习界面」；编辑器里的 `more` 仍未做 |
 | ~~**撤销**~~ | **已完成**：`undo` 桥接命令 + 页面内快捷键（`Ctrl+Z` / `Cmd+Z` / 裸 `u`），撤销后重新取队列 |
 | ~~**音频自动播放队列**~~ | **已完成**：`audio.rs` 改为队列播放（对照 `AVPlayer.play_tags`），显示问题/答案时按牌组配置自动播放 |
 | ~~**类型作答**~~ | **已完成**：问题面插入 `#typeans` 输入框、答案面用 `CompareAnswer` 生成对比；输入值由桥接垫片附在 `ans:` 后面回传 |
 | ~~**计数显示**~~ | **已完成**：对照 `Reviewer._remaining()`，「显示答案」按钮上显示「新 + 学习中 + 复习」，当前队列加下划线 |
 | ~~**界面状态同步**~~ | **已完成**：`getSchedulingStatesWithContext` / `setSchedulingStates` + `cardStateCustomizer` 注入，见 `platform/scheduling.rs` |
+| ~~**顶部工具栏**~~ | **已完成**：牌组 / 添加 / 浏览 / 统计 + 快捷键提示，宿主注入 `assets/reviewer-toolbar.js`。差同步链接与 add-ons 托盘（`qt/aqt/toolbar.py:353-418`），见 `tauri/README.md` 的「顶部工具栏」 |
 
 ### 6.2 桥接命令扩充
 
-目前只覆盖 `domDone` / `ans` / `ease1`..`ease4` / `close`。
-待实现清单（都会打 debug 日志）：`edit`、`more`、`updateToolbar`、
-`repaintNeeded`、`browserSearch`、`toggleSticky`、`saveTags`、`saved`、
-`paste`、`cutOrCopy`、`preview` 等。
+目前覆盖 `domDone` / `ans` / `ans:<typed>` / `ease1`..`ease4` / `undo` /
+`statesMutated` / `stateMutationError:` / `edit` / `add` / `browse` /
+`browserSearch:<query>` / `preview`（编辑器的预览按钮）/ `more`（复习界面的「更多」
+与卡片右键）/ `rev:<动作>[:<参数>]`（复习菜单里点的一项）/ `stats`（统计）/
+`preferences`（设置）/ `decks`（牌组列表）/ `overview`（当前牌组的概览）/
+`ioImageLoaded:<path|nid>`（编辑器的遮挡图片已载入，只记日志，对照 `editor.py:364`）/
+`study`（开始复习）/ `opts:<did>`（牌组选项窗口）/ `import`（导入窗口）/
+`shared`（打开共享牌组页）/ `editorReady` / `close`
+（主窗口），以及非主窗口的 `browserReady` / `browserTitle:<notesMode>:<selected>:<total>` /
+`editCard:<cid>` / `editNote:<nid>` / `preview:<cid>` / `cardInfo:<cid>` /
+`addCopy:<nid>:<deckId>` / `changeNoteType:<nid>,...`、预览窗口的
+`previewNext` / `previewPrev` /
+`previewReplay` / `previewBothSides:<0|1>`、`saveRecording` / `cancelRecording`
+与编辑器的状态跟踪命令。
+待实现清单（都会打 debug 日志）：`more`、`updateToolbar`、`repaintNeeded`、
+`toggleSticky`、`saveTags`、`paste`、`cutOrCopy` 等。
 
 > 注意 `js/reviewer/index.ts` 里的 `isLegacy` 分支：新路径走 RPC，
 > 旧路径走 `bridgeCommand`。优先确认某个命令是否真的还需要。
 
 ### 6.3 M2 收尾情况（已完成）
 
-**M2 已完成**：mediasrv 的 32 个平台端点全部有实现。逐项收尾情况：
+**M2 已完成**：mediasrv 的 32 个平台端点全部有实现（M3 期间又加了外壳自己的
+`saveFileDialog`，见 §3.7）。逐项收尾情况：
 
 - ~~**录音**~~ —— **已实现**：`cpal` 采集 + `hound` 写 WAV，录音窗口是宿主自建的
   legacy 页面（红点 + 计时 + 保存/取消），关闭窗口等同取消。与 Qt 的差异见
@@ -571,6 +897,9 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
   `openCardsDialog` / `closeAddCards` / `closeEditCurrent` 卡在**缺少 Web 界面**
   （新版 Anki 里它们是原生 Qt 界面，需要新写 Svelte 页面，属 M3），
   `saveCustomColours` 卡在原生取色器能力。
+  其中 **`closeAddCards` / `closeEditCurrent` / `searchInBrowser` 已经收口**（M3）：
+  前两个见 §6.4，`searchInBrowser` 现在把 `SearchNode` 翻成搜索词再开/复用浏览器窗口
+  （§3.7，实现在 `server/api.rs` 而不是平台层）。
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。仍未覆盖的是**拖入文件**（HTML5 drop），属 M3 的编辑器链路。
@@ -581,11 +910,55 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 
 - **M3**：编辑器（`ts/routes/editor/`，89 个文件，依赖剪贴板/图片/录音）、
   导入导出（**Android 必须走 SAF**）、图像遮挡。
-  - 已完成第一步：**「编辑当前卡片」窗口**（`tauri/src/editor.rs`、`tools/verify-editor.ps1`）。
-    编辑器外层窗口全在 Web 里，宿主只需开窗 + `editorReady` 后注入 `loadNote`；
-    改动前请先读 §5.18（同名端点接管）与 `tauri/README.md` 的「编辑器」。
-  - 下一步：AddCards（`mode=add`，要注入默认 deck/notetype，并在关窗前弹「丢弃修改」确认）、
-    浏览器（`mode=browser`）、「字段…」「卡片…」对话框（原生 Qt 界面，需新写 Svelte 页面）。
+  **进度**：编辑器外壳、浏览器、牌组列表、图像遮挡都已完成；导入导出里 apkg/colpkg
+  已接（浏览器动作表），还差导出 CSV/纯文本与导入的端到端验证。
+  - **已完成**：编辑器外壳的两个窗口。
+    - 「编辑当前卡片」（`mode=current`）：`tools/verify-editor.ps1`；
+    - 「添加卡片」（`mode=add`）：`tools/verify-addcards.ps1` —— 含默认牌组/笔记类型
+      （页面自己算，宿主只给 `reviewerCardId` + `initial:true`）、点「添加」真的落库、
+      以及「有输入 ⇒ 弹确认框 / 无输入 ⇒ 直接关」两条关闭契约（标题栏 × 也会被拦到这条
+      路径上）。
+    - 两个窗口共用同一个页面，**注入参数必须按窗口标签分流**；改动前请先读
+      §5.18（同名端点接管）、§5.20（别读 Playwright 响应体）与 `tauri/README.md`
+      的「编辑器」。
+  - **已完成**：**浏览器窗口**（`tauri/src/browser.rs` + 新写的
+    `ts/routes/browser/` + `tools/verify-browser.ps1`）。入口是复习界面 `b`、
+    图表 `browserSearch:<query>`、`searchInBrowser` 端点；功能含排序、多选、
+    笔记模式、列清单 / 列宽、加标签 / 改牌组 / 删除 + 撤销重做；编辑区因 CSP 限制
+    改成独立窗口（`browser-editor`）。改动前先读 §3.7 与 §5.21 / §5.23，以及
+    `tauri/README.md` 的「浏览器」。
+  - **已完成**：**预览窗口**（`tauri/src/preview.rs` + `legacy::preview_page`）：
+    问题/答案、上一张/下一张（清单在浏览器页面手里）、重播音频；关闭浏览器时连带关掉。
+  - **已完成**：浏览器动作表（`browser.py:301-401` 的绝大部分）——
+    加/移除标签、清除未使用标签、标记、旗标、暂停、埋藏、重置、设置到期日、
+    重新定位、立即评分、改牌组、删除、复制笔记、卡片信息、**更改笔记类型**、
+    查找替换、跳转、反选/全选/选中笔记。菜单栏挪成了**行右键菜单 + 工具栏「更多」**
+    （同一份表，`data-action` 供验证脚本定位）；卡片信息与更改笔记类型都复用已有的
+    `card-info/<cid>` / `change-notetype/<id>` 路由，后者的保存由宿主补 `note_ids`
+    并关窗（见 §3.7）。
+  - **已完成**：列清单 / 列宽 / **列顺序拖动**（拖列头写回 `activeCols`；列宽按卡片/笔记
+    分开存），以及行高亮「只改选中集合也要刷新」的修复（Svelte 响应式坑，见 §5.25）。
+  - **已完成**：**导出**（apkg / colpkg）—— 对话框与导出 RPC 都在页面里，
+    宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）；验证脚本会真的导出一份
+    `.apkg` 并检查它是合法 zip。
+  - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
+    + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
+    同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
+    「获取共享牌组 / 创建牌组 / 导入文件」、工具栏、`d`/`s` 快捷键。
+    页面切换在 `main_window.rs`（整页导航 + `reviewer_active` 的开关顺序，
+    **切页前先读 §5.28**）；启动默认页从 `graphs` 改成了 `decks`（与 Qt 一致）。
+  - **已完成**：**图像遮挡**（3.5）—— 核对后发现**这个版本没有独立的遮挡窗口**：
+    遮挡编辑器内嵌在编辑器页面里（`ImageOcclusionPage`），由工具栏按钮切换；
+    外壳只需放行「选图片」的 `/openFilePicker`（另加了一个测试钩子 `ANKI_OPEN_PATH`）。
+    验证见 `tools/occlusion-check.mjs`（由 `verify-editor.ps1` 调用）。
+  - **已完成**：复习界面的**顶部工具栏**（牌组 / 添加 / 浏览 / 统计 + 快捷键提示，
+    宿主注入 `assets/reviewer-toolbar.js`；差同步链接与 add-ons 托盘，见 §5.29 与
+    `tauri/README.md` 的「顶部工具栏」）。顺带核对：**Qt v3 主窗口并没有状态栏**
+    （`forms/main.ui` 里没有 QStatusBar），`tauri/PARITY.md` 的 1.3 已按"已对齐"处理。
+  - 下一步：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
+    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、管理笔记类型，
+    以及「字段…」「卡片…」对话框（`openFieldsDialog` / `openCardsDialog`）。
+    这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
 - **M4**：Windows 打包（**废弃整套 Briefcase 流程**，改 `tauri build`；
   签名对象从 `Anki.exe` 换成 Tauri 产物）+ Android（`tauri android init/build`，
   需处理 `INTERNET` 权限、cleartext、`getFilesDir()`、NDK 交叉编译）。
@@ -606,13 +979,19 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 - **保留本地 HTTP 服务**：为了前端零改动。代价是多一个本地监听端口。
 - **独立 workspace**：不污染 Anki 构建与 CI，代价是两套依赖树，且用不上 Anki 的测试体系。
 - **未用 Tauri 插件系统**：页面是外部 URL，`@tauri-apps/api` 的 IPC 不可用。
+- **浏览器页面是新写的**：上游的浏览器是原生 Qt 界面，没有可复用的 Web 页面，
+  因此 `ts/routes/browser/` 属于本工程新增（其余窗口都是复用 `ts/routes/` 里的既有页面）。
+  功能面已基本对齐（搜索 / 排序 / 多选 / 笔记模式 / 列清单·列宽·列顺序 / 完整动作表 /
+  导出 apkg·colpkg），仍缺导出里的 CSV·纯文本格式、查找重复、管理笔记类型与
+  「字段…/卡片…」对话框；逐项差异见 `tauri/README.md` 的「浏览器」。
 
 ### 7.2 曾经的妥协与解决情况（不是遗漏，已在文档标注）
 
-- ~~10 个窗口管理类端点接受请求但不产生副作用~~ —— **已解决一半**：多窗口模型下
-  6 个已转发到对应窗口（含录音的保存/取消），另 4 个（`searchInBrowser` /
-  `openFieldsDialog` / `openCardsDialog` / `saveCustomColours`）不是窗口模型能解决的，
-  缺的是 Web 界面或原生取色器能力，见 §6.3。
+- ~~10 个窗口管理类端点接受请求但不产生副作用~~ —— **已解决 6/10**：多窗口模型下
+  6 个都已落地（4 个转发到对应窗口 + `closeAddCards` 的「放弃输入？」确认 +
+  `closeEditCurrent` 直接关窗），另 4 个（`searchInBrowser` / `openFieldsDialog` /
+  `openCardsDialog` / `saveCustomColours`）不是窗口模型能解决的，缺的是 Web 界面或
+  原生取色器能力，见 §6.3。
 - ~~配置存储用本地 JSON 文件，与 Anki 的 `prefs21.db` 不互通~~ —— **已解决**：
   现在直接读写 `prefs21.db`，与桌面版共享（见 §3.5）。
 - ~~PNG「质量」语义与 Qt 不等价~~ —— **已解决**：Qt 对 PNG 传的 `quality` 其实
@@ -634,12 +1013,32 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 - 未跑 Anki 的 Playwright e2e。
 - **录音**：Windows 上已端到端验证（22 秒录音产出 2,107,244 字节的 48 kHz WAV）。
   **Android 未验证**（那里 Qt 用 `MediaRecorder`，本方案统一用 `cpal`）。
+- **「添加卡片」的确认框只验证到「停住」**：`verify-addcards.ps1` 断言了
+  `val=true` 时会进入确认流程且窗口保持打开，但**不会**自动化地去点掉那个原生模态框
+  （点不掉就没法继续跑），「选放弃 ⇒ 关窗」这一半只能人工点一次。
+- **浏览器的动作覆盖**：`verify-browser.ps1` 验证了加/移除标签、改牌组、删除（+ 撤销）、
+  标记、旗标（含清除）、暂停/埋藏（含恢复）、重置、设置到期日、重新定位、立即评分、
+  清除未使用标签、选中笔记、查找替换（真的改了字段）、卡片信息、复制笔记、
+  更改笔记类型（真的改了类型）、导出（真的产出 .apkg）、列顺序拖动与两套列宽，
+  以及 Home/Ctrl+N/End 跳转与反选/全选。**没验证**：导出到 profile 目录的拦截
+  （上游有提示，本方案没做）、查找重复 / 管理笔记类型 / CSV 导出（都没实现）。
+  「放弃输入」确认框里"选放弃 ⇒ 关窗"那一半也只能人工点一次（原生模态框）。
+- **预览的「仅背面」只验证了开关与配置落库**：断言了 `previewBothSides` 打开后切到
+  答案面、关闭后回到问题面，但没有断言「问题与答案同时显示」的排版细节。
+- 检查脚本跑完会把集合里的 `previewBothSides` 留成 `false`（它先打开再关掉），
+  如果之前是打开的，需要手工再打开。
 
 ### 7.4 对上游的改动
 
-只有一处：`rslib/proto/src/lib.rs` 加了一行 `protobuf!(frontend, "frontend");`，
-用于暴露 `frontend.proto` 的消息类型（其 service 仍被 rust_interface 过滤）。
-纯增量，无行为影响。
+两处，都是**纯增量、无行为影响**：
+
+1. `rslib/proto/src/lib.rs` 加了一行 `protobuf!(frontend, "frontend");`，
+   用于暴露 `frontend.proto` 的消息类型（其 service 仍被 rust_interface 过滤）。
+2. `rslib/i18n/src/lib.rs` 的 `I18n::translate` 从私有改为 `pub`（并补了文档注释）。
+   原因：生成的类型化方法只覆盖核心字符串（`Translation::is_core()` 排除了 `qt` /
+   `mobile` 仓库），而外壳复刻 Qt 对话框时要用 `qt-misc-*` 这类文案
+   （预览窗口的「仅背面」就是 `qt-misc-back-side-only`）。字符串表本身包含全部模块，
+   只是缺一个公开入口。
 
 ---
 
@@ -659,21 +1058,43 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
 | 配置存储（`prefs21.db`） | `tauri/src/platform/prefs21.rs`、`qt/aqt/profiles.py` |
 | 窗口模型 | `tauri/src/windows.rs`、`qt/aqt/__init__.py` 的 `DialogManager` |
 | 录音与 TTS | `tauri/src/platform/record.rs`、`tauri/src/platform/audio.rs`、`qt/aqt/sound.py`、`qt/aqt/tts.py` |
-| 编辑器窗口 | `tauri/src/editor.rs`、`ts/routes/editor/`、`qt/aqt/editor.py`（宿主契约） |
-| 验证脚本与用法 | `tauri/tools/`（`verify-reviewer.ps1` 复习界面 / `verify-m2.ps1` 平台能力 / `verify-editor.ps1` 编辑器）、`tauri/README.md` 的「验证工具」 |
+| 编辑器窗口（编辑当前 / 添加卡片 / 浏览器编辑区） | `tauri/src/editor.rs`、`ts/routes/editor/`、`qt/aqt/editor.py`（宿主契约）、`qt/aqt/addcards.py`（关闭确认） |
+| 浏览器窗口 | `tauri/src/browser.rs`、`ts/routes/browser/`（新写）、`qt/aqt/browser/browser.py` + `table/model.py` + `sidebar/tree.py` + `find_and_replace.py`（对照用）、`qt/aqt/forms/browser.ui`（动作表与快捷键） |
+| 导出（apkg / colpkg） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框与导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py`（对照用） |
+| 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
+| 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
+| 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
+| 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |
+| 预览窗口 | `tauri/src/preview.rs`、`tauri/src/legacy.rs` 的 `preview_page`、`qt/aqt/browser/previewer.py` |
+| 验证脚本与用法 | `tauri/tools/`（`verify-reviewer.ps1` 复习界面 / `verify-m2.ps1` 平台能力 / `verify-editor.ps1` 编辑当前 / `verify-addcards.ps1` 添加卡片 / `verify-browser.ps1` 浏览器）、`tauri/README.md` 的「验证工具」 |
 
 ---
 
 ## 9. 下一步建议
 
-M1 / M2 已收尾（32 个平台端点全部有实现），M3 的**编辑器外壳**开了个头
-（「编辑当前卡片」窗口可用）。建议：
+M1 / M2 已收尾（32 个平台端点全部有实现），M3 的三个窗口都能用了
+（「编辑当前卡片」「添加卡片」「浏览器」，都有一键脚本）。建议：
 
-1. **先跑三个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
-   断言）、`verify-m2.ps1`（平台能力 + 多窗口命令归属）、`verify-editor.ps1`
-   （编辑器窗口 + 改字段保存）。它们是「改完马上确认没坏」的入口。
-2. **继续 M3**：编辑器还缺 AddCards（`mode=add`）、浏览器（`mode=browser`）与
-   「字段…/卡片…」对话框。做之前先读 `tauri/README.md` 的「编辑器」——
-   宿主契约只有两步（开窗 + 注入 `loadNote`），但踩坑不少（§5.18 / §5.19）。
-3. 若只做小步：`tauri/README.md` 的「尚未实现」里，`more` 命令、卡片布局与预览器
-   都卡在"缺界面"上；`current_caller` 与拖入文件属音频 / 编辑器细节。
+1. **先跑六个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
+   断言）、`verify-m2.ps1`（平台能力 + 多窗口命令归属，录音那项需要有麦克风）、
+   `verify-editor.ps1`（编辑当前卡片 + 改字段保存）、`verify-addcards.ps1`
+   （添加卡片 + 添加落库 + 关闭契约）、`verify-browser.ps1`（浏览器 + 表格 + 编辑区
+   联动）、`verify-decks.ps1`（牌组列表 + 主窗口切页）。它们是「改完马上确认没坏」的入口。
+2. **对齐清单在 `tauri/PARITY.md`**：那里按"用户感知顺序"列着还差什么（主窗口/牌组列表、
+   既有页面接入、字段/卡片对话框、浏览器余项、系统集成、打包与 Android），每项带
+   上游参考与验收方式；**补完一项就更新那份清单**。当前进度：复习界面的「更多」菜单
+   与顶部工具栏、3.1-3.5「既有页面接入」（牌组选项 / 统计 / 设置 / 导入 / 图像遮挡）、
+   1.1 牌组列表、1.2 的两条工具栏都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理）。
+   下一步按清单走：**3.6 自定义学习**（要新界面）、**4.1-4.2 字段/卡片对话框**
+   （工作量最大，要新界面）、以及浏览器余项（CSV 导出、查找重复、管理笔记类型）。
+   `y`（同步）与 `Ctrl+E`（导出）要等 6.x 的同步与主窗口菜单栏。
+   做之前先读
+   `tauri/README.md` 的「编辑器」「浏览器」「复习界面」「牌组列表」：宿主契约都不复杂，
+   但踩坑不少（§5.18 - §5.30）。
+   注意有些"新窗口"不必新写界面 —— `card-info/<cid>`、`change-notetype/<id>`
+   这类**仓库里已有的路由**直接复用即可（§3.7 第 7 条）；反过来，"原生对话框"这类
+   宿主独有能力（保存路径、消息框）则要按 §3.7 第 6 条补端点。
+3. 若只做小步：`current_caller`（editor / reviewer 的 TTS 打断语义）与
+   拖入文件（HTML5 drop）属音频 / 编辑器细节；工程化侧还有把 §2.1 的构建步骤
+   接进 `just`、补 `tauri/capabilities/`、换掉占位图标。`more` 命令、卡片布局与
+   预览器则同样卡在"缺界面"上。

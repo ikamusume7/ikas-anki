@@ -51,6 +51,7 @@ use anki_proto::generic::Json as GenericJson;
 use anki_proto::generic::String as GenericString;
 use anki_proto::scheduler::queued_cards::Queue;
 use anki_proto::scheduler::SchedulingContext;
+use serde_json::json;
 
 use crate::platform::audio;
 use crate::state::AppState;
@@ -231,6 +232,8 @@ pub async fn start(state: &AppState) {
         session.shown_at = Some(std::time::Instant::now());
     }
 
+    install_toolbar(state);
+
     // 底部栏只需注入一次（幂等，重复注入也无副作用）
     let bar = bottom_bar_html(state.backend.i18n());
     tracing::debug!("底部栏（{} 字节）: {}", bar.len(), bar);
@@ -243,6 +246,7 @@ pub async fn start(state: &AppState) {
     );
     sync_bottom_bar_height(state);
     install_reviewer_shortcuts(state);
+    crate::reviewer_menu::install(state);
 
     show_question(state).await;
 }
@@ -266,8 +270,8 @@ pub async fn undo(state: &AppState) {
 /// 复习界面的快捷键。
 ///
 /// Qt 用 QShortcut 注册（`Reviewer._shortcutKeys()` 里的 `u`，以及主窗口的
-/// Ctrl+Z），单页方案里改为在页面内监听键盘。这里只装撤销，且裸键会避开输入框
-/// （类型作答时 `u` 是普通字符）。
+/// Ctrl+Z、全局 `a` 与 `b`），单页方案里改为在页面内监听键盘。这里只装撤销、
+/// 添加卡片与浏览器，且裸键会避开输入框（类型作答时 `u` / `a` / `b` 都是普通字符）。
 fn install_reviewer_shortcuts(state: &AppState) {
     eval(
         state,
@@ -291,12 +295,39 @@ fn install_reviewer_shortcuts(state: &AppState) {
             if (event.key === "z" || event.key === "Z") {
                 event.preventDefault();
                 window.pycmd("undo");
+            } else if (event.key === "p" || event.key === "P") {
+                // 对照 `forms/main.ui` 的 `actionPreferences`（Ctrl+P）→ `onPrefs()`
+                event.preventDefault();
+                window.pycmd("preferences");
             }
             return;
         }
-        if (!inTextInput(event.target) && (event.key === "u" || event.key === "U")) {
+        if (inTextInput(event.target)) {
+            return;
+        }
+        if (event.key === "u" || event.key === "U") {
             event.preventDefault();
             window.pycmd("undo");
+        } else if (event.key === "a" || event.key === "A") {
+            // 对照 Qt 主窗口的全局快捷键 `a` → `mw.onAddCard()`（`main.py:1183`）
+            event.preventDefault();
+            window.pycmd("add");
+        } else if (event.key === "b" || event.key === "B") {
+            // 对照 Qt 主窗口的全局快捷键 `b` → `mw.onBrowse()`
+            event.preventDefault();
+            window.pycmd("browse");
+        } else if (event.key === "t" || event.key === "T") {
+            // 对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `mw.onStats()`（`main.py:1185`）
+            event.preventDefault();
+            window.pycmd("stats");
+        } else if (event.key === "d" || event.key === "D") {
+            // 对照 `d` → `moveToState("deckBrowser")`（`main.py:1181`）：回牌组列表
+            event.preventDefault();
+            window.pycmd("decks");
+        } else if (event.key === "s" || event.key === "S") {
+            // 对照 `s` → `onStudyKey()`（`main.py:1240-1245`）：复习状态下进概览
+            event.preventDefault();
+            window.pycmd("overview");
         }
     });
 })();"#,
@@ -500,6 +531,57 @@ async fn show_question(state: &AppState) {
 ///
 /// 对照 Qt：底部栏是独立控件，留白由 Qt 的布局负责；本方案两个界面共用一个
 /// 页面，因此由脚本把实测高度告诉样式表，而不是在 CSS 里写死数值。
+/// 顶部工具栏的链接（对照 `toolbar.py:353-389` 的 `_centerLinks`）。
+///
+/// 顺序与文案都和 Qt 一致：牌组 / 添加 / 浏览 / 统计，提示是各自的全局快捷键
+/// （`actions-shortcut-key`）。**同步链接没做**（`toolbar.py:410-418`）——本外壳
+/// 没有同步功能（`tauri/PARITY.md` 6.1），左右两个托盘（add-ons 用）也没有。
+fn toolbar_payload(tr: &I18n) -> serde_json::Value {
+    json!({
+        "hostId": "top-toolbar",
+        "links": [
+            {
+                "id": "decks",
+                "cmd": "decks",
+                "label": tr.actions_decks(),
+                "tip": tr.actions_shortcut_key("D"),
+            },
+            {
+                "id": "add",
+                "cmd": "add",
+                "label": tr.actions_add(),
+                "tip": tr.actions_shortcut_key("A"),
+            },
+            {
+                "id": "browse",
+                "cmd": "browse",
+                // 浏览 / 统计住在 ftl/qt/qt-misc.ftl（没有类型化函数）
+                "label": tr.translate("qt-misc-browse", None),
+                "tip": tr.actions_shortcut_key("B"),
+            },
+            {
+                "id": "stats",
+                "cmd": "stats",
+                "label": tr.translate("qt-misc-stats", None),
+                "tip": tr.actions_shortcut_key("T"),
+            },
+        ]
+    })
+}
+
+/// 顶部工具栏的渲染脚本（放成文件，验证脚本读同一份，见 §5.27）。
+const TOOLBAR_JS: &str = include_str!("../assets/reviewer-toolbar.js");
+
+/// 注入顶部工具栏（对照 Qt 主窗口那条常驻工具栏；`legacy.rs` 的复习页留了容器）。
+fn install_toolbar(state: &AppState) {
+    let payload = toolbar_payload(state.backend.i18n());
+    eval(
+        state,
+        &format!("{TOOLBAR_JS}\ninstallToolbar({payload});"),
+    );
+    tracing::debug!("顶部工具栏已注入");
+}
+
 fn sync_bottom_bar_height(state: &AppState) {
     eval(
         state,
@@ -508,7 +590,10 @@ fn sync_bottom_bar_height(state: &AppState) {
     );
 }
 
-async fn render_card(state: &AppState, card_id: i64) -> anyhow::Result<RenderCardResponse> {
+pub(crate) async fn render_card(
+    state: &AppState,
+    card_id: i64,
+) -> anyhow::Result<RenderCardResponse> {
     let request = RenderExistingCardRequest {
         card_id,
         browser: false,
@@ -547,6 +632,13 @@ async fn autoplay_audio(state: &AppState, question_side: bool, html: &str) {
         return;
     }
 
+    play_av_tags(state, tags).await;
+}
+
+/// 把 av 标签变成实际音频文件并排队播放。
+///
+/// reviewer（自动播放 / 重播）与预览窗口共用；对照 `AVPlayer.play_tags`。
+pub(crate) async fn play_av_tags(state: &AppState, tags: Vec<AvTag>) {
     let mut files = Vec::new();
     for tag in tags {
         match tag.value {
@@ -566,15 +658,15 @@ async fn autoplay_audio(state: &AppState, question_side: bool, html: &str) {
     if files.is_empty() {
         return;
     }
-    tracing::debug!("自动播放 {} 个音频文件", files.len());
+    tracing::debug!("播放 {} 个音频文件", files.len());
     if let Err(error) = audio::play_files(files) {
-        tracing::warn!("自动播放失败: {error}");
+        tracing::warn!("播放失败: {error}");
     }
 }
 
 /// 对照 pylib 的 `Card.question_av_tags()` / `answer_av_tags()`：
 /// 从渲染结果里提取 `[sound:...]` 与 `{{tts ...}}` 标签。
-async fn extract_av_tags(
+pub(crate) async fn extract_av_tags(
     state: &AppState,
     text: &str,
     question_side: bool,
@@ -592,7 +684,7 @@ async fn extract_av_tags(
 /// 对照 `Collection.decks.config_dict_for_deck_id()`：计时器、自动播放、
 /// `stopTimerOnAnswer` 等都取自这里。筛选牌组没有自己的配置，返回 `None`，
 /// 调用方按默认值处理。
-async fn read_deck_settings(
+pub(crate) async fn read_deck_settings(
     state: &AppState,
     deck_id: i64,
 ) -> anyhow::Result<Option<DeckSettings>> {
@@ -1015,14 +1107,14 @@ async fn describe_next_states(
 }
 
 /// 对照 `TemplateRenderOutput.question_and_style()`：样式与内容一起注入。
-fn with_css(css: &str, html: &str) -> String {
+pub(crate) fn with_css(css: &str, html: &str) -> String {
     format!("<style>{css}</style>{html}")
 }
 
 /// 把结构化渲染结果拼成 HTML。
 ///
 /// 对照 `pylib/anki/template.py` 的 `PartiallyRenderedCard.nodes_from_proto`。
-fn nodes_to_html(nodes: &[RenderedTemplateNode]) -> String {
+pub(crate) fn nodes_to_html(nodes: &[RenderedTemplateNode]) -> String {
     let mut out = String::new();
     for node in nodes {
         match node.value.as_ref() {
@@ -1047,7 +1139,7 @@ fn show_message(state: &AppState, message: &str) {
 }
 
 /// 把任意字符串安全地嵌入 JS 源码。
-fn js_string(value: &str) -> String {
+pub(crate) fn js_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 

@@ -6,14 +6,15 @@
 #   3. 断言编辑器窗口打开、并**真的载入了 note**（靠注入脚本回传的 editorLoaded）
 #   4. 截取窗口真实渲染，再走一次关闭流程
 #
-# 前置：已按 TAURI_HANDOVER.md §2 构建过（out/rust/debug/anki-tauri.exe 存在）。
+# 前置：已按 TAURI_HANDOVER.md §2 构建过（`cd tauri; cargo build` →
+#       `tauri/target/debug/anki-tauri.exe`）。
 #
 # 用法：
 #   pwsh -File tauri/tools/verify-editor.ps1
 
 [CmdletBinding()]
 param(
-    [string]$Exe = "out/rust/debug/anki-tauri.exe",
+    [string]$Exe = "tauri/target/debug/anki-tauri.exe",
     [int]$Port = 40021,
     [string]$ApiKey = "test-key-123",
     [string]$Collection = "out/tauri-test/collection.anki2",
@@ -45,6 +46,19 @@ $env:ANKI_API_KEY = $ApiKey
 $env:ANKI_COLLECTION = (Join-Path $root $Collection)
 $env:ANKI_START_PAGE = "reviewer"
 $env:ANKI_LANG = $Lang
+
+# 图像遮挡的「选图片」要弹原生的打开对话框（没法自动点），所以造一张真图片并让
+# 宿主直接返回它（`platform/dialogs.rs` 的 `ANKI_OPEN_PATH`，与 `ANKI_SAVE_PATH` 同类）。
+# 1x1 的透明 PNG，够 `addMediaFromPath` 拷进媒体夹。
+$occlusionFixture = Join-Path $OutDir "occlusion-fixture.png"
+New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+[System.IO.File]::WriteAllBytes(
+    $occlusionFixture,
+    [Convert]::FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+    )
+)
+$env:ANKI_OPEN_PATH = $occlusionFixture
 
 function Read-Log {
     param([string]$Path)
@@ -140,6 +154,17 @@ try {
     Write-Host "验证「改字段 → 保存」链路…"
     node tauri/tools/editor-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 图像遮挡：只有遮挡笔记类型才显示工具栏按钮；选图片走宿主的 /openFilePicker
+    # （本版本没有独立的遮挡窗口，遮罩编辑器就内嵌在编辑器页面里）
+    Write-Host "验证图像遮挡（内嵌遮罩编辑器）…"
+    $env:SHOT_DIR = $OutDir
+    node tauri/tools/occlusion-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+    # 页面把图片拷进了媒体夹，后端没暴露删除接口，这里从磁盘清掉
+    $mediaFile = Join-Path (Split-Path $env:ANKI_COLLECTION -Parent) `
+        "collection.media/occlusion-fixture.png"
+    if (Test-Path $mediaFile) { Remove-Item $mediaFile -Force -ErrorAction SilentlyContinue }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red
     $passed = $false

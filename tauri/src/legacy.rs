@@ -94,7 +94,10 @@ pub fn render(
 /// 这里放在同一页面。`#bottom-container` 的内容由 `crate::reviewer` 注入，
 /// 其中的按钮调用全局的 `pycmd`，因此跨 WebView 的消息传递不需要了。
 pub fn reviewer_page(port: u16) -> u32 {
-    let body = r#"<div id="_mark" hidden>&#x2605;</div>
+    // `#top-toolbar` 由 `crate::reviewer` 在会话开始时填内容（`install_toolbar()`），
+    // 对照 Qt 主窗口那条常驻工具栏（`qt/aqt/toolbar.py`）
+    let body = r#"<div id="top-toolbar"></div>
+<div id="_mark" hidden>&#x2605;</div>
 <div id="_flag" hidden>&#x2691;</div>
 <div id="qa" dir="auto"></div>
 <div id="bottom-container"></div>
@@ -164,6 +167,127 @@ pub fn recorder_page(port: u16, i18n: &I18n, secs_placeholder: &str) -> u32 {
     register(render(port, "Anki", &body, &[], &[], RECORDER_CSS))
 }
 
+/// 预览窗口的页面（对照 `qt/aqt/browser/previewer.py:145-160`）。
+///
+/// Qt 的预览器用 reviewer 的 WebView + reviewer.js 渲染，按钮在原生
+/// QDialogButtonBox 里；这里按钮放进页面（`#preview-buttons` 固定到底部），
+/// 通过 `pycmd` 回传给 `crate::preview`。
+///
+/// 按钮文案：重播音频取自 `actions-replay-audio`（核心 ftl）；
+/// 上一张/下一张沿用 Qt 的 `<` / `>` 字形（Qt 用的是箭头符号，没有文案）。
+pub fn preview_page(port: u16, i18n: &I18n) -> u32 {
+    let replay = i18n.actions_replay_audio();
+    // 「仅背面」的文案在 `ftl/qt` 仓库里，类型化方法只覆盖核心字符串，
+    // 所以用底层的 `translate`（字符串表本身包含全部模块）
+    let back_side_only = i18n.translate("qt-misc-back-side-only", None);
+    let body = format!(
+        r#"<div id="_mark" hidden>&#x2605;</div>
+<div id="_flag" hidden>&#x2691;</div>
+<div id="qa" dir="auto"></div>
+<div id="preview-buttons">
+  <button id="prev" title="">&lt;</button>
+  <button id="next" title="">&gt;</button>
+  <button id="replay">{replay}</button>
+  <label id="both-label">
+    <input type="checkbox" id="both" /> {back_side_only}
+  </label>
+</div>
+<script>
+(function () {{
+    // 对照 `previewer.py:267-275` 的注入函数名：reviewer.js 提供 _showQuestion/_showAnswer
+    window.previewSetState = function (showingAnswer, bothSides) {{
+        document.body.dataset.state = showingAnswer ? "answer" : "question";
+        document.getElementById("both").checked = !!bothSides;
+    }};
+    document.getElementById("both").addEventListener("change", function (event) {{
+        pycmd("previewBothSides:" + (event.target.checked ? 1 : 0));
+    }});
+    document.getElementById("prev").addEventListener("click", function () {{
+        pycmd("previewPrev");
+    }});
+    document.getElementById("next").addEventListener("click", function () {{
+        pycmd("previewNext");
+    }});
+    document.getElementById("replay").addEventListener("click", function () {{
+        pycmd("previewReplay");
+    }});
+    document.addEventListener("keydown", function (event) {{
+        // 焦点在按钮上时，Space/Enter 会先被浏览器解释成"点击"，交给 click 处理器，
+        // 否则同一次按键会发两条命令
+        var onButton =
+            document.activeElement && document.activeElement.tagName === "BUTTON";
+        if (event.key === "r" || event.key === "R") {{
+            pycmd("previewReplay");
+        }} else if (event.key === "b" || event.key === "B") {{
+            // 对照 `previewer.py:107-115` 的「仅背面」快捷键
+            var both = document.getElementById("both");
+            both.checked = !both.checked;
+            pycmd("previewBothSides:" + (both.checked ? 1 : 0));
+        }} else if (event.key === "ArrowLeft") {{
+            pycmd("previewPrev");
+        }} else if (event.key === "ArrowRight") {{
+            event.preventDefault();
+            pycmd("previewNext");
+        }} else if ((event.key === "Enter" || event.key === " ") && !onButton) {{
+            event.preventDefault();
+            pycmd("previewNext");
+        }} else if (
+            event.key === "Escape" ||
+            (event.ctrlKey && event.shiftKey && (event.key === "p" || event.key === "P"))
+        ) {{
+            pycmd("close");
+        }}
+    }});
+}})();
+</script>
+"#
+    );
+    let html = render(
+        port,
+        "Anki",
+        &body,
+        &["css/webview.css", "css/reviewer.css"],
+        &["js/webview.js", "js/reviewer.js"],
+        PREVIEW_ISOLATION_CSS,
+    );
+    register(html)
+}
+
+/// 预览页的隔离样式：语义与 reviewer 页一致，只是把按钮栏固定到底部。
+const PREVIEW_ISOLATION_CSS: &str = r#"
+body {
+    /* reviewer.scss 的值 */
+    margin: 20px;
+    padding-bottom: 52px;
+    overflow-y: auto;
+}
+
+#preview-buttons {
+    position: fixed;
+    inset: auto 0 0 0;
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+    background: var(--canvas);
+    border-top: 1px solid var(--border-subtle);
+}
+
+#preview-buttons button {
+    min-width: 44px;
+    margin: 0;
+    padding: 4px 10px;
+}
+
+#both-label {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    white-space: nowrap;
+}
+"#;
+
 /// 录音对话框的样式。只依赖系统颜色（`canvas` / `canvastext`），
 /// 这样浅色与深色主题下都能跟原生对话框接近。
 const RECORDER_CSS: &str = r#"
@@ -222,8 +346,17 @@ body {
     margin: 20px;
     /* 底部栏固定在窗口底部，为卡片区留出等高的空间，避免内容被遮住 */
     padding-bottom: var(--bottom-bar-height, 80px);
+    /* 顶部工具栏同理（`crate::reviewer::install_toolbar` 注入后写入真实高度） */
+    padding-top: var(--top-bar-height, 2.4rem);
     /* 长卡片需要能滚动（toolbar-bottom.css 的 overflow: hidden 已不再加载） */
     overflow-y: auto;
+}
+
+#top-toolbar {
+    /* 对照 Qt：主窗口的工具栏是内容之上的一条独立控件 */
+    position: fixed;
+    inset: 0 0 auto 0;
+    background: var(--canvas);
 }
 
 #bottom-container {

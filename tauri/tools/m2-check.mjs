@@ -176,11 +176,17 @@ if (voices.length > 0) {
 
 // 4. 录音闭环：请求一直挂起，直到桥接命令告诉它保存
 {
-    const controller = new AbortController();
     let recorded;
     try {
         // 不 await：这个请求会一直挂到用户在录音窗口里点保存
-        const pending = rpc("recordAudio", new Empty().toBinary(), controller.signal);
+        const pending = rpc("recordAudio", new Empty().toBinary());
+        // **必须马上挂一个 handler**：这条请求可能在下面 await 之前就失败（本机没有
+        // 输入设备时服务端直接 500），不挂的话 node 会把它当成 unhandled rejection
+        // 直接杀掉测试进程（Windows 上收尾时还会带出 libuv 的
+        // `!(handle->flags & UV_HANDLE_CLOSING)` 断言，看起来像"被测程序崩了"）。
+        // 注意不要用 `AbortController.abort()` 去断它：abort 一个仍然挂着的请求
+        // 在 Windows 上同样会触发那个断言。
+        pending.catch(() => {});
         await sleep(5000);
         // 录音窗口的页面就是这么发的（`bridgeCommand("saveRecording")`）
         const status = await bridge("recorder", "saveRecording");
@@ -188,9 +194,6 @@ if (voices.length > 0) {
         recorded = GenericString.fromBinary(await withTimeout(pending, 30_000, "recordAudio")).val;
     } catch (error) {
         check("recordAudio 闭环", false, String(error.cause ?? error));
-    } finally {
-        // 超时路径下要主动断开，否则挂着的请求会让 node 不退出
-        controller.abort();
     }
     if (recorded !== undefined) {
         const size = recorded && fs.existsSync(recorded) ? fs.statSync(recorded).size : 0;
@@ -201,5 +204,7 @@ if (voices.length > 0) {
 console.log(`\n结果：${failures.length === 0 ? "全部通过" : `${failures.length} 项失败`}${skipped.length ? `，跳过 ${skipped.length} 项` : ""}`);
 if (failures.length > 0) {
     console.error(`失败项：${failures.join("、")}`);
-    process.exitCode = 1;
 }
+// 显式退出：录音那条请求可能仍然挂着（服务端会阻塞到用户点"保存"），
+// 光设 `process.exitCode` 的话 node 不会退出，PS 脚本会一直等到超时
+process.exit(failures.length > 0 ? 1 : 0);

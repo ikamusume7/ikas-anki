@@ -322,7 +322,13 @@ impl<P: Translations> I18n<P> {
         self.translate(key, Some(args)).into()
     }
 
-    fn translate<'a>(&'a self, key: &str, args: Option<FluentArgs>) -> Cow<'a, str> {
+    /// 按 ftl key 直接取翻译。
+    ///
+    /// 生成的类型化方法（`write_strings.rs`）只覆盖**核心**字符串 ——
+    /// `Translation::is_core()` 把 `qt` / `mobile` 两个仓库排除在外，所以
+    /// `qt-misc-*` 这类文案在 Rust 侧没有对应函数。外壳（`tauri/`）要复刻 Qt 的
+    /// 对话框时仍需要它们，因此把这个方法放开为 `pub`（纯增量，行为不变）。
+    pub fn translate<'a>(&'a self, key: &str, args: Option<FluentArgs>) -> Cow<'a, str> {
         for bundle in &self.inner.lock().unwrap().bundles {
             let msg = match bundle.get_message(key) {
                 Some(msg) => msg,

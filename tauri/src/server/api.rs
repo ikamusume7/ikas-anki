@@ -10,6 +10,7 @@
 //! 对照 mediasrv 的 `_extract_collection_post_request`、`raw_backend_request`
 //! 与 `_check_dynamic_request_permissions`。
 
+use anki_proto::notetypes::ChangeNotetypeRequest;
 use axum::body::Bytes;
 use axum::extract::Path;
 use axum::extract::State;
@@ -18,6 +19,7 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use prost::Message as _;
 
 use crate::method_table;
 use crate::platform;
@@ -40,6 +42,55 @@ pub async fn handle_rpc(
 ) -> Response {
     if let Err(response) = check_post_permission(&state, &headers, &method) {
         return response;
+    }
+
+    // 0. 需要**异步 RPC** 的平台端点：浏览器要把 `SearchNode` 翻成搜索词
+    //    （`buildSearchString`），而 `platform::dispatch` 跑在阻塞线程池上，
+    //    所以这条单独放在这里，不落进下面的平台分支。
+    if method == "searchInBrowser" {
+        return match crate::browser::search_in_browser(&state, &body).await {
+            // 对照 `frontend.proto` 的 `generic.Empty`：响应体为空
+            Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
+            Err(error) => {
+                tracing::warn!("searchInBrowser 失败: {error:#}");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response()
+            }
+        };
+    }
+
+    // 0.5 「更改笔记类型」：补上 note_ids + RPC 跑完由**宿主**关窗。
+    //
+    // 上游是窗口感知的端点：`mediasrv.py:772` 发现请求来自 `ChangeNotetypeDialog`
+    // 就调 `dialog.save(data)` —— 而 `save()` 做的正是两件事（`changenotetype.py:68-85`）：
+    // 把宿主记住的 `note_ids` 补进请求（**页面不知道选了哪些笔记**，它只给字段映射），
+    // 然后执行操作、成功即关窗。这里照做。
+    // 因为 `backend.call` 是 async、`platform::dispatch` 跑在阻塞线程池上，
+    // 所以和 `searchInBrowser` 一样单独接一条。
+    if method == "changeNotetype" {
+        let mut input = match ChangeNotetypeRequest::decode(body.as_ref()) {
+            Ok(input) => input,
+            Err(error) => {
+                return (StatusCode::BAD_REQUEST, format!("changeNotetype 解析失败: {error}"))
+                    .into_response()
+            }
+        };
+        if input.note_ids.is_empty() {
+            match state.browser.pending_change_notetype() {
+                Some(note_ids) => input.note_ids = note_ids,
+                None => {
+                    tracing::warn!("changeNotetype 请求没有 note_ids，且宿主也没有记录（窗口没开着？）")
+                }
+            }
+        }
+        return match state.backend.call(&method, input.encode_to_vec()).await {
+            Ok(output) => {
+                state.browser.clear_pending_change_notetype();
+                crate::windows::close(&state, crate::windows::CHANGE_NOTETYPE);
+                ([(header::CONTENT_TYPE, "application/binary")], output).into_response()
+            }
+            // 失败时不关窗：用户可以改完映射再保存一次
+            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        };
     }
 
     // 1. rslib 服务方法。

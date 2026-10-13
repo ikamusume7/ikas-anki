@@ -6,8 +6,8 @@
 //! 对照 Qt 侧 `AnkiWebPage.onBridgeCmd`。请求体是命令字符串
 //! （如 `ans`、`ease3`、`close`、`domDone`），响应是 JSON 文本，会传给前端的回调。
 //!
-//! 已处理的命令集中在复习主链路与外壳自身；其余命令（工具栏动作、编辑器
-//! 快捷键、`browserSearch` 等）依赖尚未迁入的 Qt 逻辑，会记录日志并返回 `null`。
+//! 已处理的命令集中在复习主链路、编辑器与浏览器；其余命令（工具栏动作、
+//! `updateToolbar`、`repaintNeeded` 等）依赖尚未迁入的 Qt 逻辑，会记录日志并返回 `null`。
 //!
 //! **命令按来源窗口分流**：注入脚本会在每个请求上带 `X-Anki-Window`（见
 //! `crate::bridge`）。Qt 里每个 WebView 有自己的 `AnkiWebPage`，命令天然归属该
@@ -22,10 +22,15 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use serde_json::json;
 
+use crate::browser;
 use crate::editor;
+use crate::main_window;
 use crate::platform::record;
+use crate::preview;
 use crate::reviewer;
+use crate::reviewer_menu;
 use crate::state::AppState;
 use crate::windows;
 
@@ -123,6 +128,81 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             );
             None
         }
+        // 牌组列表（对照 Qt 的 `d` → `moveToState("deckBrowser")`，`main.py:1181`）
+        "decks" => {
+            if let Err(error) = main_window::show_decks(state) {
+                tracing::warn!("切到牌组列表失败: {error:#}");
+            }
+            None
+        }
+        // 当前牌组的概览（对照 Qt 的 `s` 在复习状态 → `moveToState("overview")`，
+        // `main.py:1240-1245`）
+        "overview" => {
+            if let Err(error) = main_window::show_overview(state) {
+                tracing::warn!("切到牌组概览失败: {error:#}");
+            }
+            None
+        }
+        // 开始复习（Overview 的「学习」按钮 / `s` 在概览里）
+        "study" => {
+            if let Err(error) = main_window::start_study(state) {
+                tracing::warn!("开始复习失败: {error:#}");
+            }
+            None
+        }
+        // 牌组的齿轮菜单 → 选项（`deckbrowser.py:293-296` 的 `opts:<did>`）
+        command if command.starts_with("opts:") => {
+            match command.trim_start_matches("opts:").parse::<i64>() {
+                Ok(deck_id) => {
+                    if let Err(error) = main_window::open_deck_options(state, deck_id) {
+                        tracing::warn!("打开牌组选项失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 opts 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 牌组列表底部：导入文件（`deckbrowser.py:399` → `mw.onImport()`）与
+        // 获取共享牌组（`deckbrowser.py:396` → `openLink(appShared + "decks")`）
+        "import" => {
+            if let Err(error) = main_window::open_import(state) {
+                tracing::warn!("打开导入窗口失败: {error:#}");
+            }
+            None
+        }
+        "shared" => {
+            if let Err(error) = main_window::open_shared_decks() {
+                tracing::warn!("打开共享牌组页失败: {error:#}");
+            }
+            None
+        }
+        // 统计图（对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `onStats()`，
+        // `main.py:1185`），页面是既有的 `graphs/`
+        "stats" => {
+            if let Err(error) = main_window::open_stats(state) {
+                tracing::warn!("打开统计图失败: {error:#}");
+            }
+            None
+        }
+        // 偏好设置（对照 `main.py:1459` 的 `actionPreferences`，快捷键 `Ctrl+P`），
+        // 页面是既有的 `preferences/`
+        "preferences" => {
+            if let Err(error) = main_window::open_preferences(state) {
+                tracing::warn!("打开偏好设置失败: {error:#}");
+            }
+            None
+        }
+        // 复习界面的「更多」与卡片右键（对照 Qt 的 `more` → `showContextMenu()`，
+        // `reviewer.py:682-683`）。菜单由宿主拼数据、页面画，见 `crate::reviewer_menu`。
+        "more" => {
+            reviewer_menu::show(state).await;
+            None
+        }
+        // 复习菜单里点的一项（`rev:<动作>[:<参数>]`）
+        command if command.starts_with("rev:") => {
+            reviewer_menu::handle(state, command).await;
+            None
+        }
         // 编辑当前卡片（对照 Qt 复习界面底部栏的 `edit` → `mw.onEditCurrent()`）
         "edit" => {
             if let Err(error) = editor::open_current_card(state).await {
@@ -130,10 +210,44 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             }
             None
         }
+        // 添加卡片（对照 Qt 主窗口的全局快捷键 `a` → `mw.onAddCard()`）。
+        // Qt 的入口在主窗口工具栏上，本外壳还没有牌组浏览器/工具栏，所以先由
+        // 复习页面的 `a` 快捷键触发（见 `reviewer.rs` 的 `install_reviewer_shortcuts`）。
+        "add" => {
+            if let Err(error) = editor::open_add_cards(state) {
+                tracing::warn!("打开添加卡片窗口失败: {error:#}");
+            }
+            None
+        }
+        // 打开浏览器（对照 Qt 主窗口的全局快捷键 `b` → `mw.onBrowse()`，
+        // `main.py` 的快捷键表；默认搜索 `deck:current` 见 `crate::browser`）。
+        "browse" => {
+            if let Err(error) = browser::open(state, None).await {
+                tracing::warn!("打开浏览器窗口失败: {error:#}");
+            }
+            None
+        }
+        // 点图表的柱子 → 看对应的卡片（对照 `qt/aqt/stats.py:132-136` 的
+        // `_on_bridge_cmd`：`browserSearch:<query>` → 打开浏览器并搜索，
+        // 由 `ts/routes/graphs/GraphsPage.svelte:25-27` 发出）。
+        // 这里不再过 `buildSearchString`：图表给的就是搜索词（与 Qt 的
+        // `browser.search_for(query)` 一致）。
+        command if command.starts_with("browserSearch:") => {
+            let query = command.trim_start_matches("browserSearch:").trim();
+            if let Err(error) = browser::open(state, Some(query)).await {
+                tracing::warn!("图表打开浏览器失败: {error:#}");
+            }
+            None
+        }
         // 主窗口直接加载编辑器时（`ANKI_START_PAGE=editor`）也会发这条，
         // 与编辑器窗口走同一套注入逻辑
         "editorReady" => {
             editor::on_ready(state, window).await;
+            None
+        }
+        // 编辑器（`mode=browser`）里的预览按钮：转给浏览器页面，由它报当前行
+        "preview" => {
+            browser::request_preview(state);
             None
         }
         // 对照 Qt 在 load finished 时绑定的 Esc 键行为
@@ -168,9 +282,14 @@ fn handle_editor_report(window: &str, command: &str) -> bool {
 /// 只会收到自己页面发出的命令。
 async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Option<String> {
     match command {
-        // 页面就绪：与复习无关的窗口忽略即可（正是这一步要避免误触发复习）
+        // 页面就绪：与复习无关的窗口忽略即可（正是这一步要避免误触发复习）。
+        // 例外：预览窗口的内容是在它报到之后才注入的（刚开窗就 eval 会落空）。
         "domDone" => {
-            tracing::debug!("忽略 {window} 的 domDone");
+            if window == windows::PREVIEW {
+                preview::on_ready(state).await;
+            } else {
+                tracing::debug!("忽略 {window} 的 domDone");
+            }
             None
         }
         "close" => {
@@ -192,6 +311,149 @@ async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Op
             editor::on_ready(state, window).await;
             None
         }
+        // 浏览器页面就绪：**由宿主决定首屏搜索**（页面自己不知道要搜什么）。
+        // 把搜索词放在响应里，而不是"就绪后宿主再注入"，是为了躲开时序问题：
+        // 窗口刚创建时 eval 有可能落空，而页面报到一定会到。
+        "browserReady" => Some(json!({ "search": state.browser.current_search() }).to_string()),
+        // 浏览器窗口标题：`browserTitle:<notesMode>:<selected>:<total>`，对照
+        // `browser.py:549-559` 的 `updateTitle()`（页面只报数字，文案在宿主本地化）。
+        // 卡片模式与笔记模式用的是两条不同的文案（`browsing-window-title` /
+        // `browsing-window-title-notes`）。
+        command if command.starts_with("browserTitle:") => {
+            let (notes_mode, selected, total) = parse_title_counts(command);
+            let i18n = state.backend.i18n();
+            let title = if notes_mode {
+                i18n.browsing_window_title_notes(selected, total)
+            } else {
+                i18n.browsing_window_title(selected, total)
+            };
+            let title = anki_i18n::without_unicode_isolation(&title);
+            windows::set_title(state, window, &title);
+            None
+        }
+        // 双击表格里的一行 → 用编辑器打开这张卡片的 note（对照 Qt 把选中的卡片
+        // 交给内嵌编辑器，`browser.py:653-658`）。卡片 id 由页面给，note 由宿主解析。
+        command if command.starts_with("editCard:") => {
+            match command.trim_start_matches("editCard:").parse::<i64>() {
+                Ok(card_id) => {
+                    if let Err(error) = browser::edit_card(state, card_id).await {
+                        tracing::warn!("浏览器打开编辑器失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 editCard 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 笔记模式下的双击：这一行本身就是 note id（`browser_row_for_id` 在笔记模式
+        // 收的是 nid），不需要再经卡片反查
+        command if command.starts_with("editNote:") => {
+            match command.trim_start_matches("editNote:").parse::<i64>() {
+                Ok(note_id) => {
+                    if let Err(error) = browser::edit_note(state, note_id).await {
+                        tracing::warn!("浏览器打开编辑器失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 editNote 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 更改笔记类型（`changeNoteType:<nid>,...`，对照 `browser.py:1241-1252`）：
+        // 窗口与保存行为见 `browser::open_change_notetype` 与 `server/api.rs`
+        command if command.starts_with("changeNoteType:") => {
+            match parse_change_notetype(command) {
+                Some(note_ids) => {
+                    if let Err(error) = browser::open_change_notetype(state, note_ids).await {
+                        tracing::warn!("打开更改笔记类型窗口失败: {error:#}");
+                    }
+                }
+                None => tracing::warn!("非法的 changeNoteType 命令: {command}"),
+            }
+            None
+        }
+        // 卡片信息（`cardInfo:<cid>`，对照 `browser.py:799-803` 的 `showCardInfo`）
+        command if command.starts_with("ioImageLoaded:") => {
+            // 对照 Qt 的 `editor.py:364-372`：编辑器把「遮挡图片已载入」告诉宿主，
+            // Qt 用它触发 `editor_mask_editor_did_load_image` 钩子（给 add-ons）；
+            // 桌面端自己不做别的事（遮罩编辑器就在页面里），这里只记一条日志。
+            tracing::debug!("编辑器报告遮挡图片已载入: {command}");
+            None
+        }
+        command if command.starts_with("cardInfo:") => {
+            match command.trim_start_matches("cardInfo:").parse::<i64>() {
+                Ok(card_id) => {
+                    if let Err(error) = browser::open_card_info(state, card_id) {
+                        tracing::warn!("打开卡片信息窗口失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 cardInfo 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 复制笔记（`addCopy:<nid>:<deckId>`，对照 `browser.py:828-834`）：
+        // 开「添加卡片」并把这张笔记的内容填进去
+        command if command.starts_with("addCopy:") => {
+            match parse_add_copy(command) {
+                Some((note_id, deck_id)) => {
+                    // 笔记类型由宿主查（页面只知道 nid 与 deck）
+                    match editor::load_note(state, note_id).await {
+                        Ok(note) => {
+                            if let Err(error) = editor::open_add_cards_with_note(
+                                state,
+                                note_id,
+                                note.notetype_id,
+                                deck_id,
+                            ) {
+                                tracing::warn!("打开添加卡片窗口失败: {error:#}");
+                            }
+                        }
+                        Err(error) => tracing::warn!("复制笔记取 note 失败: {error:#}"),
+                    }
+                }
+                None => tracing::warn!("非法的 addCopy 命令: {command}"),
+            }
+            None
+        }
+        // 浏览器里点了预览（`preview:<cid>`）：已开同一张则关窗，否则打开/切换
+        // （对照 `browser.py:853-865` 的 `onTogglePreview`）。
+        command if command.starts_with("preview:") => {
+            match command.trim_start_matches("preview:").parse::<i64>() {
+                Ok(card_id) => {
+                    if let Err(error) = preview::toggle(state, card_id).await {
+                        tracing::warn!("打开预览窗口失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 preview 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 编辑器里的预览按钮（`PreviewButton.svelte:26-28` 发的裸 `preview`）。
+        // 对照 Qt：浏览器的 `editor._links["preview"] = onTogglePreview`（`browser.py:611-614`），
+        // 用的是浏览器当前选中的卡片 —— 这份清单在浏览器页面手里，所以转过去问它。
+        "preview" => {
+            browser::request_preview(state);
+            None
+        }
+        // 预览窗口的按钮与快捷键（对照 `previewer.py:344-362`）
+        "previewNext" => {
+            preview::next(state).await;
+            None
+        }
+        "previewPrev" => {
+            preview::prev(state).await;
+            None
+        }
+        "previewReplay" => {
+            preview::replay_audio(state).await;
+            None
+        }
+        // 预览窗口的「仅背面」勾选（对照 `previewer.py:107-115`）
+        command if command.starts_with("previewBothSides:") => {
+            let value = command.trim_start_matches("previewBothSides:") == "1";
+            if let Err(error) = preview::set_both_sides(state, value).await {
+                tracing::warn!("切换仅背面失败: {error:#}");
+            }
+            None
+        }
         // 编辑器的状态跟踪命令。Qt 用它们维护 `currentField` / `EditorState`
         // （`editor.py:341-361`），本外壳既没有 addon 也没有"未保存"拦截，只记日志。
         // 注意字段的**保存**不在这里：页面自己去调 `updateNote`（`NoteEditor.svelte:431-435`），
@@ -211,6 +473,34 @@ async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Op
             None
         }
     }
+}
+
+/// 解析 `changeNoteType:<nid>,<nid>,...`（浏览器「更改笔记类型」）。
+fn parse_change_notetype(command: &str) -> Option<Vec<i64>> {
+    let note_ids: Vec<i64> = command
+        .trim_start_matches("changeNoteType:")
+        .split(',')
+        .filter_map(|id| id.trim().parse().ok())
+        .collect();
+    (!note_ids.is_empty()).then_some(note_ids)
+}
+
+/// 解析 `addCopy:<nid>:<deckId>`（浏览器「复制笔记」）。
+fn parse_add_copy(command: &str) -> Option<(i64, i64)> {
+    let mut parts = command.trim_start_matches("addCopy:").split(':');
+    let note_id = parts.next()?.parse().ok()?;
+    let deck_id = parts.next()?.parse().ok()?;
+    Some((note_id, deck_id))
+}
+
+/// 解析 `browserTitle:<notesMode>:<selected>:<total>`；格式不对时按 0 处理
+/// （只是标题，不值得报错）。
+fn parse_title_counts(command: &str) -> (bool, i32, i32) {
+    let mut parts = command.trim_start_matches("browserTitle:").split(':');
+    let notes_mode = parts.next().map(|it| it == "1").unwrap_or(false);
+    let selected = parts.next().and_then(|it| it.parse().ok()).unwrap_or(0);
+    let total = parts.next().and_then(|it| it.parse().ok()).unwrap_or(0);
+    (notes_mode, selected, total)
 }
 
 fn has_api_access(state: &AppState, headers: &HeaderMap) -> bool {

@@ -5,14 +5,15 @@
 #   2. 往剪贴板放一个真实文件，让 `text/uri-list` 有内容可读
 #   3. 跑 tauri/tools/m2-check.mjs 做端到端断言
 #
-# 前置：已按 TAURI_HANDOVER.md §2 构建过（out/rust/debug/anki-tauri.exe 存在）。
+# 前置：已按 TAURI_HANDOVER.md §2 构建过（`cd tauri; cargo build` →
+#       `tauri/target/debug/anki-tauri.exe`）。
 #
 # 用法：
 #   pwsh -File tauri/tools/verify-m2.ps1
 
 [CmdletBinding()]
 param(
-    [string]$Exe = "out/rust/debug/anki-tauri.exe",
+    [string]$Exe = "tauri/target/debug/anki-tauri.exe",
     [int]$Port = 40016,
     [string]$ApiKey = "test-key-123",
     [string]$Collection = "out/tauri-test/collection.anki2",

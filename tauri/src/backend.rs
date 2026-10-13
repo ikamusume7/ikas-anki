@@ -66,6 +66,20 @@ impl AppBackend {
         self.inner.i18n()
     }
 
+    /// 读集合配置里的一个键（缺键或类型不符返回 `None`）。
+    ///
+    /// 集合配置本身很小，一次 `getAllConfig` 取回再挑键即可。**不要在异步上下文里
+    /// 用 `platform::config` 的那套**：那边是同步的 `block_on`，会 panic。
+    pub async fn collection_config(&self, key: &str) -> Option<serde_json::Value> {
+        let bytes = self
+            .call("getAllConfig", anki_proto::generic::Empty {}.encode_to_vec())
+            .await
+            .ok()?;
+        let raw = anki_proto::generic::Json::decode(bytes.as_slice()).ok()?;
+        let value: serde_json::Value = serde_json::from_slice(&raw.json).ok()?;
+        value.get(key).cloned()
+    }
+
     /// 按 camelCase 方法名调用 rslib 服务，错误已解码为可读文本。
     pub async fn call(&self, method: &str, input: Vec<u8>) -> Result<Vec<u8>, String> {
         let (service, index) = method_table::lookup(method)

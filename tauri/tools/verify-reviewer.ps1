@@ -5,7 +5,8 @@
 #   2. 截取 WebView2 的**真实渲染**（tauri/tools/capture-window.ps1）
 #   3. 用 Playwright 复现宿主注入并断言布局（tauri/tools/visual-check.mjs）
 #
-# 前置：已按 TAURI_HANDOVER.md §2 构建过（out/rust/debug/anki-tauri.exe 存在）。
+# 前置：已按 TAURI_HANDOVER.md §2 构建过（`cd tauri; cargo build` →
+#       `tauri/target/debug/anki-tauri.exe`）。
 #
 # 用法：
 #   pwsh -File tauri/tools/verify-reviewer.ps1
@@ -13,7 +14,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$Exe = "out/rust/debug/anki-tauri.exe",
+    [string]$Exe = "tauri/target/debug/anki-tauri.exe",
     [int]$Port = 40001,
     [string]$ApiKey = "test-key-123",
     [string]$Collection = "out/tauri-test/collection.anki2",
@@ -24,6 +25,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+# 截真实窗口时用的标题（对照 ftl：`qt-misc-stats` / `preferences-preferences`）
+$statsTitle = if ($Lang -like "zh*") { "统计" } else { "Stats" }
+$preferencesTitle = if ($Lang -like "zh*") { "设置" } else { "Preferences" }
 Set-Location $root
 
 $exePath = Join-Path $root $Exe
@@ -52,6 +56,16 @@ function Read-Log {
     param([string]$Path)
     # 进程仍在写日志时读取会偶发失败，交给轮询重试
     try { return (Get-Content $Path -Raw -Encoding utf8 -ErrorAction Stop) } catch { return "" }
+}
+
+# 发一条桥接命令（模拟页面里的 `pycmd`；`X-Anki-Window` 默认主窗口）
+function Send-Bridge {
+    param([string]$Command, [string]$Window = "main")
+    $cmdPath = Join-Path $OutDir "bridge.dat"
+    [System.IO.File]::WriteAllBytes($cmdPath, [System.Text.Encoding]::UTF8.GetBytes($Command))
+    curl.exe -s -o NUL -X POST -H "Content-Type: text/plain" `
+        -H "Authorization: Bearer $ApiKey" -H "X-Anki-Window: $Window" `
+        --data-binary "@$cmdPath" "http://127.0.0.1:$Port/_anki/pycmd"
 }
 
 function Wait-LogPattern {
@@ -94,9 +108,70 @@ try {
     & (Join-Path $PSScriptRoot "capture-window.ps1") `
         -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "window.png") -WaitSeconds 20
 
+    # 顶部工具栏（对照 Qt 主窗口的 TopWebView）：宿主在会话开始时注入
+    if (-not (Wait-LogPattern "顶部工具栏已注入" 20)) {
+        Write-Host "顶部工具栏没有注入" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "顶部工具栏已注入" -ForegroundColor Green
+        Start-Sleep -Milliseconds 800
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "reviewer-toolbar.png") -WaitSeconds 20
+    }
+
     $env:SHOT_DIR = $OutDir
     node tauri/tools/visual-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 复习界面的「更多」/右键菜单：宿主拼数据、页面画菜单
+    # （脚本本体 `tauri/assets/reviewer-menu.js`，宿主用 include_str! 引用）
+    Write-Host "检查「更多」菜单（UI 脚本 + 宿主动作）…"
+    node tauri/tools/reviewer-menu-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 让真实窗口弹出菜单并截图（菜单是页面里的浮层，窗口截图就能看到）
+    Send-Bridge "more"
+    Start-Sleep -Milliseconds 900
+    & (Join-Path $PSScriptRoot "capture-window.ps1") `
+        -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "reviewer-menu.png") -WaitSeconds 20
+
+    # 菜单里的两个窗口入口：牌组选项（既有 deck-options 页面）与卡片信息
+    Send-Bridge "rev:options"
+    Send-Bridge "rev:cardInfo"
+    foreach ($pair in @(@("deck-options", "牌组选项"), @("card-info", "卡片信息"))) {
+        if (-not (Wait-LogPattern "打开窗口: $($pair[0]) ->" 20)) {
+            Write-Host "菜单里的「$($pair[1])」没有开窗" -ForegroundColor Red
+            $passed = $false
+        } else {
+            Write-Host "菜单 → $($pair[1]) 窗口已打开" -ForegroundColor Green
+        }
+    }
+
+    # 主窗口的另外两个全局入口（对照 `main.py:1189-1198` 的快捷键表与工具栏）：
+    # `t` → 统计（既有 graphs 页面）、`Ctrl+P` → 设置（既有 preferences 页面）
+    Send-Bridge "stats"
+    if (-not (Wait-LogPattern "打开窗口: stats ->" 20)) {
+        Write-Host "按 t（统计）没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "统计图窗口已打开" -ForegroundColor Green
+        # 页面报到（domDone）之后还要拉图数据再画图，截早了会拍到空白窗口
+        Start-Sleep -Seconds 4
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "graphs.png") `
+            -WaitSeconds 20 -TitleLike $statsTitle
+    }
+    Send-Bridge "preferences"
+    if (-not (Wait-LogPattern "打开窗口: preferences ->" 20)) {
+        Write-Host "按 Ctrl+P（设置）没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "设置窗口已打开" -ForegroundColor Green
+        Start-Sleep -Seconds 2
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "preferences.png") `
+            -WaitSeconds 20 -TitleLike $preferencesTitle
+    }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red
     $passed = $false

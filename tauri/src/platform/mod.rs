@@ -13,11 +13,14 @@
 pub(crate) mod audio;
 mod clipboard;
 mod config;
-mod dialogs;
+pub(crate) mod dialogs;
 mod media;
 pub(crate) mod prefs21;
 pub(crate) mod record;
 mod scheduling;
+
+use anki_proto::generic::Bool;
+use prost::Message as _;
 
 use crate::state::AppState;
 use crate::windows;
@@ -57,6 +60,8 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         // 编辑器媒体
         "convertPastedImage" => media::convert_pasted_image(body),
         "openFilePicker" => dialogs::open_file_picker(body),
+        // 外壳新增：网页里的导出对话框要问宿主一个保存路径（见 `dialogs::save_file_dialog`）
+        "saveFileDialog" => dialogs::save_file_dialog(body),
         "openMedia" => media::open_media(state, body),
         "showInMediaFolder" => media::show_in_media_folder(state, body),
 
@@ -88,10 +93,7 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         //
         // 这些端点由**页面**发起：WebView 关不掉宿主窗口，只能请求宿主代劳。
         // 窗口不存在时 `windows::close` 只记日志 —— 这是正确行为，不是降级。
-        "closeAddCards" => {
-            windows::close(state, windows::ADD_CARDS);
-            Ok(Vec::new())
-        }
+        "closeAddCards" => close_add_cards(state, body),
         "closeEditCurrent" => {
             windows::close(state, windows::EDIT_CURRENT);
             Ok(Vec::new())
@@ -117,9 +119,11 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
 
         // 仍未实现，但**不是窗口模型挡住的**：它们服务的界面在新版 Anki 里是原生
         // Qt 实现，仓库里没有对应的 Web 页面（详见 `crate::windows` 的模块注释）。
-        //   - 浏览器 / 字段 / 卡片布局：需要新的 Svelte 界面（M3）
+        //   - 字段 / 卡片布局：需要新的 Svelte 界面（M3）
         //   - saveCustomColours：需要能暴露自定义调色板的原生取色器，`rfd` 无此 API
-        "searchInBrowser" | "openFieldsDialog" | "openCardsDialog" | "saveCustomColours" => {
+        //
+        // `searchInBrowser` 已实现，但**不在这里**：它要调异步 RPC，见 `server/api.rs`。
+        "openFieldsDialog" | "openCardsDialog" | "saveCustomColours" => {
             tracing::warn!("该端点需要尚未实现的界面或能力，暂时忽略: {method}");
             Ok(Vec::new())
         }
@@ -127,4 +131,30 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         _ => return None,
     };
     Some(result)
+}
+
+/// 关闭「添加卡片」窗口。对照 `qt/aqt/addcards.py:107-127` 的
+/// `_close_if_user_wants_to_discard_changes`。
+///
+/// 请求体是 `generic.Bool`，也就是页面的 `shouldPromptBeforeClosing()` 判定结果
+/// （`NoteEditor.svelte:458-480`：所有字段都为空/`<br>` 才算「没有输入」）。弹框必须
+/// 由宿主来做 —— Web 侧整个目录没有 `confirm`，页面只是把这个布尔值交上来。
+///
+/// 按钮文案的取舍：Qt 的「Discard」用的是 Qt 自带的标准按钮翻译，仓库里没有对应的
+/// ftl key（`adding-keep-editing` 只覆盖另一个按钮），所以这里用系统默认的是/否，
+/// 文案取 `adding-discard-current-input`。语义一致，这不是遗漏。
+fn close_add_cards(state: &AppState, body: &[u8]) -> HandlerResult {
+    let has_pending_input = Bool::decode(body)
+        .map_err(|error| error.to_string())?
+        .val;
+    if has_pending_input {
+        tracing::info!("add-cards 有未保存输入，等待用户确认是否放弃");
+        if !dialogs::confirm_discard_input(state) {
+            tracing::info!("用户选择继续编辑，add-cards 保持打开");
+            return Ok(Vec::new());
+        }
+        tracing::info!("用户选择放弃输入");
+    }
+    windows::close(state, windows::ADD_CARDS);
+    Ok(Vec::new())
 }

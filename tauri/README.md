@@ -58,7 +58,8 @@ tauri/
 | --- | --- | --- |
 | `ANKI_API_PORT` | `0`（随机） | 本地服务端口，便于调试与 e2e |
 | `ANKI_COLLECTION` | `%APPDATA%/Anki2/User 1/collection.anki2` | 要打开（或创建）的集合 |
-| `ANKI_START_PAGE` | `graphs` | 窗口加载的 SvelteKit 页面 |
+| `ANKI_START_PAGE` | `decks` | 窗口加载的 SvelteKit 页面（`decks` = 牌组列表，与 Qt 的启动状态一致；`reviewer` 是 legacy 复习页） |
+| `ANKI_OPEN_PATH` | 空 | 测试钩子：设了它，「打开文件」对话框（`openFilePicker`）直接返回这个路径。原生对话框没法自动点，图像遮挡的「选图片」靠它跑端到端（`occlusion-check.mjs`） |
 | `ANKI_API_KEY` | 随机生成 | 固定本机 API 密钥，仅用于调试与 e2e |
 | `ANKI_LANG` | `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式） |
 
@@ -557,23 +558,158 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 调用 rslib 的 `CollectionService.Undo`，然后**重新取队列** —— 撤销会改变卡片的调度
 状态（通常是把上一张卡放回队列），所以必须重取并重渲染。
 
-快捷键：Qt 用 QShortcut 注册（复习界面的 `u` 与主窗口的 `Ctrl+Z`），单页方案改为在
-页面内监听 `keydown`（`src/reviewer.rs` 的 `install_reviewer_shortcuts`）：
+快捷键：Qt 用 QShortcut 注册（复习界面的 `u` 与主窗口的 `Ctrl+Z` / `a`），单页方案改为
+在页面内监听 `keydown`（`src/reviewer.rs` 的 `install_reviewer_shortcuts`）：
 
 - `Ctrl+Z` / `Cmd+Z` → 撤销；
-- 裸 `u` → 撤销，但在 `INPUT` / `TEXTAREA` / `contenteditable` 内不生效
-  （类型作答时 `u` 是普通字符）。
+- 裸 `u` → 撤销，裸 `a` → 打开「添加卡片」窗口（对照主窗口的全局快捷键 `a` →
+  `mw.onAddCard()`，`main.py:1183`）；两者都在 `INPUT` / `TEXTAREA` /
+  `contenteditable` 内不生效（类型作答时 `u` / `a` 是普通字符）。
 
 验证：评分一张卡（队列 `学习中 1` → `学习中 0`）后执行 `undo`，日志出现
 `已撤销上一步操作`，队列回到 `学习中 1`。
 
 未实现：重做（`Ctrl+Shift+Z`）与撤销状态显示（没有菜单栏）。
 
+### 「更多」菜单（= 右键菜单）
+
+底部栏的「更多」按钮与卡片右键都会打开它，对照 Qt 的 `showContextMenu()`
+（`reviewer.py:682-683` 的 `more` 链接 → `reviewer.py:998-1056` 的 `_contextMenu`）。
+菜单内容与 Qt 一致：旗标子菜单（Ctrl+1..7、当前旗标打勾）、埋藏卡片、重置卡片…、
+设置到期日…、暂停卡片、选项、卡片信息、标记笔记、埋藏笔记、暂停笔记、创建副本…、
+删除笔记 —— 每项都带 Qt 的快捷键提示。
+
+分工（`src/reviewer_menu.rs` + `assets/reviewer-menu.js`）：
+
+- **宿主**拼菜单数据（文案走 i18n、勾选态读**现取**的卡片/笔记）并执行动作；
+- **页面**只负责画菜单与表单，点完回一条 `rev:<动作>[:<参数>]` 桥接命令。
+
+这样页面里没有第二份状态，"菜单勾选态和实际不符"不会发生。几个细节：
+
+- 「重置卡片…」「设置到期日…」要输入，页面里画了一个最小表单（Qt 是 QDialog）；
+  确认后回 `rev:forget:<恢复位置>,<重置计数>` / `rev:due:<URL 编码的日期表达式>`；
+- 「选项」开既有的 `deck-options/<deckId>` 路由，「卡片信息」开 `card-info/<cid>`，
+  「创建副本…」开「添加卡片」并载入当前笔记；
+- 「删除笔记」用宿主的原生确认框先问一次（对照 Qt 的 `delete_notes`）。
+
+未做：**上一张卡片信息**（要维护"看过的卡片"历史）、音频的 **重播 / 暂停 / ±5 秒**
+（播放器要支持 seek）、**自动前进**（`Shift+A`）。这三项列在 `tauri/PARITY.md`。
+
+验证：`tauri/tools/reviewer-menu-check.mjs`（由 `verify-reviewer.ps1` 调用）——
+菜单脚本本身在 Playwright 里跑（渲染、勾选态、子菜单悬停、表单回传、右键发 `more`），
+宿主动作对着真外壳发 `rev:*` 并用 RPC 复查（旗标设置/清除、`marked` 标签加/去、
+到期日改动 + `undo` 还原）；`verify-reviewer.ps1` 另外断言菜单里开出的
+「牌组选项」「卡片信息」两个窗口，并截真实窗口里的菜单（`out/reviewer-check/reviewer-menu.png`）。
+
+### 顶部工具栏（= Qt 主窗口的 TopWebView）
+
+复习界面顶部那条常驻工具栏，对照 `qt/aqt/toolbar.py:353-389` 的 `_centerLinks`：
+**牌组 / 添加 / 浏览 / 统计**，每项带自己的全局快捷键提示（`actions-shortcut-key`
+生成，例如「快捷键：D」），点了发 `pycmd('decks')` / `add` / `browse` / `stats`。
+
+- 渲染脚本是 `tauri/assets/reviewer-toolbar.js`（宿主 `include_str!` 引用，见
+  `reviewer.rs::install_toolbar`），页面侧的容器是 `legacy.rs` 复习页里的
+  `#top-toolbar`；高度由脚本写进 `--top-bar-height`，卡片区靠
+  `body { padding-top }` 让开 —— 与底部栏同一套办法
+  （`reviewer.rs::sync_bottom_bar_height`）。
+- 验证脚本读**同一个文件**塞进空页面跑（渲染、间距、点击回传、重复注入不叠加），
+  见 §5.27 的做法与 `reviewer-menu-check.mjs`；`verify-reviewer.ps1` 另外截真实窗口
+  （`out/reviewer-check/reviewer-toolbar.png`）。
+
+差异：
+
+| 项 | Qt | 本外壳 |
+| --- | --- | --- |
+| 同步链接 | 有（状态色 + 旋转图标，`toolbar.py:410-418`） | 没有（未实现同步，见 `tauri/PARITY.md` 6.1） |
+| 左右两个托盘 | add-ons 的挂载点（`_left_tray_content` / `_right_tray_content`） | 没有 |
+| 隐藏行为 | 全屏/鼠标离开时 `hide_if_allowed` 自动隐藏 | 常驻 |
+| 实现方式 | 独立 QWebEngineView（`TopWebView`） | 同页面里的固定条（宿主注入） |
+
+牌组列表页也有同一条工具栏（那是 SvelteKit 页面，自己画，见「牌组列表」）。
+
+### 全局入口：统计与设置
+
+主窗口（复习界面所在的那个窗口）的另外两个入口，对照 Qt 的全局快捷键表
+（`main.py:1189-1198` 与 `forms/main.ui`）：
+
+| 快捷键 | 打开的窗口 | 上游 |
+| --- | --- | --- |
+| `t` / `Shift+t` | **统计**（既有的 `graphs/` 页面） | `main.py:1185` → `onStats()`（DeckStats 对话框） |
+| `Ctrl+P` | **设置**（既有的 `preferences/` 页面） | `forms/main.ui` 的 `actionPreferences` → `onPrefs()` |
+
+两个都是独立窗口（Qt 是 QDialog），宿主只负责开窗与标题（`src/main_window.rs`）。
+差异：
+
+- **统计**：Qt 会把**当前选中的牌组**传进去（`_selectedDeck()`），这里打开的是整个
+  集合的视图（页面里可以自己换牌组/搜索词）；
+- **设置**：Qt 对话框底部有 Close 按钮，这里用窗口的 ×（页面自己不带关闭按钮）。
+
+未接的全局快捷键（同一张表）：`Ctrl+:`（Python 调试控制台）与 `y`（同步，见
+`tauri/PARITY.md` 6.1）；`d`/`s` 已接（见下面的「牌组列表」）。
+
+验证：`verify-reviewer.ps1` 里用桥接命令发 `stats` / `preferences`，断言两个窗口都
+打开，并截真实渲染（`out/reviewer-check/graphs.png`、`preferences.png`）。
+
+## 牌组列表（主窗口）
+
+M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态机
+（`main.py:93-94` 的 `MainWindowState`），本外壳用两个页面覆盖它：
+
+| Qt 状态 | 本外壳 | 上游 |
+| --- | --- | --- |
+| `deckBrowser`（牌组列表，启动默认） | `/decks/` | `qt/aqt/deckbrowser.py` |
+| `overview`（牌组概览） | `/decks/?deck=<id>`（同一页面里的一块面板） | `qt/aqt/overview.py` |
+| `review`（复习） | 复习页（legacy 页面），`/decks/` 点「学习」切过去 | `qt/aqt/reviewer.py` |
+
+页面本身（牌组树、计数、齿轮菜单）直接调 RPC：`deckTree`（`now` 必填，计数来自
+`newCount`/`learnCount`/`reviewCount`）、`setDeckCollapsed`、`addDeck`、`renameDeck`、
+`removeDecks`、`getCurrentDeck`、`setCurrentDeck`、`studiedToday`。**只有四件事回宿主**：
+
+| 页面动作 | 桥接命令 | 宿主做的事 |
+| --- | --- | --- |
+| 点牌组名（`open:<did>`） | 页面先 `setCurrentDeck`，再整页导航 | — |
+| 概览「学习」 | `study` | 主窗口切到复习页（`reviewer_active=true` + 导航） |
+| 齿轮 → 选项 / 底部「导入文件」 | `opts:<did>` / `import` | 开牌组选项窗口 / 导入窗口（模态） |
+| 底部「获取共享牌组」 | `shared` | 交给系统浏览器打开 ankiweb 共享牌组页 |
+| 工具栏「添加 / 浏览 / 统计」 | `add` / `browse` / `stats` | 复用已有入口 |
+
+主窗口的**页面切换**（`src/main_window.rs`）用整页导航，与卡片信息窗口换卡片同一招
+（`window.location.href`）。这里有个坑：**切页前必须把 `reviewer_active` 置回 false**
+（`decks`/`overview` 命令里做了）—— 否则牌组列表的 `domDone` 会照着复习页的流程去
+`reviewer::start`，往不存在的 `#qa` 注入 DOM。复习页的 legacy 页面只在第一次需要时
+注册（`main_window.rs` 用 `OnceLock` 缓存 URL；启动页就是复习界面时由 `main.rs` 记下）。
+
+### 与 Qt 的差异（有意为之）
+
+| 项 | Qt | 本外壳 |
+| --- | --- | --- |
+| 概览 | 独立页面（`moveToState("overview")`） | 同一页面的面板（`?deck=<id>`），少一次状态切换 |
+| 牌组描述 / 自定义学习 / 取消埋藏 / 清空筛选牌组 | 概览底部一组按钮（`overview.py:283-314`） | 没做 |
+| 牌组导出 | 齿轮菜单里有「导出」 | 没做（要整份导出对话框，见 `tauri/PARITY.md` 5.3） |
+| 拖拽排序、默认牌组删除保护 | Qt 允许拖动调整牌组顺序；默认牌组也能删（会重建） | 没做排序；**默认牌组的「删除」被禁用**（测试集合全靠它装卡片） |
+| 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮都没有 |
+| 同步按钮 | 有（带同步状态/旋转图标） | 没有（本外壳未实现同步） |
+| 「今日学习」一行 | `statistics-studied-today` | 同一个 key（内容是后端算好的，按 HTML 渲染） |
+
+### 已验证
+
+`tauri/tools/verify-decks.ps1`（+ `decks-check.mjs`）：以 `ANKI_START_PAGE=decks` 启动
+→ 截首屏真实窗口（`out/decks-check/decks.png`）→ Playwright 走一遍：表头与三列计数、
+当前牌组高亮、折叠/展开（写回 `studyCollapsed`）、点牌组进概览（URL + 当前牌组 +
+「学习」按钮）、概览「学习」发出 `study`、齿轮菜单（`opts:<did>` / 重命名 / 删除）、
+新建牌组与删除、底部按钮、工具栏 → 宿主断言牌组选项窗口、导入窗口、概览「学习」真的
+切到复习页，以及 `d` / `s` / `study` 三个桥接命令的来回切页（切到复习页后还会取队列）。
+检查会临时建/删牌组，并还原当前牌组；失败留下的临时牌组用
+`tauri/tools/cleanup-test-decks.mjs` 清掉。
+
 ## 编辑器
 
-M3 的第一步：**「编辑当前卡片」窗口**（复习界面底部栏的「编辑」按钮 → `pycmd('edit')`）。
+M3 的两块：**「编辑当前卡片」窗口**（复习界面底部栏的「编辑」按钮 → `pycmd('edit')`）
+与**「添加卡片」窗口**（复习界面的 `a` 快捷键 → `pycmd('add')`，对照 Qt 主窗口的全局
+快捷键 `main.py:1183`）。
 
-现状：能开窗、能载入当前卡片的 note、能改字段并保存、能关闭。
+现状：两个窗口都能开窗、载入 note（编辑当前 = 当前复习卡的 note；添加 = 一张空的新
+note）、改字段、保存、关闭；添加窗口还能真的把 note 加进集合。
 
 ### 宿主契约（关键）
 
@@ -582,8 +718,7 @@ M3 的第一步：**「编辑当前卡片」窗口**（复习界面底部栏的�
 只被 `addcards_legacy.py` 使用）。宿主只做两件事，对照 `qt/aqt/editor.py`：
 
 1. 开一个窗口加载 `editor/?mode=<add|current|browser>`（`editor.py:117-119`）；
-2. 收到页面的 `editorReady` 之后注入
-   `loadNote({nid, notetypeId, reviewerCardId, focusTo, initial})`（`editor.py:416-447`）。
+2. 收到页面的 `editorReady` 之后注入 `loadNote({...})`（`editor.py:416-447`）。
 
 第 2 步是**必须**的：编辑器不会自己去问后端「当前是哪张卡」，它拿到 `nid` 之后才走 RPC
 （`getNote` / `getNotetype` / `getFieldNames`…）取内容。少了这一步窗口会一直空白，
@@ -592,13 +727,45 @@ M3 的第一步：**「编辑当前卡片」窗口**（复习界面底部栏的�
 注入结果会回传（`editorLoaded` / `editorLoadError:<msg>`），对照 Qt 用
 `evalWithCallback` 拿回调（`editor.py:443`）：否则"注入了但没生效"只能靠肉眼看窗口。
 
+**两个模式共用一个页面，所以注入参数必须按窗口标签分流**
+（`src/editor.rs::on_ready`；`add-cards` 窗口注入"当前复习卡"的话，页面会直接进入编辑
+那张卡的状态，而不是新建）：
+
+| 模式 | 窗口标签 | 注入 |
+| --- | --- | --- |
+| `current` | `edit-current` | `nid` / `notetypeId` / `reviewerCardId` / `focusTo:0` / `initial:true`（`editcurrent.py`） |
+| `add` | `add-cards` | `nid:null` / `notetypeId:null` / `deckId:null` / `originalNoteId:null` / `reviewerCardId:<当前复习卡或 null>` / `focusTo:0` / `initial:true`（`addcards.py:76-83`） |
+
+`add` 模式的**默认牌组与笔记类型由页面自己算**（`defaultsForAdding()` /
+`defaultDeckForNotetype()`，`NoteEditor.svelte:1026-1045`），宿主不要去推断；但
+`initial: true` 是硬门槛 —— 缺了它页面会退到 `notetypeChooser.getSelected()` 那条路，
+拿不到「新建 note」。`reviewerCardId` 是页面算「home deck」的输入（`addcards.py:49`）。
+
+### 关闭「添加卡片」时要问过页面
+
+页面**只判定、不弹框**：`closeAddCards()` 先 `saveNow()`，再把
+`shouldPromptBeforeClosing()` 的结果（所有字段都为空 / `<br>` 才算"没有输入"）当成
+`Bool` 交给宿主（`NoteEditor.svelte:458-480`；Web 侧整个目录没有 `confirm`）。
+弹框与关窗都要宿主做，对照 `addcards.py:107-127` 的 `_close_if_user_wants_to_discard_changes`：
+
+- `closeAddCards(val=true)` → `dialogs::confirm_discard_input`（文案
+  `adding-discard-current-input`）→ 用户选「放弃」才关窗，否则窗口保持打开；
+- **标题栏的 × / Alt+F4 也走同一条路**（`windows.rs` 拦截 `CloseRequested`，先
+  `prevent_close()` 再 `eval("closeAddCards()")`，页面没挂载完时退化成直接请求关窗）——
+  否则用户可以绕过确认框无声丢掉正在输入的内容。宿主自己发起的关闭用一个标记位区分，
+  不然确认流程会拦到自己（死循环）。
+
+按钮文案的取舍：Qt 的「Discard」用的是 Qt 自带的标准按钮翻译，仓库里没有对应 ftl key
+（`adding-keep-editing` 只覆盖另一个按钮），所以这里用系统默认的是 / 否。
+
 ### 字段保存不经过宿主
 
 字段内容由**页面自己**保存：敲键盘 600ms 去抖 → `bridgeCommand("key:<i>")` →
 `updateNotes` RPC；字段失焦时立即保存（`NoteEditor.svelte:1508-1524`）。
 宿主侧的 `key:` / `focus:` / `blur:` / `editorState:` / `saved` 只记日志
 （Qt 用它们维护 `currentField` 与 `EditorState`，服务于 addon 与"未保存"拦截，
-本外壳还没有这类需求）。
+本外壳还没有这类需求）。`add` 模式下 `updateCurrentNote()` 直接 return（`mode !== "add"`
+的判断），所以「添加」之前不会有 `updateNotes`。
 
 ### 已验证
 
@@ -612,14 +779,301 @@ PASS  字段修改已保存到集合 — 正面现在是「…（已编辑25017�
 PASS  已还原测试笔记
 ```
 
+`tauri/tools/verify-addcards.ps1`（+ `addcards-check.mjs`）：`add` 命令开窗 → 断言注入的
+是"新建 note" → 截图 → Playwright 验默认牌组/笔记类型、**真的填字段并点「添加」**、
+再用 `searchNotes` 回查集合（新增的 note 确实在，内容正确，随后删掉）→ 最后用 RPC 验
+宿主侧的两条关闭契约（`val=false` 直接关、`val=true` 停在确认框上且窗口保持打开）。
+
+```
+PASS  牌组选择器已渲染 — 「Default   选择牌组     Default」
+PASS  新建 note 已渲染出字段 — 2 个可编辑字段
+PASS  有输入时页面报告需要确认 — closeAddCards(val=true)
+PASS  「添加」按钮存在 — 按钮序号 3
+PASS  点击「添加」发出了 addNote — 1 次请求
+PASS  addNote 带着字段内容 — 「TauriProbe43753」
+PASS  新增的 note 已落库 — 搜到 1 条
+PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
+```
+
+> 检查「添加是否落库」走的是**拦请求 + 查集合**，不是读 Playwright 抓到的响应体：
+> 实测那条 `addNote` 响应在 Playwright 里是 `200` + **0 字节**（`response.body()` 空），
+> 而同一个请求用 curl 直发能拿到 29 字节的正常响应 —— 页面本身是成功的（表单随后被
+> 重置、note 也确实进了集合）。踩过一次，别再照抄"读响应体"的写法。
+
 ### 尚未实现
 
-- `more`（更多菜单）仍是 no-op：它要打开菜单，需要新的界面。
+- ~~`more`（更多菜单）~~ —— **已实现**：复习界面底部栏的「更多」与卡片右键会打开菜单，见「复习界面」的「更多」菜单。
 - 「字段…」「卡片…」按钮（`openFieldsDialog` / `openCardsDialog`）：新版 Anki 里是原生
   Qt 对话框，仓库里没有对应的 Web 页面，点了没反应。
-- AddCards（`mode=add`）窗口：需要宿主注入"新建 note 的默认 deck / notetype"，
-  以及关闭前的「丢弃修改」确认框（判定在 Web、弹框在宿主，`addcards.py:107-127`）。
-- 浏览器（`mode=browser`）窗口：同样缺界面。
+
+### 图像遮挡（内嵌遮罩编辑器）
+
+这个版本的 Anki **没有独立的遮挡窗口**：遮挡编辑器就是编辑器页面里的
+`ImageOcclusionPage`（`MaskEditor` 的画布 + 形状工具），由工具栏的
+`image-occlusion-button` 切换 —— 对照 `qt/aqt/editor.py:500-535` 的
+`setup_mask_editor`（Qt 也是往页面里 eval `setupMaskEditorForNewNote/…`）。
+所以外壳这一侧没有「开窗口」的活，宿主契约只有一条：
+
+| 页面动作 | 走哪 | 宿主做什么 |
+| --- | --- | --- |
+| 工具栏「遮挡」按钮 | 页面内 `$ioMaskEditorVisible` | 不经过宿主；只有 `ioImageLoaded:` 会回传一条，宿主记日志（对照 `editor.py:364-372`） |
+| 图片选择器「选图片」 | `/openFilePicker`（`data-transfer.ts:455`） | 弹原生文件对话框并返回路径；测试用 `ANKI_OPEN_PATH` 跳过 |
+| 选完图 | `addMediaFromPath` + `getImageForOcclusion` | 都在后端，页面自己调 |
+
+验证：`tauri/tools/occlusion-check.mjs`（由 `verify-editor.ps1` 调用）—— 用 Chromium
+截一张真图片 → 在 add 模式的编辑器页面里断言「遮挡按钮出现 → 进图片选择器 →
+`/openFilePicker` 被调用 → 图片拷进 `collection.media` → 掩码编辑器渲染出 data URL」，
+并截图（`out/editor-check/occlusion-editor.png`）。**没覆盖**：在画布上画遮罩 →
+保存成遮挡笔记（要真的拖拽 + 校验 `{{c1::…}}` 字段，值得另开一条检查）。
+
+一个上游时序问题（与本外壳无关，记一下）：**编辑已有笔记**时换图片走
+`getImageOcclusionNote(noteId)`（`mask-editor.ts:58-76`），读的是**已保存**的笔记 ——
+页面刚把新图片写进字段、还没落库，就会拿到空图（`#image` 的 src 只有
+`data:image/png;base64,`）。add 模式按文件路径取图，不受影响。
+
+## 浏览器
+
+M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这个页面是外壳自己新写的**
+（`ts/routes/browser/`）—— Qt 的浏览器整条链路都是原生 Qt 控件（`qt/aqt/browser/`：
+搜索框、笔记表格、侧边栏、菜单栏、嵌在同一个窗口里的编辑区），仓库里没有对应的 Web 页面。
+
+入口：
+
+- 复习界面按 `b`（对照 Qt 主窗口的全局快捷键 `b` → `mw.onBrowse()`，默认搜索
+  `defaultSearchText`，没配置则 `deck:current`）；
+- 图表点柱子 → `browserSearch:<query>`（由 `ts/routes/graphs/GraphsPage.svelte:25-27`
+  发出，对照 `qt/aqt/stats.py:132-136`）；
+- `searchInBrowser` 端点（导入页、编辑器的「重复」链接）→ 请求体是 `search.SearchNode`，
+  宿主用 `buildSearchString` 翻成搜索词再开窗（对照 `mediasrv.py:755-762`）。
+
+已实现的功能，以及各自对照的上游实现：
+
+| 功能 | 上游 |
+| --- | --- |
+| 搜索（后端语法字符串） | `browser.py:502-524` `onSearchActivated` |
+| **排序**（点列头，交给后端 `SortOrder.builtin`，落库 `sortType`/`sortBackwards`） | `table/table.py:492-516`、`collection.py:692-719` |
+| **多选**（单击 / Ctrl+单击 / Shift+区间 / Ctrl+A / Esc） | QTableView 原生行为 + `table.py:351-407` |
+| **加标签**（Ctrl+Shift+A，`addNoteTags`） | `browser.py:961-974` |
+| **移除标签**（Ctrl+Alt+Shift+A，`removeNoteTags`） | `browser.py:976-988` |
+| **清除未使用标签**（`clearUnusedTags`） | `browser.py:997-1000`、`aqt/operations/tag.py` |
+| **标记**（Ctrl+K，`marked` 标签的加/删） | `browser.py:1083-1093` |
+| **旗标**（Ctrl+1..Ctrl+7，`SetFlag`；同一旗标再按 = 清除） | `browser.py:1056-1077` |
+| **暂停 / 埋藏**（Ctrl+J / Ctrl+Shift+J，`BuryOrSuspendCards`） | `browser.py:1006-1042` |
+| **重置（Forget）**（Ctrl+Alt+N，弹框两个勾选项） | `aqt/forms/forget.ui`、`operations/scheduling.py:95-131` |
+| **设置到期日**（Ctrl+Shift+D）+ **重新定位**（Ctrl+Shift+S） | `operations/scheduling.py:30-62,134-206` |
+| **立即评分**（菜单里的四档） | `browser.py:1129-1167` |
+| **卡片信息**（Ctrl+Shift+I，独立窗口，复用 `card-info/<cid>` 路由） | `browser.py:799-803`、`aqt/card_info.py:62` |
+| **复制笔记**（Ctrl+Alt+E：开「添加卡片」并载入该笔记） | `browser.py:828-834` |
+| **更改笔记类型**（菜单：开 `change-notetype/<id>` 窗口，页面里映射字段后保存） | `browser.py:1241-1252`、`aqt/changenotetype.py` |
+| **导出**（Ctrl+Shift+E：apkg / colpkg，问宿主要保存路径后调导出 RPC） | `browser.py:377`、`qt/aqt/import_export/exporting.py` |
+| **查找替换**（Ctrl+Alt+F，`FindAndReplace`） | `aqt/browser/find_and_replace.py` |
+| **改牌组**（Ctrl+D，`setDeck`） | `browser.py:918-949` |
+| **删除**（Ctrl+Del / Delete，`removeNotes`，删的是**笔记**） | `browser.py:895-906` |
+| **撤销/重做**（Ctrl+Z / Ctrl+Shift+Z） | 浏览器菜单的 Undo / Redo |
+| **反选 / 全选 / 选中笔记**（Ctrl+Alt+S / Ctrl+Alt+A / 菜单） | `browser.py:308-309,1175-1183` |
+| **跳转**（Home / End / Ctrl+N / Ctrl+P / Shift+Home / Shift+End） | `browser.py:379-397` |
+| **笔记模式**（`browserTableShowNotesMode` + `activeNoteCols` + `searchNotes`） | `table/table.py:40,196-206` |
+| **列清单**（表头右键勾选，立即写回 `activeCols`） | `table/state.py:137-148`、视图菜单 |
+| **列宽拖动**（按模式存 profile 配置 `tauriBrowserColumnWidths`） | `table.py:326-335` + `utils.saveHeader` |
+| **列顺序拖动**（拖列头换位，写回 `activeCols` 的顺序） | `table.py:391` 的 `sectionMoved`（Qt 把视图顺序记在表头状态里） |
+| **预览**（问题/答案、上一张/下一张、重播音频、仅背面） | `browser/previewer.py`（见「预览窗口」） |
+| 双击开编辑器 | `browser.py:653-660`（Qt 是内嵌编辑区，见差异表） |
+| 侧栏（牌组树 / 笔记模板 / 当前牌组 / 全部集合） | `sidebar/tree.py` |
+| 窗口标题（`browsing-window-title(-notes)`） | `browser.py:549-559` |
+
+动作表在网页上没有菜单栏可用，所以放在**行右键菜单**（`ContextMenu.svelte`）与工具栏的
+「更多」按钮里，每一项都带 Qt 的快捷键提示；快捷键本身由 `+page.svelte` 的 `onKeydown`
+实现（表见 `qt/aqt/forms/browser.ui` 的 `shortcut` 属性）。菜单项带 `data-action`
+（`actionToggle_Mark` 那样的名字），验证脚本按它点击，不去匹配本地化文案。
+
+### 宿主契约
+
+与编辑器同构，但**搜索词是"页面问、宿主答"**：
+
+1. 页面挂载完 → `pycmd("browserReady")`，宿主在**响应**里交回首屏搜索词
+   （`{"search": "deck:current"}`）；
+2. 窗口已存在时宿主改走 `eval` 注入 `loadSearch("...")`；注入时页面若还没挂载好会自己
+   忽略，因为它随后会在报到时把搜索词取走 —— 两条路径都幂等。
+
+页面发给宿主的命令：`browserTitle:<notesMode>:<selected>:<total>`（宿主用
+`browsing-window-title(-notes)` 本地化后设成窗口标题）、`editCard:<cid>` /
+`editNote:<nid>`（双击一行）、`preview:<cid>`（预览，见下）。
+
+### 表格数据
+
+- **列清单**：先读集合配置 `activeCols`（缺省 `["noteFld", "template", "cardDue", "deck"]`，
+  对照 `pylib/anki/browser.py:33`），再 `setActiveBrowserColumns` —— 少了这一步
+  `browserRowForId` 会直接报 `Active browser columns not set.`
+  （`rslib/src/browser_table.rs:276-285`），现象是整张表格空白 + 弹错误框。
+- **排序**：只把「列 key + 方向」交给后端（`SortOrder.builtin`），前端不自己排；不可排的列
+  （`sorting_cards == SORTING_NONE`）点了给 `browsing-sorting-on-this-column-is-not` 提示，
+  同列再点只翻转方向 —— 全部对照 `table.py:492-516`。
+- **行数据**：后端**没有批量接口**，只能逐行 `browserRowForId`。页面把这件事交给
+  `ResultRow.svelte`，由虚拟列表按需挂载 —— 与 Qt 的 `QAbstractTableModel.data()`
+  惰性取数是同一个思路。注意该组件**必须跟着 `id` 重新取数**（虚拟列表按行号复用组件实例，
+  见 §5.23）。
+- 单元格文本已经是纯文本（`rslib/src/browser_table.rs` 内部就调 `html_to_text_line`），
+  页面直接显示，不做二次转换。
+- **`BrowserRow` 只有 `cells` / `color` / 字体**，没有 card id / note id。行 id 一直都在
+  结果列表里（卡片模式是 cid、笔记模式是 nid）：卡片模式下要拿 note 得先 `getCard`
+  反查（`currentNoteId()`），笔记模式下要拿卡片得先 `cardsOfNote`（`currentCardId()`）。
+  行颜色用于推旗标 / 暂停 / 埋藏（`BrowserRow.Color` → `flag = color - FLAG_RED + 1`）；
+  标记状态必须查笔记的标签（既标记又有旗标时颜色只显示其中一个）。
+- **列顺序就是 `activeCols` 的顺序**：后端 `browserRowForId` 返回的 `cells` 按送进
+  `setActiveBrowserColumns` 的列顺序排，所以「显示顺序」与「取数顺序」必须同源 ——
+  拖列头改的就是 `activeCols`（改完重新 `setActiveBrowserColumns` 并让每行重新取数，
+  靠 `ResultRow` 的 `version` 属性）。Qt 的做法不同（模型顺序不变，视图顺序记在表头
+  状态里），但观察到的行为一致。列宽则按模式分开存（`{cards, notes}`，等价于 Qt 的
+  两个 `saveHeader` 键）。
+- **导出只在页面里做**：对话框（`ExportDialog.svelte`）→ 问宿主要保存路径
+  （**外壳新增的端点** `saveFileDialog`，请求复用 `OpenFilePickerRequest`，其中
+  `key` 按外壳约定传建议文件名）→ 页面直接调 `exportAnkiPackage` /
+  `exportCollectionPackage`。宿主只提供"选路径"这一个能力（网页自己弹不出原生保存框）。
+  测试钩子：`ANKI_SAVE_PATH` 指向目录时直接返回 `<目录>/<建议文件名>`，绕过原生对话框
+  （原生框没法自动点；与 `ANKI_*` 其它变量同一套路）。
+  另外**上游的 `exporting-note-exported` 在核心仓库里没有文本**（en/zh 都是空的），
+  所以 apkg 导出后状态栏是空的 —— 与 Qt 一致，不是漏翻译。
+- **「更改笔记类型」是"窗口感知的端点"**：页面是既有的动态路由
+  `change-notetype/<oldId>[/<newId>]`（`+page.ts` 从路径取新旧 id），它保存时只发
+  **字段/模板映射**，请求里**没有 `note_ids`**（页面不知道选了哪些笔记）；宿主开窗时
+  记下选中的笔记，收到 `changeNotetype` 请求时补上，成功后再关窗 —— 对照
+  `changenotetype.py:68-85` 的 `save()` 与 `mediasrv.py:772` 的窗口分派。所以这条
+  RPC 由 `server/api.rs` 单独接管（它要 async 调后端 + 关窗），不落进通用分发。
+  窗口是**应用级模态**；选中的笔记必须同一种类型，否则弹警告且不开窗
+  （`changenotetype.py:88-93`）。
+- **行高亮要用数组传，不能传 `selected={isSelected(id)}`**：Svelte 只追踪模板表达式里
+  直接引用的响应式变量，函数体里用到的 `selected` 它看不到 —— 于是「只改 `selected`、
+  不动其它状态」时（Ctrl+A 全选、反选）高亮不会刷新。传 `selectedIds={selected}`
+  让表达式直接引用数组即可。这条是验证脚本逼出来的：状态栏计数对、`browserTitle`
+  也对，只有 DOM 的高亮是旧的。
+- 失败一律带 `alertOnError: false`：搜索语法写错、行取不到（卡片刚被删）都只体现在
+  表格里，绝不弹 `alert()` 卡死页面（§5.18 的教训）。
+
+### 批量动作的三条映射规则
+
+卡片模式下表格里是**卡片**，而批量动作的粒度不一样，转换只能靠 RPC（后端没有批量映射接口）：
+
+| 动作 | 需要的 id | 怎么拿 |
+| --- | --- | --- |
+| 加标签 / 删除 | note id | 卡片模式下逐张 `getCard` 取 `noteId` 再去重（`cards.proto` 只有 `GetCard`） |
+| 改牌组 | card id | 笔记模式下逐条 `cardsOfNote` 展开 |
+| 预览 | card id | 笔记模式下取 `cardsOfNote` 的第一张 |
+
+动作之后统一重跑当前搜索，并保留仍然存在的选中项（对照 `table.py:520-543` 的
+`_restore_selection`）。**删除没有确认框** —— 上游就没有（`browser.py:895-906` 直接删），
+靠通用 undo 兜底，所以这里的「删除」也是直接删 + 状态栏提示 + `Ctrl+Z` 可撤销。
+
+### 预览窗口
+
+对照 `qt/aqt/browser/previewer.py`：独立顶层窗口，内容走 reviewer 的渲染路径
+（`renderExistingCard(browser=false)` + `_showQuestion`/`_showAnswer` + `card.question()` 的
+同款 CSS），按钮在页面底部（`<` / `>` / 重播音频），快捷键 `R` / `←` / `→` /
+`Space`/`Enter` / `Esc`（`Ctrl+Shift+P` 也可关闭）。
+
+- 同一个卡片再点一次「预览」= **关窗**（对照 `browser.py:853-865` 的 `onTogglePreview`）；
+- 「仅背面」（勾选框 / `B`）：问题与答案一起显示，开关落库到 bool 配置
+  `previewBothSides`（`previewer.py:107-115,278-293`）。它的文案是
+  `qt-misc-back-side-only`，属于 `ftl/qt` 仓库 —— 类型化的 i18n 方法只覆盖核心
+  字符串，所以这里走 `I18n::translate`（外壳为此把该方法放开为 `pub`，见交接文档
+  §7.4）；
+- `[[type:Field]]` 会被删掉而不是生成输入框（对照 `previewer.py:201-204` 的
+  `type_ans_preview_filter`）；
+- **上一张/下一张的清单在浏览器页面手里**：宿主持有不了完整结果集，所以
+  `previewNext`/`previewPrev` 会绕一圈 —— 宿主 `eval` 浏览器的 `previewNeighbor(±1, cid)`，
+  页面算出邻居再回一条 `preview:<cid>`（对照 `previewer.py:412-430`：Qt 的预览器也是问
+  浏览器父窗口要前后卡片）；
+- 关闭浏览器窗口时预览窗口一起关掉（`browser.py` 的 `_close_previewer`）。
+
+### 与 Qt 的差异（有意为之）
+
+| 项 | Qt | 这里 |
+| --- | --- | --- |
+| 编辑区 | 嵌在浏览器窗口内（`browser.py:608-630`） | **独立窗口** `browser-editor`：`/editor/` 是不可信页面（CSP `frame-ancestors 'none'`），iframe 会被 WebView 拒绝；关闭浏览器时连带关掉它 |
+| 打开编辑器 | 选中行即载入编辑区 | **双击**一行（单击只选中，否则每点一下都抢焦点） |
+| 菜单栏 | Notes / Cards / View / Jumps 四个菜单 | 最常用的四个平铺成工具栏按钮，其余在**行右键菜单** + 工具栏「更多」里（同一份动作表）；因此 `browsing-delete-notes` 等菜单文案没用上 |
+| 立即评分 | 弹出「重来 / 困难 / 良好 / 简单 + 取消」对话框 | 菜单里四项（少一次点击，触发的是同一个 `gradeNow`） |
+| 取消暂停 / 取消埋藏 | 两个独立入口（`unsuspend_cards` / `unbury_cards`） | 都走「恢复被暂停/被埋藏的卡片」这一个 RPC（后端只有它），因此取消暂停也会顺带恢复埋藏 |
+| 查找替换 | 对话框带「所有字段 / 标签 / 某字段」下拉框与「只看选中的笔记」 | 固定作用于选中笔记的全部字段（两个下拉/勾选简化掉了） |
+| 对话框确认键 | Qt 自带的标准按钮（"OK"，仓库里没有核心 ftl key） | 用最贴合的可用文案：重置/重排用动作名，到期日用 `actions-save`，查找替换用对话框标题 |
+| 卡片信息窗口 | `CardInfoDialog`（单例，Qt 对话框） | 独立窗口，**复用已有的 `card-info/<cid>` 路由**；同窗口再看另一张卡时整页导航过去 |
+| 更改笔记类型 | 保存前 `confirm_schema_modification()`（牵涉 schema 时再确认一次） | 跳过这一步（本外壳没有这条确认链路）；其余一致：宿主补 `note_ids`、成功即关窗 |
+| 导出 | 五种格式（牌组包 / 整个集合 / 笔记纯文本 / 卡片 CSV / 带列的笔记 CSV）+ 逐个牌组导出；原生保存对话框；导出到 profile 目录时会拒绝 | 只做了 **apkg / colpkg**（CSV 要先选列，是另一套对话框）；范围只有「选中的笔记 / 全部集合」；保存路径问宿主的 `saveFileDialog`（默认文件名 `集合-<时间戳>.<ext>`）；不做"导出到 profile 目录"的拦截 |
+| 列清单 | 「视图」菜单里逐项勾选 | 表头右键弹层（同一份 `activeCols`，落库时机一致） |
+| 列宽 / 列顺序 | `saveHeader` 存 PM profile 的**二进制表头状态**（列宽 + 视图顺序） | profile 配置 `tauriBrowserColumnWidths`（JSON，`{cards, notes}` 各存列 key → px）；顺序直接落在 `activeCols` 里 |
+| 侧栏 | 7 个分区 + 折叠状态 + 修饰键组合搜索 | 「当前牌组 / 全部集合 / 牌组树（带计数）/ 笔记模板」，点击即替换搜索词 |
+| 批量动作 | 删除 / 改牌组 / 加标签 / 移除标签 / 清除未使用标签 / 标记 / 暂停 / 埋藏 / 旗标 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改笔记类型 / 查找替换 / 导出… | 都在（行右键菜单 + 工具栏「更多」）；缺的是导出里的 CSV/纯文本格式、查找重复、管理笔记类型，见「尚未实现」 |
+| 加标签对话框 | `TagEdit`（补全 + 最近标签） | 一个输入框（空格分隔），补全与最近标签未做 |
+| 预览 | 按钮在原生 QDialogButtonBox | 按钮在页面里；前后卡片不做禁用（清单在浏览器手里） |
+| 表头排序指示 | QHeaderView 的箭头 | 列头里的 ▲/▼ |
+| 窗口标题 | `browsing-window-title(-notes)`（含已选/总数） | 同（页面报数、宿主本地化） |
+
+### 已验证
+
+`tauri/tools/verify-browser.ps1`（+ `browser-check.mjs`）：`browse` 开窗 → 断言页面报到且
+首屏搜索出结果 → 截真实窗口 → Playwright 走完整条链路（侧栏 / 排序 / 多选 / 笔记模式 /
+列清单 / 加标签 / 改牌组 / 删除 + 撤销 / **行右键菜单的 38 项动作**：标记 / 旗标 / 暂停 /
+埋藏 / 重置 / 到期日 / 重排 / 立即评分 / 清除未使用标签 / 选中笔记 / 卡片信息 / 复制笔记 /
+查找替换，以及 Home·Ctrl+N·End 跳转与反选全选）→ 驱动预览窗口翻面与前后卡片并截图 →
+验 `searchInBrowser` 与 `browserSearch` 的复用路径 → 关闭浏览器断言编辑区、预览与
+卡片信息窗口连带关掉。产物里有 `browser.png` / `preview.png` / `card-info.png` 三张
+真实渲染截图。
+
+```
+PASS  侧栏已渲染牌组 — 当前牌组 / 全部集合 / Default 2 + 0 + 0 / Basic / …
+PASS  列头 = activeCols 指定的列 — 排序字段 | 卡片模板 | 到期 | 牌组
+PASS  点列头后 sortType 落库 — cardDue
+PASS  再点一次翻转方向 — true → false
+PASS  Ctrl+点击加选 — browserTitle:0:2:3
+PASS  Ctrl+A 全选 — browserTitle:0:3:3（共 3 行）
+PASS  笔记模式改用 searchNotes — 1 次
+PASS  勾选一列后立即写回 activeCols — ["noteFld","template","cardDue","deck","cardMod"]
+PASS  拖动列头 → 首列挪到末尾 / 新顺序写回 activeCols
+PASS  单元格跟着列顺序走（没和表头错位）/ 拖动不会被当成点列头排序
+PASS  列宽：卡片与笔记各存一份、切模式互不影响、切回来能恢复
+PASS  加标签：能按新标签搜到 — 1 条
+PASS  改牌组：卡片真的换到新牌组 — 1 → 1791860914411
+PASS  删除发出了 removeNotes — 200
+PASS  Ctrl+Z 撤销后 note 回来了
+PASS  右键菜单已打开 — 38 项 / 菜单项带了 Qt 的快捷键提示
+PASS  菜单 → 卡片信息发出 cardInfo:<cid> / 菜单 → 复制笔记发出 addCopy
+PASS  Ctrl+K 加 marked 标签 / 再按一次取消 / marked 标签已清掉
+PASS  Ctrl+3 设置绿色旗标 — flag=3 / 同一旗标再按一次 = 清除
+PASS  Ctrl+J 暂停 / 再次 Ctrl+J 取消暂停 / Ctrl+Shift+J 埋藏
+PASS  重置弹框有 2 个勾选项 / 重置发出 scheduleCardsAsNew
+PASS  设置到期日发出 setDueDate(days=2) / 重新定位发出 sortCards
+PASS  菜单 → 立即评分（良好）
+PASS  Home/Ctrl+N/End 选中对应行、Ctrl+Alt+A 全选、Ctrl+Alt+S 反选（高亮与计数都对）
+PASS  菜单 → 选中笔记（换成 nid: 搜索）
+PASS  查找替换发出 findAndReplace / 查找替换真的改了字段
+PASS  菜单 → 更改笔记类型发出 changeNoteType / 页面已渲染 / 真的改了笔记类型
+      （宿主补 note_ids → 后端执行 → 关窗；见 verify 脚本的「开窗 → 页面保存 → 宿主关窗」）
+PASS  导出对话框默认 apkg + 选中的笔记 / 文案已本地化 / 切到 colpkg 后只剩「含媒体 / 旧版支持」
+PASS  导出 apkg 产出了合法文件 — 集合-2026-10-13@15-48-12.apkg 56633 字节 PK
+      （verify 脚本：导出 apkg → 集合-….apkg（55 KB））
+PASS  双击行发出了 editCard — editCard:1791798151921
+PASS  预览发出了 preview:<cid> — preview:1791798151921
+PASS  已删除临时牌组 — TauriTemp40804
+预览窗口已渲染问题面
+预览：问题面 → 答案面
+预览：答案面 → 下一张卡片
+预览：下一张卡片 → 上一张卡片
+预览：仅背面（问题+答案）
+预览：回到只看问题
+searchInBrowser：复用已打开的窗口并注入搜索
+browserSearch：图表 → 浏览器搜索
+关闭浏览器连带关掉 browser-editor 窗口
+关闭浏览器连带关掉 preview 窗口
+```
+
+检查脚本会真的改集合（加/删标签、改牌组、删笔记、建临时牌组、给卡片打旗标 / 暂停 /
+埋藏 / 重置 / 改到期日 / 立即评分 / 查找替换），但**每一步都会还原或清理**：动作类的
+改动紧随一个 `Ctrl+Z`（或再按一次同样的开关切回去）、临时 note 与临时牌组删掉、
+`sortType`/`activeCols` 等配置写回原值，最后断言「已删除临时牌组」与「配置已还原」。
+
+> 改了 `ts/routes/browser/` 之后**必须重跑 `corepack yarn build`**：这个页面是 SvelteKit
+> 产物（`out/sveltekit`），外壳只负责把它当 `browser` 路由发出去
+> （`server/assets.rs` 的 `SVELTEKIT_ROUTES`）。它按**不可信页面**处理（多一份 script
+> hash 校验），理由见该文件的注释。
 
 ## 验证工具
 
@@ -628,10 +1082,18 @@ PASS  已还原测试笔记
 | 脚本 | 作用 |
 | --- | --- |
 | `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言。改完复习界面先跑它 |
-| `verify-m2.ps1` | 一键：验证 M2 的平台能力（剪贴板文件列表、TTS 合成、录音闭环）并检查多窗口的命令归属 |
-| `m2-check.mjs` | 上面那个脚本调用的实际检查（HTTP 层端到端断言） |
+| `verify-m2.ps1` | 一键：验证 M2 的平台能力（剪贴板文件列表、TTS 合成、录音闭环）并检查多窗口的命令归属。**录音那项需要本机有输入设备**，没有时会以 `recordAudio → HTTP 500 找不到可用的录音设备` 失败（其余断言照常通过） |
+| `m2-check.mjs` | 上面那个脚本调用的实际检查（HTTP 层端到端断言）。注意：那条会一直挂着的 `recordAudio` 必须马上挂 `.catch()`、且收尾**不要** `abort()` —— 否则 node 会以 unhandled rejection 自杀并带出 libuv 的 `UV_HANDLE_CLOSING` 断言，看着像被测程序崩了 |
 | `verify-editor.ps1` | 一键：验证「编辑当前卡片」窗口（开窗 → 载入 note → 截图 → 关窗 → 保存链路） |
 | `editor-check.mjs` | 编辑器「改字段 → 保存」的检查：Playwright 真实敲键盘，再用 RPC 复查集合内容 |
+| `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
+| `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
+| `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带） |
+| `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行，并观察页面发往宿主的桥接命令 |
+| `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单/新建删除 → `d`/`s`/`study` 切页） |
+| `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入，并用 RPC 复查当前牌组/牌组是否真的建删 |
+| `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
+| `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |
@@ -653,18 +1115,35 @@ PASS  已还原测试笔记
 ## 尚未实现
 
 - **桥接命令处理**：`/_anki/pycmd` 覆盖复习主链路（`domDone`、`ans`、
-  `ease1`..`ease4`、`undo`、`statesMutated`、`close`）与录音窗口的
-  `saveRecording` / `cancelRecording`。工具栏动作、编辑器快捷键、`browserSearch`、
-  `updateToolbar`、`repaintNeeded` 等命令会记录日志并返回 `null`
-  （其中多数依赖 M3 的界面）。
+  `ease1`..`ease4`、`undo`、`statesMutated`、`add`、`edit`、`browse`、`browserSearch:`、
+  `stats`、`preferences`、`decks`、`overview`、`study`、`opts:<did>`、`import`、`shared`、
+  `close`）、编辑器的 `editorReady` / `saved` / `key:`…、浏览器窗口的
+  `browserReady` / `browserTitle:` / `editCard:` / `editNote:` / `preview:<cid>`、
+  预览窗口的 `previewNext` / `previewPrev` / `previewReplay`，以及录音窗口的
+  `saveRecording` / `cancelRecording`。`updateToolbar`、`repaintNeeded`、
+  工具栏动作等命令会记录日志并返回 `null`。
 - **复习界面余项**：
   - 底部栏已实现「编辑 / 更多 + 显示答案 + 四档评分」，并接入**计时器**
     （`showQuestion(button, maxTime)`，`maxTime` 取自牌组的 `timer` / `maxTaken`）、
     按钮上的**下次间隔**（`describeNextStates`）与牌组的 `stopTimerOnAnswer`。
     评分按钮固定四个 —— v3 调度器下 Qt 也是四个（`Scheduler.answerButtons()`
     恒返回 4，2/3 个按钮是 v2 的遗留）。
+  - ~~牌组列表~~ —— **已实现**（新写的 SvelteKit 页面，启动默认页）：牌组树与今日
+    计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
+    「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏，见「牌组列表」。
+    **剩下的**：牌组描述、自定义学习、拖拽排序、导出、同步按钮、复习界面的工具栏。
   - ~~`edit`~~ —— **已实现**：打开「编辑当前卡片」窗口，见「编辑器」。
-  - `more` 命令仍是 no-op：它要打开更多菜单，需要新的界面。
+  - ~~添加卡片~~ —— **已实现**：裸 `a` → `pycmd("add")` → `editor/?mode=add` 窗口，
+    见「编辑器」（Qt 的入口在主窗口工具栏 / 全局快捷键 `a`）。
+  - ~~浏览器~~ —— **已实现**（新写的 SvelteKit 页面）：裸 `b` → `pycmd("browse")`、
+    图表 `browserSearch:<query>` 与 `searchInBrowser` 端点三个入口都通了；搜索、排序、
+    多选、笔记模式、列清单 / 列宽 / 列顺序拖动、加标签 / 移除标签 / 清除未使用标签 / 标记 / 旗标 /
+    暂停 / 埋藏 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改牌组 / 删除 + 撤销重做、
+    复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）都在，见「浏览器」。
+    **剩下的**：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
+    查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）、
+    管理笔记类型、以及「字段…/卡片…」对话框（对照 `browser.py:301-401` 的完整动作表）。
+  - ~~`more` 命令~~ —— **已实现**（复习界面）：见「复习界面」的「更多」菜单；编辑器里的 `more` 仍未做。
   - 卡片布局与预览器（同上：需要新的界面）。
   - 音频的 `current_caller` 区分（editor / reviewer 的打断语义），属 M5 的音频质量项。
 - **M2 已完成**：mediasrv 的 32 个平台端点全部有实现，详见上文各节。

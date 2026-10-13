@@ -10,8 +10,10 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::backend::AppBackend;
+use crate::browser::Browser;
 use crate::paths::AppPaths;
 use crate::platform::record::Recorder;
+use crate::preview::Preview;
 use crate::reviewer::Reviewer;
 
 /// 在 HTTP 处理器与窗口之间共享的应用状态。
@@ -34,6 +36,10 @@ pub struct AppState {
     collection_open: Arc<AtomicBool>,
     /// 复习会话状态。
     pub reviewer: Arc<Reviewer>,
+    /// 浏览器窗口状态（首屏搜索词、待注入编辑器的 note）。
+    pub browser: Arc<Browser>,
+    /// 预览窗口状态（正在预览的卡片与当前面）。
+    pub preview: Arc<Preview>,
     /// 当前窗口是否承载复习界面；决定 `domDone` 是否触发复习。
     pub reviewer_active: Arc<AtomicBool>,
     /// 录音会话状态。
@@ -58,6 +64,8 @@ impl AppState {
             port: Arc::new(AtomicU16::new(0)),
             collection_open: Arc::new(AtomicBool::new(false)),
             reviewer: Arc::new(Reviewer::default()),
+            browser: Arc::new(Browser::default()),
+            preview: Arc::new(Preview::default()),
             reviewer_active: Arc::new(AtomicBool::new(false)),
             recorder: Arc::new(Recorder::default()),
         }

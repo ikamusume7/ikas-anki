@@ -11,12 +11,16 @@
 
 mod backend;
 mod bridge;
+mod browser;
 mod editor;
 mod legacy;
+mod main_window;
 mod method_table;
 mod paths;
 mod platform;
+mod preview;
 mod reviewer;
+mod reviewer_menu;
 mod server;
 mod state;
 mod windows;
@@ -91,7 +95,8 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
 
     // 起始页面可通过 ANKI_START_PAGE 指定（editor / graphs / deck-options ...）。
     // 特例：`reviewer` 走 legacy 页面机制，加载 /_anki/legacyPageData。
-    let page = std::env::var("ANKI_START_PAGE").unwrap_or_else(|_| "graphs".to_string());
+    // 默认是**牌组列表**（Qt 的主窗口启动就在 deckBrowser 状态，`main.py:93`）。
+    let page = std::env::var("ANKI_START_PAGE").unwrap_or_else(|_| "decks".to_string());
     if page == "reviewer" {
         // 只有复习界面才会在 domDone 时开始取卡
         state
@@ -107,7 +112,10 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     let url = if page == "reviewer" {
         let id = legacy::reviewer_page(port);
         tracing::info!("已注册复习页: id={id}");
-        format!("http://127.0.0.1:{port}/_anki/legacyPageData?id={id}")
+        let url = format!("http://127.0.0.1:{port}/_anki/legacyPageData?id={id}");
+        // 记下来：`d`（牌组列表）之后再点牌组要切回复习页时直接复用这一份
+        main_window::remember_reviewer_url(&url);
+        url
     } else {
         format!("http://127.0.0.1:{port}/{page}")
     };
@@ -130,9 +138,10 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
 /// 开发/测试入口：把需要窗口的页面直接开出来
 /// （`ANKI_OPEN_ROUTES=deck-options/1,preferences`）。
 ///
-/// 产品内的入口还没实现 —— 打开牌组选项要经过牌组浏览器，而牌组浏览器在新版 Anki
-/// 里是原生 Qt 界面（没有对应的 Web 页面）。所以这里提供一个与 `ANKI_START_PAGE`
-/// 同类的测试入口，让「多窗口 + 模态 + 关闭 Hook」这条链路可以端到端验证。
+/// 牌组选项 / 导入 / 首选项的产品内入口还没实现（在 Qt 里它们要经过主窗口的工具栏与
+/// 牌组浏览器，而牌组浏览器是原生 Qt 界面）。这里提供一个与 `ANKI_START_PAGE` 同类的
+/// 测试入口，让「多窗口 + 模态 + 关闭 Hook」这条链路可以端到端验证。
+/// （编辑器与浏览器窗口现在有产品内入口了，见 `crate::editor` / `crate::browser`。）
 fn open_extra_windows(state: &AppState) {
     let routes = std::env::var("ANKI_OPEN_ROUTES").unwrap_or_default();
     for route in routes.split(',').map(str::trim).filter(|it| !it.is_empty()) {
