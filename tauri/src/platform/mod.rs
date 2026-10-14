@@ -117,15 +117,14 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
             Ok(Vec::new())
         }
 
-        // 仍未实现，但**不是窗口模型挡住的**：它们服务的界面在新版 Anki 里是原生
+        // 仍未实现，但**不是窗口模型挡住的**：它服务的界面在新版 Anki 里是原生
         // Qt 实现，仓库里没有对应的 Web 页面（详见 `crate::windows` 的模块注释）。
-        //   - 字段 / 卡片布局：需要新的 Svelte 界面（M3）
         //   - saveCustomColours：需要能暴露自定义调色板的原生取色器，`rfd` 无此 API
-        //
-        // `searchInBrowser` 已实现，但**不在这里**：它要调异步 RPC，见 `server/api.rs`。
-        // `openFieldsDialog` 已经把界面补上了，走 `server/api.rs`（要 await 一次
-        // `getNotetype` 才能算出标题，所以不能放在这里的同步分发里）。
-        "openCardsDialog" | "saveCustomColours" => {
+
+        // 不在这里的：`searchInBrowser`、`openFieldsDialog`、`openCardsDialog` ——
+        // 它们都要调异步 RPC（前者查集合、后两者要 await `getNotetype` 才能算出标题），
+        // 所以走 `server/api.rs`。
+        "saveCustomColours" => {
             tracing::warn!("该端点需要尚未实现的界面或能力，暂时忽略: {method}");
             Ok(Vec::new())
         }

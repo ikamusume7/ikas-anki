@@ -158,6 +158,26 @@ try {
     node tauri/tools/fields-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
+    # 「卡片…」对话框：编辑器工具栏的「卡片」按钮 / `Ctrl+L` 发的前端端点就是
+    # openCardsDialog（`NotetypeButtons.svelte:61`）。宿主对着编辑器窗口当前的笔记类型
+    # 开窗，并把**正在编辑的那张 note** 与当前卡片的 ord 一起带过去（预览用）
+    Write-Host "验证「卡片…」对话框…"
+    $status = Send-Rpc -Method "openCardsDialog"
+    if ($status -ne "200") { throw "openCardsDialog 未被接受：HTTP $status" }
+    if (-not (Wait-LogPattern "打开窗口: cards ->" 20)) {
+        Write-Host "卡片对话框没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "卡片对话框窗口已打开" -ForegroundColor Green
+        Start-Sleep -Seconds 2
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "cards-window.png") `
+            -WaitSeconds 20
+    }
+    $env:SHOT_DIR = $OutDir
+    node tauri/tools/cards-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
     # 关闭流程：编辑器的「关闭」按钮就是发这条 RPC（NoteEditor.svelte 的 closeEditCurrent）
     $status = Send-Rpc -Method "closeEditCurrent"
     if ($status -ne "200") { throw "closeEditCurrent 未被接受：HTTP $status" }

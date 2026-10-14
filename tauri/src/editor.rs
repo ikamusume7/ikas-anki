@@ -87,32 +87,65 @@ pub fn open_add_cards(state: &AppState) -> Result<()> {
     .map_err(|error| anyhow::anyhow!("{error:#}"))
 }
 
-/// 每个编辑器窗口最近注入的笔记类型。
+/// 每个编辑器窗口最近注入的笔记类型，以及那张 note 的 id（新建笔记时为 `None`）。
 ///
-/// 「字段…」对话框（`openFieldsDialog` 前端端点）不带参数：Qt 那边是
-/// `window.editor.onFields()`，对着**那个编辑器窗口当前的笔记类型**开对话框
-/// （`mediasrv.py:1096-1106`）。平台端点拿不到来源窗口（`platform::dispatch` 只有
-/// method/body），所以注入时在这里记一份，按窗口标签查。
+/// 「字段…」「卡片…」两个对话框（`openFieldsDialog` / `openCardsDialog` 前端端点）
+/// 都不带参数：Qt 那边是 `window.editor.onFields()` / `onCardLayout()`，对着**那个
+/// 编辑器窗口当前的东西**开对话框（`mediasrv.py:1096-1116`）。平台端点拿不到来源
+/// 窗口（`platform::dispatch` 只有 method/body），所以注入时在这里记一份，按窗口标签查。
+///
+/// note id 只有「卡片…」用得上：预览要拿一张真笔记去 `RenderUncommittedCard`
+/// （`clayout.py:536` 的 `note.ephemeral_card()`），编辑器窗口当前那张最合适。
 static LOADED_NOTETYPES: LazyLock<Mutex<HashMap<String, i64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static LOADED_NOTES: LazyLock<Mutex<HashMap<String, i64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// 记下某个编辑器窗口正在编辑的笔记类型。
+/// 记下某个编辑器窗口正在编辑的笔记类型与 note。
 pub fn remember_notetype(window: &str, notetype_id: i64) {
     if let Ok(mut map) = LOADED_NOTETYPES.lock() {
         map.insert(window.to_string(), notetype_id);
     }
 }
 
-/// 「字段…」对话框要用的笔记类型：优先编辑器窗口当前那张，其次其它编辑器窗口
-/// （浏览器里的编辑区等），都没有时返回 `None`。
-pub fn last_notetype() -> Option<i64> {
+/// 记下某个编辑器窗口正在编辑的 note；`None` 表示这是一张新笔记（还没落库）。
+pub fn remember_note(window: &str, note_id: Option<i64>) {
+    if let Ok(mut map) = LOADED_NOTES.lock() {
+        match note_id {
+            Some(note_id) => map.insert(window.to_string(), note_id),
+            None => map.remove(window),
+        };
+    }
+}
+
+/// 「当前」编辑器窗口：按优先级找第一个有笔记类型的编辑器窗口。
+///
+/// 顺序与 Qt 的调用链一致：正在编辑的那张（`editcurrent` / `addcards`）优先，
+/// 浏览器里的编辑区垫后。
+fn current_editor_window() -> Option<(&'static str, i64)> {
     let map = LOADED_NOTETYPES.lock().ok()?;
     for window in [windows::ADD_CARDS, windows::EDIT_CURRENT, windows::BROWSER_EDITOR] {
         if let Some(notetype_id) = map.get(window) {
-            return Some(*notetype_id);
+            return Some((window, *notetype_id));
         }
     }
     None
+}
+
+/// 「字段…」对话框要用的笔记类型：优先编辑器窗口当前那张，其次其它编辑器窗口
+/// （浏览器里的编辑区等），都没有时返回 `None`。
+pub fn last_notetype() -> Option<i64> {
+    current_editor_window().map(|(_, notetype_id)| notetype_id)
+}
+
+/// 「卡片…」对话框要用的东西：笔记类型 + 是哪个窗口 + 该窗口当前的 note（可能没有）。
+///
+/// 拿到窗口名是为了算初始卡片序号：Qt 用 `self.card.ord`（`editor.py:315`），
+/// 也就是**正在复习的那张卡**属于哪个卡片模板；新建笔记时没有卡片，Qt 取 0。
+pub fn current_notetype_and_note() -> Option<(&'static str, i64, Option<i64>)> {
+    let (window, notetype_id) = current_editor_window()?;
+    let note_id = LOADED_NOTES.lock().ok()?.get(window).copied();
+    Some((window, notetype_id, note_id))
 }
 
 /// 打开「添加卡片」并**载入某张已有笔记的内容**（浏览器的「复制笔记」，
@@ -235,10 +268,14 @@ fn inject_new_note(state: &AppState, window: &str) {
 /// Qt 也是靠回调确认 loadNote 跑完了。没有它，"注入成功但没生效"只能靠肉眼看窗口
 /// （`loadNote` 取不到 note 时页面只会报个错，宿主完全不知情）。
 pub(crate) fn inject_note(state: &AppState, window: &str, args: &serde_json::Value) {
-    // 「字段…」对话框要知道这个窗口在编辑哪个笔记类型（见 `last_notetype`）
+    // 「字段…」/「卡片…」对话框要知道这个窗口在编辑哪个笔记类型、哪张 note
     if let Some(notetype_id) = args.get("notetypeId").and_then(|value| value.as_i64()) {
         remember_notetype(window, notetype_id);
     }
+    remember_note(
+        window,
+        args.get("nid").and_then(|value| value.as_i64()),
+    );
     let js = format!(
         "require(\"anki/ui\").loaded\
          .then(() => loadNote({args}))\

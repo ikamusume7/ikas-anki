@@ -80,6 +80,8 @@ pub const PREFERENCES: &str = "preferences";
 pub const CUSTOM_STUDY: &str = "custom-study";
 /// 字段对话框（Qt 的 `FieldDialog`，`qt/aqt/fields.py`）。
 pub const FIELDS: &str = "fields";
+/// 卡片模板对话框（Qt 的 `CardLayout`，`qt/aqt/clayout.py`）。
+pub const CARDS: &str = "cards";
 /// 牌组选项（Qt 的 `DeckOptionsDialog`）。
 pub const DECK_OPTIONS: &str = "deck-options";
 /// 导入（Qt 的 `ImportDialog`）。

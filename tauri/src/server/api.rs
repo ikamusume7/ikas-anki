@@ -71,6 +71,19 @@ pub async fn handle_rpc(
         };
     }
 
+    // 「卡片…」对话框：编辑器工具栏的「卡片」按钮 / `Ctrl+L`（`NotetypeButtons.svelte:61`
+    // 调的就是这个端点）。同样不带参数，对着编辑器窗口当前的笔记类型开窗（对照
+    // `mediasrv.py:1109-1116` 的 `open_cards_dialog`）。
+    if method == "openCardsDialog" {
+        return match crate::main_window::open_cards_for_current(&state).await {
+            Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
+            Err(error) => {
+                tracing::warn!("打开卡片对话框失败: {error:#}");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response()
+            }
+        };
+    }
+
     // 0.5 「更改笔记类型」：补上 note_ids + RPC 跑完由**宿主**关窗。
     //
     // 上游是窗口感知的端点：`mediasrv.py:772` 发现请求来自 `ChangeNotetypeDialog`

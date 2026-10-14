@@ -18,7 +18,7 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 - 「编辑字体」用文本框 + 数字框（Qt 是 `QFontComboBox` 列出系统字体）；
 - 「重新定位」是弹一个数字框（Qt 还能拖动列表项）；
 - 字段删除少一个「有 N 张笔记用到它」的确认框（后端在保存时才校验）；
-- 本页不做模板/样式（那是「卡片…」对话框，见 PARITY 4.2）。
+- 本页不做模板/样式（那是「卡片…」对话框，见 `ts/routes/cards/`）。
 -->
 <script lang="ts">
     // 字段的 `ord` 是 `anki.generic.UInt32`（不是普通 number），所以要从 generic_pb 取

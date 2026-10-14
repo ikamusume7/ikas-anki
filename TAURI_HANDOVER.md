@@ -36,7 +36,9 @@
     （牌组/添加/浏览/统计）。
   - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通；
     概览里还能开**自定义学习**（`C` → 新写的 `ts/routes/custom-study/`）。
-  - 未做：主窗口菜单栏与同步、字段·卡片对话框、编辑已有筛选牌组、导出 CSV/纯文本、
+  - 编辑器的两个对话框（「字段…」/「卡片…」，都是新写的页面）：`ts/routes/fields/`、
+    `ts/routes/cards/`。
+  - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、导出 CSV/纯文本、
     查找重复、管理笔记类型、启动行为（检查/备份）、Android
 - **M4 未开始**：打包与 Android
 
@@ -46,7 +48,7 @@
 | --- | --- |
 | `tauri/tools/verify-reviewer.ps1` | 复习界面：启动 → 补卡片 → 截真实窗口 → 布局断言 |
 | `tauri/tools/verify-m2.ps1` | 平台能力：剪贴板文件列表 / TTS 合成 / 录音闭环 + 多窗口命令归属 |
-| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
+| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
 | `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带 |
 | `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → `d`/`s`/`study` 切页 |
@@ -397,6 +399,9 @@ verify-decks.ps1（牌组列表）、
 
 ts/routes/decks/      新写的牌组列表页面（主窗口默认页）：+page.svelte（牌组树、计数、
                       折叠、概览面板、齿轮菜单、底部三按钮、快捷键 d/s/t/a/b）
+ts/routes/cards/      新写的「卡片…」对话框（编辑器工具栏，上游是 Qt 的 clayout.py）：
+                      +page.svelte（三块编辑区 + 卡片类型增删改重排 + 选项菜单 +
+                      RenderUncommittedCard 预览）
 ts/routes/browser/    新写的浏览器页面：+page.svelte（搜索/排序/多选/动作表/快捷键）、
                        Toolbar.svelte、Sidebar.svelte、ResultRow.svelte（逐行取数）、
                        ContextMenu.svelte（行右键菜单，`data-action` 供验证脚本点击）、
@@ -910,13 +915,11 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
   这里统一用 `cpal`（Android 走 oboe），需真机确认。
 - ~~**窗口模型**~~ —— **已定案并实现**（见 §3.6）：多窗口 + 单实例 + 模态 + 几何记忆，
   `deckOptionsReady` / `deckOptionsRequireClose` / `importDone` /
-  `importDialogRequireClose` 已可用。剩下的 `searchInBrowser` / `openFieldsDialog` /
-  `openCardsDialog` / `closeAddCards` / `closeEditCurrent` 卡在**缺少 Web 界面**
-  （新版 Anki 里它们是原生 Qt 界面，需要新写 Svelte 页面，属 M3），
-  `saveCustomColours` 卡在原生取色器能力。
-  其中 **`closeAddCards` / `closeEditCurrent` / `searchInBrowser` 已经收口**（M3）：
-  前两个见 §6.4，`searchInBrowser` 现在把 `SearchNode` 翻成搜索词再开/复用浏览器窗口
-  （§3.7，实现在 `server/api.rs` 而不是平台层）。
+  `importDialogRequireClose` 已可用；**其余端点也都收口了**（M3）：`closeAddCards` /
+  `closeEditCurrent` 见 §6.4，`searchInBrowser` 把 `SearchNode` 翻成搜索词再开/复用
+  浏览器窗口（§3.7，实现在 `server/api.rs`），`openFieldsDialog` / `openCardsDialog`
+  各自开着新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（见 §6.4）。
+  只剩 `saveCustomColours` 卡在原生取色器能力（`rfd` 没有暴露自定义调色板的 API）。
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。仍未覆盖的是**拖入文件**（HTML5 drop），属 M3 的编辑器链路。
@@ -970,6 +973,14 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
     宿主在注入 `loadNote` 时记「窗口 → 笔记类型」（平台端点拿不到来源窗口）。
     验证见 `tools/fields-check.mjs`（由 `verify-editor.ps1` 调用）。
     差：系统字体下拉、拖动重排、删除时「有 N 张笔记用到它」的提示。
+  - **已完成**：**「卡片…」对话框**（4.2）—— 编辑器工具栏的「卡片」/ `Ctrl+L`（前端端点
+    `openCardsDialog`，上游 `qt/aqt/clayout.py` 有 884 行）→ 新写的 `ts/routes/cards/`：
+    正面/背面/样式三块编辑区、添加字段、翻转、卡片类型增删改重排、恢复默认、
+    浏览器外观、牌组覆盖、复制信息，预览走 `RenderUncommittedCard`（**未保存**的改动
+    立刻可见）；保存走 `updateNotetype`（整份 notetype）。宿主在 `editor.rs` 里除了
+    「窗口 → 笔记类型」还记了「窗口 → 那张 note」，再带上复习卡的 `ord`（`?notetype=&ord=&note=`）。
+    验证见 `tools/cards-check.mjs`（由 `verify-editor.ps1` 调用）。
+    差：帮助按钮、系统字体下拉、下拉里没有 Qt 的字段摘要、复制后没有提示。
   - **已完成**：**自定义学习**（3.6）—— 概览里的「自定义学习」（`C`）→ 新写的
     `ts/routes/custom-study/`（六个选项 + cram 四选一 + 标签包含/排除，走
     `CustomStudy` RPC；确定后宿主把主窗口导航到当前牌组的概览）。验证见
@@ -984,8 +995,7 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
     `tauri/README.md` 的「顶部工具栏」）。顺带核对：**Qt v3 主窗口并没有状态栏**
     （`forms/main.ui` 里没有 QStatusBar），`tauri/PARITY.md` 的 1.3 已按"已对齐"处理。
   - 下一步：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
-    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、管理笔记类型，
-    以及「字段…」「卡片…」对话框（`openFieldsDialog` / `openCardsDialog`）。
+    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、管理笔记类型。
     这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
 - **M4**：Windows 打包（**废弃整套 Briefcase 流程**，改 `tauri build`；
   签名对象从 `Anki.exe` 换成 Tauri 产物）+ Android（`tauri android init/build`，

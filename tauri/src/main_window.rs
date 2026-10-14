@@ -135,19 +135,7 @@ pub async fn open_fields_for_current(state: &AppState) -> Result<()> {
         tracing::warn!("没有正在编辑的笔记类型，忽略「字段…」请求");
         return Ok(());
     };
-    let notetype: anki_proto::notetypes::Notetype = {
-        let bytes = state
-            .backend
-            .call(
-                "getNotetype",
-                prost::Message::encode_to_vec(&anki_proto::notetypes::NotetypeId {
-                    ntid: notetype_id,
-                }),
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-        prost::Message::decode(bytes.as_slice()).map_err(|error| anyhow::anyhow!("{error}"))?
-    };
+    let notetype = load_notetype(state, notetype_id).await?;
     tracing::info!("打开字段对话框: notetype={notetype_id}");
     windows::open(
         state,
@@ -160,6 +148,72 @@ pub async fn open_fields_for_current(state: &AppState) -> Result<()> {
                     .fields_fields_for(&notetype.name),
             )
             .size(640.0, 720.0),
+    )
+}
+
+/// 读一份 notetype（标题要用名字，所以开窗前必须拿到）。
+async fn load_notetype(
+    state: &AppState,
+    notetype_id: i64,
+) -> Result<anki_proto::notetypes::Notetype> {
+    let bytes = state
+        .backend
+        .call(
+            "getNotetype",
+            prost::Message::encode_to_vec(&anki_proto::notetypes::NotetypeId {
+                ntid: notetype_id,
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    prost::Message::decode(bytes.as_slice()).map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+/// 打开「卡片…」对话框（编辑器工具栏的「卡片」按钮 / `Ctrl+L` → 前端端点
+/// `openCardsDialog`，对照 `qt/aqt/clayout.py` 的 `CardLayout`）。
+///
+/// 端点同样不带参数，但 Qt 那边要三样东西（`editor.py:312-332` 的 `onCardLayout`）：
+/// 笔记类型、**编辑器窗口当前那张 note**（预览用，`clayout.py:536`）、以及初始卡片
+/// 序号 = 正在复习的那张卡的 `ord`（`editor.py:315`，没有卡片时取 0）。
+///
+/// 三者都随 URL 传给页面（`?notetype=&ord=&note=`），页面自己去取数据 ——
+/// 宿主只负责开窗（见 `tauri/README.md` 的「窗口模型」）。标题对照
+/// `clayout.py:78` 的 `card_templates_card_types_for`（"Card Types for {val}"）。
+pub async fn open_cards_for_current(state: &AppState) -> Result<()> {
+    let Some((window, notetype_id, note_id)) = crate::editor::current_notetype_and_note() else {
+        tracing::warn!("没有正在编辑的笔记类型，忽略「卡片…」请求");
+        return Ok(());
+    };
+    let notetype = load_notetype(state, notetype_id).await?;
+
+    // Qt 取的是「编辑器当前卡片」的 ord（`editor.py:315`）。本外壳的编辑器窗口只有
+    // 编辑当前卡片时才知道自己对应哪张卡，所以从复习会话里取；新建笔记的那两个窗口
+    // （`add-cards` / 浏览器编辑区）在 Qt 里也没有卡片对象（`Note(col, mid)`，ord=0）。
+    let ord = if window == windows::EDIT_CURRENT {
+        state
+            .reviewer
+            .current_card()
+            .map(|card| card.template_idx)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let mut route = format!("cards/?notetype={notetype_id}&ord={ord}");
+    if let Some(note_id) = note_id {
+        route.push_str(&format!("&note={note_id}"));
+    }
+    tracing::info!("打开卡片对话框: notetype={notetype_id} ord={ord} note={note_id:?}");
+    windows::open(
+        state,
+        &WindowSpec::new(windows::CARDS, &route)
+            .title(
+                state
+                    .backend
+                    .i18n()
+                    .card_templates_card_types_for(&notetype.name),
+            )
+            .size(1000.0, 720.0),
     )
 }
 

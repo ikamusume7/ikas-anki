@@ -228,18 +228,19 @@ cargo build
 `src/server/pycmd.rs` 因此把命令分流：复习相关命令只接受主窗口，其他窗口只处理
 关窗与录音命令（`saveRecording` / `cancelRecording`）。
 
-原先「显式降级」的 10 个端点现在分成三类：
+原先「显式降级」的 10 个端点基本都补上了：
 
 | 端点 | 现状 |
 | --- | --- |
 | `deckOptionsReady` / `deckOptionsRequireClose` / `importDone` / `importDialogRequireClose` | **已实现**：就绪 / 关闭 / 模态变化都转发给对应窗口 |
-| `closeAddCards` / `closeEditCurrent` | **关闭语义已实现**，但窗口本身还开不出来（见下） |
-| `searchInBrowser` / `openFieldsDialog` / `openCardsDialog` | **仍未实现，而且不是窗口模型的问题**：浏览器 / 字段 / 卡片布局在新版 Anki 里是**原生 Qt 界面**，仓库里没有对应的 Web 页面（`ts/routes/` 只有 card-info / change-notetype / congrats / deck-options / editor / graphs / image-occlusion / import-* / preferences），需要新的 Svelte 界面（M3） |
+| `closeAddCards` / `closeEditCurrent` | **已实现**：两个窗口也都开得出来（裸 `a` / 复习界面的「编辑」） |
+| `searchInBrowser` | **已实现**：浏览器的「在本窗口中搜索」（要 await 一次集合查询，见 `server/api.rs`） |
+| `openFieldsDialog` / `openCardsDialog` | **已实现**：新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（同样要 await `getNotetype` 算标题），入口是编辑器工具栏的「字段…」「卡片…」 |
 | `saveCustomColours` | **仍未实现**：需要能暴露自定义调色板的原生取色器，`rfd` 没有该 API |
 
-打开窗口的**产品内入口**也还没实现（打开牌组选项要经过牌组浏览器，而牌组浏览器是
-原生 Qt 界面）。因此提供 `ANKI_OPEN_ROUTES=deck-options/1,preferences`——与
-`ANKI_START_PAGE` 同类的开发/测试入口——把窗口直接开出来做端到端验证。
+窗口的**产品内入口**也补齐了：复习界面的「编辑 / 更多」、主窗口的快捷键与工具栏、
+牌组列表的齿轮菜单、编辑器工具栏的两个对话框按钮。`ANKI_OPEN_ROUTES=deck-options/1,preferences`
+（与 `ANKI_START_PAGE` 同类的开发/测试入口）仍然保留，用来直接把某个窗口开出来做验证。
 
 已验证（`ANKI_START_PAGE=reviewer` + `ANKI_OPEN_ROUTES=deck-options/1`）：
 
@@ -825,8 +826,8 @@ PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
 ### 尚未实现
 
 - ~~`more`（更多菜单）~~ —— **已实现**：复习界面底部栏的「更多」与卡片右键会打开菜单，见「复习界面」的「更多」菜单。
-- 「字段…」「卡片…」按钮（`openFieldsDialog` / `openCardsDialog`）：新版 Anki 里是原生
-  Qt 对话框，仓库里没有对应的 Web 页面，点了没反应。
+- ~~「字段…」「卡片…」按钮~~ —— **已实现**：`openFieldsDialog` / `openCardsDialog` 两个
+  端点各自对着编辑器窗口当前的东西开窗（见下面两节）。
 
 ### 「字段…」对话框
 
@@ -848,6 +849,44 @@ PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
 验证：`tauri/tools/fields-check.mjs`（由 `verify-editor.ps1` 调用）—— 载入字段列表 →
 添加字段 → 保存 → 用 RPC 复查真的落库 → 用检查开始时留的**原始字节**原样还原
 （`updateNotetype` 收的就是 `getNotetype` 的响应），并截图 `out/editor-check/fields-window.png`。
+
+### 「卡片…」对话框
+
+编辑器工具栏的「卡片」按钮 / `Ctrl+L`（`NotetypeButtons.svelte:61`）走同一个套路，端点是
+**`openCardsDialog`**（`mediasrv.py:1109-1116` 的 `open_cards_dialog`）。端点同样不带参数，
+但 Qt 那边要三样东西（`editor.py:312-332` 的 `onCardLayout`）：
+
+| 东西 | Qt | 本外壳 |
+| --- | --- | --- |
+| 笔记类型 | `window.editor.note.mid` | `editor::current_notetype_and_note`（注入 `loadNote` 时记「窗口 → 笔记类型/note」） |
+| 预览用的 note | 编辑器当前那张；新建笔记时是空 `Note(col, mid)` | 同左（`?note=`；没有就由页面造一张空笔记） |
+| 初始卡片序号 | 当前卡片的 `ord`（`editor.py:315`），无卡取 0 | 同左（只有「编辑当前」窗口对应复习卡；新建笔记取 0） |
+
+页面 `ts/routes/cards/` 对照 `qt/aqt/clayout.py`（**884 行**）：
+
+| 项 | 上游 | 本外壳 |
+| --- | --- | --- |
+| 骨架 | 顶部「卡片类型: [下拉] [选项 ▾]」；左边三个**单选**页（正面 / 背面 / 样式，不是页签）；右边预览；底部按钮行 | 同左 |
+| 编辑器 | 纯文本 `QTextEdit`（`setAcceptRichText(False)`） | `<textarea>` |
+| 添加字段 | 弹「字段 + 字体 + 字号」→ 追加 `<div style='font-family: …'>{{字段}}</div>` | 同左（**差**：字体是文本框，Qt 是系统字体下拉） |
+| 翻转 | 按 `<hr id=answer>` 切开背模板再互换 | 同左 |
+| 预览 | `note.ephemeral_card(ord, custom_note_type=…, custom_template=…)` → `RenderUncommittedCard`；正/背面 + 填充空字段 + 夜间模式 | 同左（iframe + `srcdoc`；媒体相对路径靠 `<base>` 指到本地服务） |
+| 卡片类型 | 下拉切换；菜单里增/删/改/重排（改内存后整体保存） | 同左（重排是弹数字框，Qt 也是 `getOnlyText`；**差**：Qt 的下拉每项是「序号: 名字: 正面字段 -> 背面字段」的摘要（`_summarizedName`），这里只显示名字） |
+| 选项菜单 | 恢复默认 / 增删改重排 / 牌组覆盖 / 复制信息到剪贴板 / 浏览器外观 | 同左（**差**：复制后没有 "copied to clipboard" 提示 —— 那个 ftl key 本仓库里已经不存在了，`clayout.py:780` 引用的 `about_copied_to_clipboard` 是坏的；牌组覆盖用下拉，Qt 是带补全的 `TagEdit`） |
+| 保存 / 取消 | 整体 `update_notetype_legacy`；`reject` 有改动先问「保存 / 放弃 / 取消」 | `updateNotetype`；取消时只问「放弃吗」 |
+| 帮助 | `HelpPage.TEMPLATES` | **没做**（要接帮助页） |
+
+两个上游行为值得记一下：
+
+- 「添加卡片类型」复制的是**当前**模板（`clayout.py:707-711`），保存前必须把正面改得不一样，
+  否则后端直接拒绝（"The front side is identical to card template N"）—— Qt 那边同样存不进去；
+- 删除卡片类型的确认框里带卡片张数：Qt 用 `template_use_count`（Python 侧），本外壳用一次
+  `card:<序号> note:"<笔记类型>"` 搜索代替。
+
+验证：`tauri/tools/cards-check.mjs`（由 `verify-editor.ps1` 调用）—— 载入模板与样式 →
+改正面模板，断言**未保存**的改动已经出现在预览里（`RenderUncommittedCard`）→ 添加卡片类型 →
+保存 → 用 RPC 复查模板与卡片类型都落库 → 用原始字节还原，并截图
+`out/editor-check/cards.png` 与真实窗口 `cards-window.png`。
 
 ### 图像遮挡（内嵌遮罩编辑器）
 
@@ -1127,8 +1166,10 @@ browserSearch：图表 → 浏览器搜索
 | `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言。改完复习界面先跑它 |
 | `verify-m2.ps1` | 一键：验证 M2 的平台能力（剪贴板文件列表、TTS 合成、录音闭环）并检查多窗口的命令归属。**录音那项需要本机有输入设备**，没有时会以 `recordAudio → HTTP 500 找不到可用的录音设备` 失败（其余断言照常通过） |
 | `m2-check.mjs` | 上面那个脚本调用的实际检查（HTTP 层端到端断言）。注意：那条会一直挂着的 `recordAudio` 必须马上挂 `.catch()`、且收尾**不要** `abort()` —— 否则 node 会以 unhandled rejection 自杀并带出 libuv 的 `UV_HANDLE_CLOSING` 断言，看着像被测程序崩了 |
-| `verify-editor.ps1` | 一键：验证「编辑当前卡片」窗口（开窗 → 载入 note → 截图 → 关窗 → 保存链路） |
+| `verify-editor.ps1` | 一键：验证「编辑当前卡片」窗口（开窗 → 载入 note → 截图 → 关窗 → 保存链路 → 「字段…」/「卡片…」两个对话框） |
 | `editor-check.mjs` | 编辑器「改字段 → 保存」的检查：Playwright 真实敲键盘，再用 RPC 复查集合内容 |
+| `fields-check.mjs` | `verify-editor.ps1` 调用的「字段…」检查：加字段 → 保存 → RPC 复查 → 原始字节还原 |
+| `cards-check.mjs` | `verify-editor.ps1` 调用的「卡片…」检查：改模板 → **未保存**的改动出现在预览里 → 加卡片类型 → 保存 → RPC 复查 → 原始字节还原 |
 | `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
 | `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带） |
@@ -1186,9 +1227,9 @@ browserSearch：图表 → 浏览器搜索
     复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）都在，见「浏览器」。
     **剩下的**：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
     查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）、
-    管理笔记类型、以及「字段…/卡片…」对话框（对照 `browser.py:301-401` 的完整动作表）。
+    管理笔记类型（对照 `browser.py:301-401` 的完整动作表）。
   - ~~`more` 命令~~ —— **已实现**（复习界面）：见「复习界面」的「更多」菜单；编辑器里的 `more` 仍未做。
-  - 卡片布局与预览器（同上：需要新的界面）。
+  - ~~卡片布局~~ —— **已实现**：编辑器工具栏的「卡片…」（`openCardsDialog`），见「编辑器」。
   - 音频的 `current_caller` 区分（editor / reviewer 的打断语义），属 M5 的音频质量项。
 - **M2 已完成**：mediasrv 的 32 个平台端点全部有实现，详见上文各节。
   唯一没验证的是 **Android 上的录音**：这里统一用 `cpal`（Android 走 oboe），

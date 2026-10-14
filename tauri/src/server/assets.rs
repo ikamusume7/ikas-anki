@@ -45,6 +45,8 @@ const SVELTEKIT_ROUTES: &[&str] = &[
     "custom-study",
     // 字段对话框（上游是 Qt 对话框）
     "fields",
+    // 卡片模板对话框（上游是 Qt 对话框）
+    "cards",
     ];
 
 /// 展示用户内容的路由，需要更严格的 CSP（对照 mediasrv 的
@@ -62,6 +64,8 @@ const UNTRUSTED_SVELTEKIT_ROUTES: &[&str] = &[
     "custom-study",
     // 字段名与描述都是用户内容
     "fields",
+    // 模板与样式也是用户内容（模板里可以放任意 HTML/JS）
+    "cards",
 ];
 
 /// 对照 mediasrv 的 `TRUSTED_PAGE_CSP`。
