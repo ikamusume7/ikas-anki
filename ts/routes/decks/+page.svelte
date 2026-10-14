@@ -304,6 +304,13 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                     window.location.href = `/decks/?deck=${currentDeckId}`;
                 }
                 break;
+            case "c":
+                // Qt：概览里按 `c` 打开自定义学习（`overview.py:126-133`）
+                if (overview) {
+                    event.preventDefault();
+                    bridgeCommand(`customStudy:${overview.deckId}`);
+                }
+                break;
         }
     }
 
@@ -387,6 +394,13 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                     class="btn btn-secondary"
                     on:click={() => bridgeCommand(`opts:${overview?.deckId}`)}
                     >{tr.actionsOptions()}</button
+                >
+                <!-- 对照 Qt 概览底部的「C 自定义学习」（`overview.py:284-292`） -->
+                <button
+                    class="btn btn-secondary"
+                    id="deck-custom-study"
+                    on:click={() => bridgeCommand(`customStudy:${overview?.deckId}`)}
+                    >{tr.actionsCustomStudy()}</button
                 >
                 <button class="btn btn-secondary" on:click={() => (window.location.href = "/decks/")}
                     >{tr.actionsDecks()}</button

@@ -34,6 +34,9 @@ use anyhow::Context;
 use anyhow::Result;
 use prost::Message as _;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use tauri::Manager as _;
 
 use crate::state::AppState;
@@ -82,6 +85,34 @@ pub fn open_add_cards(state: &AppState) -> Result<()> {
             .size(800.0, 620.0),
     )
     .map_err(|error| anyhow::anyhow!("{error:#}"))
+}
+
+/// 每个编辑器窗口最近注入的笔记类型。
+///
+/// 「字段…」对话框（`openFieldsDialog` 前端端点）不带参数：Qt 那边是
+/// `window.editor.onFields()`，对着**那个编辑器窗口当前的笔记类型**开对话框
+/// （`mediasrv.py:1096-1106`）。平台端点拿不到来源窗口（`platform::dispatch` 只有
+/// method/body），所以注入时在这里记一份，按窗口标签查。
+static LOADED_NOTETYPES: LazyLock<Mutex<HashMap<String, i64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 记下某个编辑器窗口正在编辑的笔记类型。
+pub fn remember_notetype(window: &str, notetype_id: i64) {
+    if let Ok(mut map) = LOADED_NOTETYPES.lock() {
+        map.insert(window.to_string(), notetype_id);
+    }
+}
+
+/// 「字段…」对话框要用的笔记类型：优先编辑器窗口当前那张，其次其它编辑器窗口
+/// （浏览器里的编辑区等），都没有时返回 `None`。
+pub fn last_notetype() -> Option<i64> {
+    let map = LOADED_NOTETYPES.lock().ok()?;
+    for window in [windows::ADD_CARDS, windows::EDIT_CURRENT, windows::BROWSER_EDITOR] {
+        if let Some(notetype_id) = map.get(window) {
+            return Some(*notetype_id);
+        }
+    }
+    None
 }
 
 /// 打开「添加卡片」并**载入某张已有笔记的内容**（浏览器的「复制笔记」，
@@ -204,6 +235,10 @@ fn inject_new_note(state: &AppState, window: &str) {
 /// Qt 也是靠回调确认 loadNote 跑完了。没有它，"注入成功但没生效"只能靠肉眼看窗口
 /// （`loadNote` 取不到 note 时页面只会报个错，宿主完全不知情）。
 pub(crate) fn inject_note(state: &AppState, window: &str, args: &serde_json::Value) {
+    // 「字段…」对话框要知道这个窗口在编辑哪个笔记类型（见 `last_notetype`）
+    if let Some(notetype_id) = args.get("notetypeId").and_then(|value| value.as_i64()) {
+        remember_notetype(window, notetype_id);
+    }
     let js = format!(
         "require(\"anki/ui\").loaded\
          .then(() => loadNote({args}))\

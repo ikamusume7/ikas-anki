@@ -48,7 +48,7 @@
 | 3.3 | ⚠️ | **偏好设置** | 已能开（主窗口 `Ctrl+P`）；Qt 的对话框底部有 Close 按钮，这里用窗口的 ×（页面自己没有关闭按钮） | `qt/aqt/preferences.py`、`main.py:1459` |
 | 3.4 | ⚠️ | **导入** | 牌组列表底部的「导入文件」能开（`ts/routes/import-page`，模态窗口）；**没做端到端导入验证**，也还没有 File → Import / `.apkg` 双击 | `qt/aqt/import_export/importing.py`、`qt/aqt/deckbrowser.py:399` |
 | 3.5 | ⚠️ | **图像遮挡** | 已核对并验证：**这个版本没有独立的遮挡窗口**，「遮挡」按钮只是把编辑器页面里的 `ImageOcclusionPage`（掩码编辑器）切出来；「选图片」走宿主的 `/openFilePicker`。`tools/occlusion-check.mjs` 覆盖了「按钮出现 → 图片选择器 → 拷进媒体夹 → 掩码编辑器渲染出图片」。**没覆盖**：画遮罩并保存成遮挡笔记 | `ts/routes/editor/NoteEditor.svelte:795-815`、`ts/routes/image-occlusion/` |
-| 3.6 | ❌ | 自定义学习 / 筛选牌组 | Custom Study、Create Filtered Deck（主窗口与牌组列表都有入口） | `qt/aqt/customstudy.py`、`qt/aqt/filtered_deck.py` |
+| 3.6 | ⚠️ | **自定义学习 / 筛选牌组** | **自定义学习已实现**：概览里的「自定义学习」（快捷键 `C`）→ 新写的 `ts/routes/custom-study/`（六个选项 + cram 的四选一 + 标签包含/排除，走 `CustomStudy` RPC，验证见 `tools/custom-study-check.mjs`）。**差**：Qt 的 `TagLimit` 标签选择对话框（这里是两个文本框）、**编辑已有筛选牌组**的 `FilteredDeckConfigDialog`（`filtered_deck.py`，未做） | `qt/aqt/customstudy.py`、`qt/aqt/overview.py:284-292` |
 
 验收：每个窗口：能开、能关、关窗契约（`deckOptionsRequireClose` 等）走通、改动落库。
 
@@ -56,7 +56,7 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 4.1 | ❌ | **「字段…」对话框** | 增删/改名/重排字段、字体大小、在字段间跳转 | `qt/aqt/fields.py`（要新写界面） |
+| 4.1 | ⚠️ | **「字段…」对话框** | **已实现**：新写的 `ts/routes/fields/`（编辑器工具栏的「字段」按钮 → 前端端点 `openFieldsDialog` → 宿主对当前编辑器窗口的笔记类型开窗）。字段增删/改名/重新定位、编辑字体（家族+字号）、描述、排序字段、RTL / HTML 默认 / 折叠 / 排除搜索都在，保存走 `updateNotetype`，取消会问一句。**差**：系统字体下拉（这里是文本框）、拖动重排、删除时提示「有 N 张笔记用到它」、字段间跳转按钮 | `qt/aqt/fields.py`（要新写界面） |
 | 4.2 | ❌ | **「卡片…」对话框** | 卡片模板编辑器（模板/背面模板、样式、预览、选项、卡片切换）—— 上游最大的一块界面 | `qt/aqt/clayout.py`（要新写界面） |
 | 4.3 | ❌ | 编辑器「更多」菜单 | 同 2.1（`more` 现在 no-op） | `qt/aqt/editor.py` 的 `onMore` |
 | 4.4 | ❌ | 拖入文件 | HTML5 drop（把文件拖进字段 → 变成媒体） | `qt/aqt/editor.py` 的 drop 处理、`TAURI_HANDOVER.md` §「剪贴板」 |

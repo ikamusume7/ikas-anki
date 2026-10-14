@@ -58,6 +58,19 @@ pub async fn handle_rpc(
         };
     }
 
+    // 「字段…」对话框：编辑器工具栏的「字段」按钮（`NotetypeButtons.svelte:43` 调
+    // 的就是这个端点）。不带参数 —— 对着编辑器窗口当前的笔记类型开窗（对照
+    // `mediasrv.py:1096-1106` 的 `open_fields_dialog`）。
+    if method == "openFieldsDialog" {
+        return match crate::main_window::open_fields_for_current(&state).await {
+            Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
+            Err(error) => {
+                tracing::warn!("打开字段对话框失败: {error:#}");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response()
+            }
+        };
+    }
+
     // 0.5 「更改笔记类型」：补上 note_ids + RPC 跑完由**宿主**关窗。
     //
     // 上游是窗口感知的端点：`mediasrv.py:772` 发现请求来自 `ChangeNotetypeDialog`

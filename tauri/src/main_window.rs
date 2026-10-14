@@ -108,6 +108,61 @@ pub fn open_deck_options(state: &AppState, deck_id: i64) -> Result<()> {
     )
 }
 
+/// 打开「自定义学习」窗口（概览里的「自定义学习」，对照 Qt 的 `customstudy.py`）。
+///
+/// 页面 `ts/routes/custom-study/` 自己调 `customStudy` RPC；成功后它会发
+/// `customStudyDone`，由宿主把主窗口导航到当前牌组的概览并关掉这个对话框
+/// （Qt 那边只关对话框、当前牌组已被后端切成筛选牌组，用户得自己回去看）。
+pub fn open_custom_study(state: &AppState, deck_id: i64) -> Result<()> {
+    tracing::info!("打开自定义学习: deck={deck_id}");
+    windows::open(
+        state,
+        &WindowSpec::new(windows::CUSTOM_STUDY, &format!("custom-study/?deck={deck_id}"))
+            // 对照 `customstudy.ui:14` 的对话框标题（`actions-custom-study`）
+            .title(state.backend.i18n().translate("actions-custom-study", None))
+            .size(560.0, 620.0),
+    )
+}
+
+/// 打开「字段…」对话框（编辑器工具栏的「字段」按钮 → 前端端点 `openFieldsDialog`，
+/// 对照 `qt/aqt/fields.py` 的 `FieldDialog`）。
+///
+/// 端点不带参数：Qt 那边对着**编辑器窗口当前的笔记类型**开（`mediasrv.py:1096-1106`
+/// → `window.editor.onFields()`），所以这里从 `editor::last_notetype()` 取。
+/// 标题是 `fields-fields-for`（"Fields for {notetype name}"），所以要读一次 notetype。
+pub async fn open_fields_for_current(state: &AppState) -> Result<()> {
+    let Some(notetype_id) = crate::editor::last_notetype() else {
+        tracing::warn!("没有正在编辑的笔记类型，忽略「字段…」请求");
+        return Ok(());
+    };
+    let notetype: anki_proto::notetypes::Notetype = {
+        let bytes = state
+            .backend
+            .call(
+                "getNotetype",
+                prost::Message::encode_to_vec(&anki_proto::notetypes::NotetypeId {
+                    ntid: notetype_id,
+                }),
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        prost::Message::decode(bytes.as_slice()).map_err(|error| anyhow::anyhow!("{error}"))?
+    };
+    tracing::info!("打开字段对话框: notetype={notetype_id}");
+    windows::open(
+        state,
+        &WindowSpec::new(windows::FIELDS, &format!("fields/?notetype={notetype_id}"))
+            // 对照 `fields.py:50` 的 `tr.fields_fields_for(val=notetype name)`
+            .title(
+                state
+                    .backend
+                    .i18n()
+                    .fields_fields_for(&notetype.name),
+            )
+            .size(640.0, 720.0),
+    )
+}
+
 /// 打开「导入文件」窗口（牌组列表底部的按钮；Qt 的 `deckbrowser.py:399` → `mw.onImport()`
 /// → 模态的 ImportDialog）。
 ///

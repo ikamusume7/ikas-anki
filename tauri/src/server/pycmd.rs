@@ -162,6 +162,28 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             }
             None
         }
+        // 概览里的「自定义学习」（对照 Qt 的 `overview.py:116-117` → `onStudyMore()`；
+        // 命令名沿用 Qt 的 `customStudy`）
+        command if command.starts_with("customStudy:") => {
+            match command.trim_start_matches("customStudy:").parse::<i64>() {
+                Ok(deck_id) => {
+                    if let Err(error) = main_window::open_custom_study(state, deck_id) {
+                        tracing::warn!("打开自定义学习失败: {error:#}");
+                    }
+                }
+                Err(error) => tracing::warn!("非法的 customStudy 命令: {command}（{error}）"),
+            }
+            None
+        }
+        // 自定义学习窗口里点了确定：后端已把当前牌组切成筛选牌组，
+        // 所以把主窗口导航到它的概览并关掉对话框（Qt 只关对话框）
+        "customStudyDone" => {
+            if let Err(error) = main_window::show_overview(state) {
+                tracing::warn!("切到牌组概览失败: {error:#}");
+            }
+            windows::close(state, window);
+            None
+        }
         // 牌组列表底部：导入文件（`deckbrowser.py:399` → `mw.onImport()`）与
         // 获取共享牌组（`deckbrowser.py:396` → `openLink(appShared + "decks")`）
         "import" => {

@@ -123,7 +123,9 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         //   - saveCustomColours：需要能暴露自定义调色板的原生取色器，`rfd` 无此 API
         //
         // `searchInBrowser` 已实现，但**不在这里**：它要调异步 RPC，见 `server/api.rs`。
-        "openFieldsDialog" | "openCardsDialog" | "saveCustomColours" => {
+        // `openFieldsDialog` 已经把界面补上了，走 `server/api.rs`（要 await 一次
+        // `getNotetype` 才能算出标题，所以不能放在这里的同步分发里）。
+        "openCardsDialog" | "saveCustomColours" => {
             tracing::warn!("该端点需要尚未实现的界面或能力，暂时忽略: {method}");
             Ok(Vec::new())
         }

@@ -702,6 +702,28 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 检查会临时建/删牌组，并还原当前牌组；失败留下的临时牌组用
 `tauri/tools/cleanup-test-decks.mjs` 清掉。
 
+## 自定义学习（筛选牌组）
+
+牌组概览里的「自定义学习」（对照 Qt 概览底部的「C」，`overview.py:284-292`；快捷键 `c`
+也接上了）。窗口是新写的 `ts/routes/custom-study/`，对照 `qt/aqt/customstudy.py`：
+
+| 项 | 上游 | 本外壳 |
+| --- | --- | --- |
+| 六个选项（提升新卡片/复习上限、复习忘记的、提前复习、预览新卡片、按状态或标签） | `customstudy.ui:19-60` + `onRadioChange`（每项换文案与范围） | 同左，文案逐项对齐（含「可用的新卡片：N」这类提示） |
+| 数字框 | `QSpinBox`（范围 see `customstudy.py:109-134`） | `<input type=number>`（同样的上下限与默认值，默认值取后端 `customStudyDefaults`） |
+| cram 的四个卡片范围 | `QListWidget cardType`（`customstudy.ui:110-135`） | `<select>` 四选一 |
+| 标签包含 / 排除 | 弹 `TagLimit` 对话框（`taglimit.ui`） | **两个文本框**（空格分隔，简化） |
+| 确定后 | `CustomStudyRequest` → 后端建/复用「Custom Study Session」并把当前牌组切过去；Qt 只关对话框 | 同左，另外请宿主把主窗口导航到当前牌组的概览（否则用户得自己回去看） |
+
+宿主只做两件事：`customStudy:<did>` 开窗（`main_window.rs::open_custom_study`）、
+`customStudyDone` 时导航主窗口 + 关对话框（`server/pycmd.rs`）。**没做**：编辑已有筛选牌组
+（`filtered_deck.py` 的 `FilteredDeckConfigDialog`）、概览里的「重建 / 清空筛选牌组 /
+取消埋藏」。
+
+验证：`tauri/tools/custom-study-check.mjs`（由 `verify-decks.ps1` 调用）—— 断言六个选项 /
+cram 的展开与四选一 / 确定后 `customStudyDone` / RPC 复查「多了一个筛选牌组且它就是当前
+牌组」，最后删掉它并把当前牌组切回去；`out/decks-check/custom-study.png` 是页面截图。
+
 ## 编辑器
 
 M3 的两块：**「编辑当前卡片」窗口**（复习界面底部栏的「编辑」按钮 → `pycmd('edit')`）
@@ -805,6 +827,27 @@ PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
 - ~~`more`（更多菜单）~~ —— **已实现**：复习界面底部栏的「更多」与卡片右键会打开菜单，见「复习界面」的「更多」菜单。
 - 「字段…」「卡片…」按钮（`openFieldsDialog` / `openCardsDialog`）：新版 Anki 里是原生
   Qt 对话框，仓库里没有对应的 Web 页面，点了没反应。
+
+### 「字段…」对话框
+
+编辑器工具栏的「字段」按钮（`NotetypeButtons.svelte:43`）在非 legacy 路径下发的是前端端点
+**`openFieldsDialog`**（不是桥接命令），端点不带参数 —— Qt 那边对着**编辑器窗口当前的笔记类型**
+开（`mediasrv.py:1096-1106`）。所以宿主在注入 `loadNote` 时记一份「窗口 → 笔记类型」
+（`editor.rs::remember_notetype`），端点处理放在 `server/api.rs`（要 await 一次 `getNotetype`
+才能算出标题 `fields-fields-for`），窗口与标题在 `main_window.rs::open_fields_for_current`。
+
+页面 `ts/routes/fields/` 对照 `qt/aqt/fields.py`：
+
+| 项 | 上游 | 本外壳 |
+| --- | --- | --- |
+| 字段列表 + 添加/重命名/删除/重新定位 | `fields.ui:43-64`，改的是内存里的 notetype | 同左（弹框输入名字 / 位置；删除守卫：≥2 字段、`preventDeletion`） |
+| 编辑字体 | `QFontComboBox` + `QSpinBox`（5-300），写 `Field.Config.fontName/fontSize` | 文本框 + 数字框（**差**：系统字体下拉） |
+| 描述 / 排序字段 / RTL / HTML 默认 / 折叠 / 排除搜索 | `fields.ui:96-181` | 同左 |
+| 保存 / 取消 | `accept` 一次性写回整份 notetype；`reject` 有改动先问一句 | 同左（`updateNotetype` / `card-templates-discard-changes`） |
+
+验证：`tauri/tools/fields-check.mjs`（由 `verify-editor.ps1` 调用）—— 载入字段列表 →
+添加字段 → 保存 → 用 RPC 复查真的落库 → 用检查开始时留的**原始字节**原样还原
+（`updateNotetype` 收的就是 `getNotetype` 的响应），并截图 `out/editor-check/fields-window.png`。
 
 ### 图像遮挡（内嵌遮罩编辑器）
 
@@ -1094,6 +1137,7 @@ browserSearch：图表 → 浏览器搜索
 | `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入，并用 RPC 复查当前牌组/牌组是否真的建删 |
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
 | `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
+| `custom-study-check.mjs` | `verify-decks.ps1` 调用的自定义学习检查：六个选项 / cram 四选一 / 确定后建出筛选牌组并切成当前牌组（用 RPC 复查并还原） |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |

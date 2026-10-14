@@ -76,6 +76,10 @@ pub const CHANGE_NOTETYPE: &str = "change-notetype";
 pub const STATS: &str = "stats";
 /// 偏好设置（Qt 的 `Preferences` 对话框）。
 pub const PREFERENCES: &str = "preferences";
+/// 自定义学习（Qt 的 `CustomStudy` 对话框）。
+pub const CUSTOM_STUDY: &str = "custom-study";
+/// 字段对话框（Qt 的 `FieldDialog`，`qt/aqt/fields.py`）。
+pub const FIELDS: &str = "fields";
 /// 牌组选项（Qt 的 `DeckOptionsDialog`）。
 pub const DECK_OPTIONS: &str = "deck-options";
 /// 导入（Qt 的 `ImportDialog`）。

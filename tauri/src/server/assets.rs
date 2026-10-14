@@ -41,6 +41,10 @@ const SVELTEKIT_ROUTES: &[&str] = &[
     "browser",
     // 本外壳新写的页面（上游的牌组列表也是原生 Qt 界面），见 `crate::main_window`
     "decks",
+    // 自定义学习（上游是 Qt 对话框）
+    "custom-study",
+    // 字段对话框（上游是 Qt 对话框）
+    "fields",
     ];
 
 /// 展示用户内容的路由，需要更严格的 CSP（对照 mediasrv 的
@@ -50,7 +54,15 @@ const SVELTEKIT_ROUTES: &[&str] = &[
 /// （表格里的每一格都是卡片字段，`rslib/src/browser_table.rs` 转成的纯文本），
 /// 因此按不可信页面处理，代价只是多一份 script hash 校验。`decks` 同理：牌组名也是
 /// 用户内容（同样是纯文本渲染）。
-const UNTRUSTED_SVELTEKIT_ROUTES: &[&str] = &["editor", "image-occlusion", "browser", "decks"];
+const UNTRUSTED_SVELTEKIT_ROUTES: &[&str] = &[
+    "editor",
+    "image-occlusion",
+    "browser",
+    "decks",
+    "custom-study",
+    // 字段名与描述都是用户内容
+    "fields",
+];
 
 /// 对照 mediasrv 的 `TRUSTED_PAGE_CSP`。
 const TRUSTED_PAGE_CSP: &str = "frame-ancestors 'none'";

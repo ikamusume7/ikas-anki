@@ -140,6 +140,24 @@ try {
         -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "editor.png") `
         -WaitSeconds 20 -TitleLike "编辑当前"
 
+    # 「字段…」对话框：编辑器工具栏的「字段」按钮发的前端端点就是 openFieldsDialog
+    # （`NotetypeButtons.svelte:43`；宿主对着编辑器窗口当前的笔记类型开窗）
+    Write-Host "验证「字段…」对话框…"
+    $status = Send-Rpc -Method "openFieldsDialog"
+    if ($status -ne "200") { throw "openFieldsDialog 未被接受：HTTP $status" }
+    if (-not (Wait-LogPattern "打开窗口: fields ->" 20)) {
+        Write-Host "字段对话框没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "字段对话框窗口已打开" -ForegroundColor Green
+        Start-Sleep -Seconds 1
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "fields-window.png") `
+            -WaitSeconds 20
+    }
+    node tauri/tools/fields-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
     # 关闭流程：编辑器的「关闭」按钮就是发这条 RPC（NoteEditor.svelte 的 closeEditCurrent）
     $status = Send-Rpc -Method "closeEditCurrent"
     if ($status -ne "200") { throw "closeEditCurrent 未被接受：HTTP $status" }

@@ -124,6 +124,19 @@ try {
     } else {
         Write-Host "齿轮 → 牌组选项窗口已打开" -ForegroundColor Green
     }
+    if (-not (Wait-LogPattern "打开窗口: custom-study ->" 20)) {
+        Write-Host "概览「自定义学习」没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "自定义学习窗口已打开" -ForegroundColor Green
+    }
+
+    # 自定义学习窗口本身：六个选项 / cram 的列表 / 确定后建出筛选牌组并切成当前牌组
+    Write-Host "验证自定义学习窗口（Playwright）…"
+    $env:SHOT_DIR = $OutDir
+    node tauri/tools/custom-study-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
     if (-not (Wait-LogPattern "打开窗口: import ->" 20)) {
         Write-Host "「导入文件」没有开窗" -ForegroundColor Red
         $passed = $false

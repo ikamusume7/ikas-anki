@@ -195,6 +195,18 @@ try {
         `${await currentDeckId()}`,
     );
     check("概览有「学习」按钮", (await page.locator("#deck-study").count()) === 1);
+    // 概览里的「自定义学习」（对照 Qt 概览底部的「C」，`overview.py:284-292`）
+    check(
+        "概览有「自定义学习」按钮",
+        (await page.locator("#deck-custom-study").count()) === 1,
+    );
+    await page.locator("#deck-custom-study").click();
+    await page.waitForTimeout(800);
+    check(
+        "点「自定义学习」发出 customStudy:<did>",
+        (await bridgeCalls()).includes(`customStudy:${childId}`),
+        `customStudy:${childId}`,
+    );
 
     // 4. 概览里点「学习」→ 宿主切到复习页 ####################################
     await page.locator("#deck-study").click();
