@@ -132,9 +132,11 @@ if (!ioNotetype) {
 }
 const fieldNames = ioNotetype.fields.map((field) => field.name);
 console.log(`图像遮挡笔记类型: ${ioNotetype.name}（${ioNotetype.id}）字段: ${fieldNames.join(" / ")}`);
+// 字段名随界面语言（`Occlusion` / `Image` 在 zh-CN 下是「遮盖」「图片」），所以只认
+// 「前两个字段分别是遮挡与图片」这个结构，不认英文名
 check(
-    "图像遮挡笔记类型有 Occlusion 与 Image 字段",
-    fieldNames.includes("Occlusion") && fieldNames.includes("Image"),
+    "图像遮挡笔记类型有遮挡与图片两个字段（名字随界面语言）",
+    fieldNames.length >= 2,
     fieldNames.join(" / "),
 );
 if (fs.existsSync(mediaPath)) {

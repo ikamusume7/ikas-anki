@@ -6,6 +6,8 @@
 //! 对照 mediasrv 的 `open_file_picker` / `ask_user` / `show_message_box` /
 //! `open_link`（原实现基于 Qt）。
 
+use std::path::PathBuf;
+
 use anki_proto::frontend::AskUserRequest;
 use anki_proto::frontend::MessageBoxType;
 use anki_proto::frontend::OpenFilePickerRequest;
@@ -20,38 +22,46 @@ use crate::state::AppState;
 /// 对应 mediasrv 的 `open_file_picker`，返回选中的路径（取消时为空串）。
 pub fn open_file_picker(body: &[u8]) -> HandlerResult {
     let request = OpenFilePickerRequest::decode(body).map_err(|e| e.to_string())?;
+    let picked = pick_file(&request.title, &request.extensions, &request.filter_description);
+    let val = picked
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(GenericString { val }.encode_to_vec())
+}
 
-    // 测试钩子：设了 `ANKI_OPEN_PATH` 就直接返回它，不弹框 —— 原生"打开文件"对话框
-    // 没法自动点（与 `ANKI_SAVE_PATH` 同一套办法，见下）。用它的场景是图像遮挡：
-    // 编辑器页面的「选图片」走 `/openFilePicker`（`data-transfer.ts:455` 的
-    // `openFilePickerForImageOcclusion`），`occlusion-check.mjs` 要能自动走完。
+/// 弹一个"打开文件"对话框，返回选中的路径（取消返回 `None`）。
+///
+/// 端点（`open_file_picker`）与**宿主自己**的导入入口（`crate::importing`：牌组列表的
+/// 「导入文件」按钮走的就是 Qt 的 `getFile()`，`importing.py:153-163`）共用这一份。
+///
+/// 测试钩子：设了 `ANKI_OPEN_PATH` 就直接返回它，不弹框 —— 原生"打开文件"对话框
+/// 没法自动点（与 `ANKI_SAVE_PATH` 同一套办法，见下）。用它的场景是图像遮挡：
+/// 编辑器页面的「选图片」走 `/openFilePicker`（`data-transfer.ts:455` 的
+/// `openFilePickerForImageOcclusion`），`occlusion-check.mjs` 要能自动走完；
+/// `import-check.mjs` 用它给"导入文件"按钮喂一个 `.apkg`。
+pub fn pick_file(title: &str, extensions: &[String], filter_description: &str) -> Option<PathBuf> {
     if let Ok(hook) = std::env::var("ANKI_OPEN_PATH") {
         if !hook.is_empty() {
             tracing::info!("ANKI_OPEN_PATH 生效，跳过打开对话框: {hook}");
-            return Ok(GenericString { val: hook }.encode_to_vec());
+            return Some(PathBuf::from(hook));
         }
     }
 
     let mut dialog = rfd::FileDialog::new();
-    if !request.title.is_empty() {
-        dialog = dialog.set_title(&request.title);
+    if !title.is_empty() {
+        dialog = dialog.set_title(title);
     }
-    if !request.extensions.is_empty() {
-        let extensions: Vec<&str> = request.extensions.iter().map(String::as_str).collect();
-        let label = if request.filter_description.is_empty() {
+    if !extensions.is_empty() {
+        let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
+        let label = if filter_description.is_empty() {
             "Files"
         } else {
-            &request.filter_description
+            filter_description
         };
         dialog = dialog.add_filter(label, &extensions);
     }
 
-    let picked = dialog.pick_file();
-    let val = picked
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
-
-    Ok(GenericString { val }.encode_to_vec())
+    dialog.pick_file()
 }
 
 /// 保存文件对话框（**外壳新增的端点**，上游没有）。

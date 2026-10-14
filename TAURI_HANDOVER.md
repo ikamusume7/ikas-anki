@@ -51,7 +51,7 @@
 | `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **拖入文件**（合成 drop → 媒体落库）→ **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
 | `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带 |
-| `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → `d`/`s`/`study` 切页 |
+| `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → **导入端到端**（造 `.apkg` 夹具 → 页面导入 → RPC 复查）→ `d`/`s`/`study` 切页 |
 
 ---
 
@@ -364,6 +364,8 @@ tauri/src/
 ├─ preview.rs         预览窗口（渲染问题/答案、翻面、前后卡片、重播音频）
 ├─ editor.rs          编辑器窗口（编辑当前 / 添加卡片 / 浏览器编辑区：开窗 +
 │                     `editorReady` 后按窗口标签注入 `loadNote`）
+├─ importing.rs       导入（三条入口：牌组列表 `import` / 主窗口拖入 / 直接给路径；
+│                     先弹原生文件对话框，再按扩展名挑 `import-*` 页面）
 ├─ reviewer.rs        复习会话
 ├─ reviewer_menu.rs   复习界面的「更多」/右键菜单（宿主拼数据 + 执行动作；菜单脚本在
 │                     `tauri/assets/reviewer-menu.js`，用 `include_str!` 引用）
@@ -857,6 +859,31 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
    检查脚本里就是这么写的）。顺带：点工具栏的「重置」会弹原生 `confirm`，Playwright 要
    `page.on("dialog", d => d.accept())` 才能过。
 
+### 5.33 导入与检查脚本：四个"看着能跑其实不对"的坑
+
+这一轮做导入（`crate::importing`）时踩的，顺手记下：
+
+1. **`ExportAnkiPackageRequest.limit` 是双层 oneof**：`limit: { limit: { case: "deckId",
+   value: id } }`（`browser/+page.svelte:1153` 就是这么写的）。写少一层**不报错**，而是
+   **静默导出整个集合** —— 夹具里混进别的牌组与笔记，导回去把集合搅乱（当时的症状是
+   「导入后 Default 里的卡片不见了」，查了很久才发现夹具根本不该有那些东西）。
+2. **导入是分步落库的**：牌组先建出来、`note` 晚一步。判断「导入完成」要**等卡片出现**，
+   等牌组会读到「0 张」。
+3. **空的默认牌组会被后端藏起来**（`hide_default_deck`，`rslib/src/decks/tree.rs:182`：
+   只要还有别的牌组，默认牌组就不显示）。所以「当前牌组有高亮」这类断言需要当前牌组里
+   **有卡片** —— 检查脚本因此会先补一张（`decks-check.mjs` 只在空的时候补）。
+4. **`mergeNotetypes` 默认是关的，同 id 笔记类型的 apkg 会"只导牌组不导笔记"**：从
+   同一份集合导出的 apkg 里那个笔记类型与集合里的是同一个，`merge_notetypes=false` 时
+   导入会把笔记丢掉（`rslib/src/import_export/package/apkg/import/notes.rs:144`），而
+   页面传的是 `alertOnError: false` —— 看不到报错，只看到"牌组建了、卡片没有"。
+   `import-check.mjs` 因此临时把集合配置 `mergeNotetypes` 打开（`getConfigJson` /
+   `setConfigJson`，键名来自 `rslib/src/config/bool.rs` 的 camelCase 规则），导入完还原。
+5. **内置名字都是本地化的**：新建 zh-CN 集合里 `entries[0]` 是「图片遮盖」而不是
+   「问答题」（`getNotetypeNames` 的返回顺序），字段名也是「遮盖/图片」。挑笔记类型、
+   断言字段名、断言侧栏默认牌组的检查都得按 `/^(Basic|问答题)$/i`、`Default|系统默认`
+   这类双语写法来，否则在一份全新的集合上会整片失败（这些检查原来只在前几轮跑出来的
+   老集合上绿过）。
+
 ### 5.32 拖入文件（HTML5 drop）：宿主得先"让开"，检查脚本有三个坑
 
 Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是把事件发成
@@ -917,8 +944,8 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
 与卡片右键）/ `rev:<动作>[:<参数>]`（复习菜单里点的一项）/ `stats`（统计）/
 `preferences`（设置）/ `decks`（牌组列表）/ `overview`（当前牌组的概览）/
 `ioImageLoaded:<path|nid>`（编辑器的遮挡图片已载入，只记日志，对照 `editor.py:364`）/
-`study`（开始复习）/ `opts:<did>`（牌组选项窗口）/ `import`（导入窗口）/
-`shared`（打开共享牌组页）/ `editorReady` / `close`
+`study`（开始复习）/ `opts:<did>`（牌组选项窗口）/ `import`（先弹原生文件对话框，再按
+扩展名开导入窗口，见 `crate::importing`）/ `shared`（打开共享牌组页）/ `editorReady` / `close`
 （主窗口），以及非主窗口的 `browserReady` / `browserTitle:<notesMode>:<selected>:<total>` /
 `editCard:<cid>` / `editNote:<nid>` / `preview:<cid>` / `cardInfo:<cid>` /
 `addCopy:<nid>:<deckId>` / `changeNoteType:<nid>,...`、预览窗口的
@@ -1021,6 +1048,18 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
     收不到 `DragDropEvent`，将来的「拖 `.apkg` 到主窗口导入」（6.7）要落在页面里做。
     顺带核对：**4.3「编辑器更多菜单」在上游并不存在**（工具栏已迁到 TS，`editor.py`
     没有 `onMore`），`PARITY.md` 已按"不存在"标注。
+  - **已完成**：**导入**（3.4 + 6.7 的拖入那一半）—— 实现都在新文件
+    `tauri/src/importing.rs`：三条入口（牌组列表的 `pycmd("import")`、主窗口
+    `WindowEvent::DragDrop`、以及测试用的 `ANKI_OPEN_PATH`）都先弹**原生文件对话框**
+    （`importing.py:153-163`），再按扩展名挑页面：`.apkg`/`.zip` →
+    `import-anki-package/<百分号编码路径>`、`.csv/.tsv/.txt` → `import-csv/<…>`、其他 →
+    提示 `importing-unable-to-import-filename`。主窗口**保留** Tauri 的拖放拦截就是为了
+    拿到拖入文件的真实路径（编辑器那几类窗口相反，见 4.4）。验证：
+    `tools/import-check.mjs`（造夹具 → 页面导入 → RPC 复查）+ `verify-decks.ps1` 的
+    日志断言（`打开窗口: import -> …import-anki-package/…`），纯逻辑由
+    `importing.rs` 的 `#[cfg(test)]` 覆盖。**差**：整体替换集合（`.colpkg` /
+    `collection.apkg` / `backup-*.apkg`）与 Mnemosyne `.db` 只提示不支持；`.apkg`
+    双击打开要等 M4 的文件关联。
   - **已完成**：**自定义学习**（3.6）—— 概览里的「自定义学习」（`C`）→ 新写的
     `ts/routes/custom-study/`（六个选项 + cram 四选一 + 标签包含/排除，走
     `CustomStudy` RPC；确定后宿主把主窗口导航到当前牌组的概览）。验证见

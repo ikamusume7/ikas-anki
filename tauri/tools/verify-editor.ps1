@@ -182,22 +182,25 @@ try {
     node tauri/tools/cards-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
-    # 拖入文件（PARITY 4.4）：宿主侧只有一件事要保证 —— **关掉 Tauri 对 WebView2 拖放的
-    # 拦截**，否则页面根本收不到 HTML5 drop（`windows.rs` 的 `WindowSpec::html5_drops`）。
-    # 「操作系统把文件交给 WebView2」这一步没法在自动化里可靠复现（要真的按住鼠标拖），
-    # 所以这里只断言宿主确实关掉了拦截；页面侧的媒体链路（图片 → 媒体夹 → 字段里的
-    # <img> → 保存）用 Playwright 合成 DataTransfer 来验（`drop-check.mjs`）
+    # 拖入文件（PARITY 4.4）：宿主侧只有一件事要保证 —— **编辑器窗口关掉了 Tauri 对
+    # WebView2 拖放的拦截**，否则页面根本收不到 HTML5 drop（`windows.rs` 的
+    # `WindowSpec::html5_drops`）。「操作系统把文件交给 WebView2」这一步没法在自动化里
+    # 可靠复现（要真的按住鼠标拖），所以这里只断言宿主确实关掉了拦截；页面侧的媒体链路
+    # （图片 → 媒体夹 → 字段里的 <img> → 保存）用 Playwright 合成 DataTransfer 来验
+    # （`drop-check.mjs`）。**主窗口是例外**：它保留 Tauri 的拦截，好让拖进来的文件路径
+    # 走 `DragDropEvent` 给「拖 .apkg 导入」（PARITY 6.7，`main.rs:143`）
     Write-Host "验证「拖入文件」链路…"
     $log = Read-Log $logPath
-    foreach ($pattern in @(
-            "主窗口: 已关闭 Tauri 的文件拖放拦截",
-            "窗口 edit-current: 已关闭 Tauri 的文件拖放拦截")) {
-        if ($log -notmatch [regex]::Escape($pattern)) {
-            Write-Host "缺少日志：$pattern" -ForegroundColor Red
-            $passed = $false
-        } else {
-            Write-Host "宿主已关闭拖放拦截：$pattern" -ForegroundColor Green
-        }
+    $pattern = "窗口 edit-current: 已关闭 Tauri 的文件拖放拦截"
+    if ($log -notmatch [regex]::Escape($pattern)) {
+        Write-Host "缺少日志：$pattern" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "宿主已关闭拖放拦截：$pattern" -ForegroundColor Green
+    }
+    if ($log -match "主窗口: 已关闭 Tauri 的文件拖放拦截") {
+        Write-Host "主窗口不该关掉拖放拦截（拖入 .apkg 要靠 DragDropEvent）" -ForegroundColor Red
+        $passed = $false
     }
     node tauri/tools/drop-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }

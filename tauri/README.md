@@ -670,7 +670,7 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 | --- | --- | --- |
 | 点牌组名（`open:<did>`） | 页面先 `setCurrentDeck`，再整页导航 | — |
 | 概览「学习」 | `study` | 主窗口切到复习页（`reviewer_active=true` + 导航） |
-| 齿轮 → 选项 / 底部「导入文件」 | `opts:<did>` / `import` | 开牌组选项窗口 / 导入窗口（模态） |
+| 齿轮 → 选项 / 底部「导入文件」 | `opts:<did>` / `import` | 开牌组选项窗口 / 先弹原生文件对话框，再按扩展名开导入窗口（模态），见「导入」 |
 | 底部「获取共享牌组」 | `shared` | 交给系统浏览器打开 ankiweb 共享牌组页 |
 | 工具栏「添加 / 浏览 / 统计」 | `add` / `browse` / `stats` | 复用已有入口 |
 
@@ -908,8 +908,9 @@ URL / 文本 / HTML 五支），落回字段走 `pasteHTML`，媒体落库走 rs
 （`clayout.py:371` 也给卡片布局的预览开了，不过我们这个页面的预览是 iframe，drop 由
 外层页面处理，没有额外的开关。）
 
-差异：开关一关，Rust 侧就收不到 `DragDropEvent` 了 —— 将来做「拖 `.apkg` 到主窗口导入」
-（PARITY 6.7）要落在页面里做。
+差异：开关一关，Rust 侧就收不到 `DragDropEvent` 了。**主窗口因此是例外** —— 它保留 Tauri
+的拦截（`main.rs:129-133`），好让拖进来的文件拿到**真实路径**去走「拖 `.apkg` 就导入」
+（见下面的「导入」）；编辑器那几类窗口才需要 HTML5 drop。
 
 验证：`tauri/tools/drop-check.mjs`（由 `verify-editor.ps1` 调用）—— 用 Playwright 在
 页面里**合成**一次带真 PNG 文件的 `drop`，断言图片插进字段（`<img src="paste-<哈希>.jpg">`）、
@@ -927,6 +928,49 @@ URL / 文本 / HTML 五支），落回字段走 `pasteHTML`，媒体落库走 rs
 - 顺手记一条：后端会**真的解码**图片（`convertPastedImage` → image crate），随手抄的
   1x1 PNG base64 很可能是坏的（原来的遮挡夹具就是，只是没人解码它才一直没暴露），
   挑一张 CRC 正确的再写进脚本。
+
+## 导入（选文件 / 拖入 / 牌组列表按钮）
+
+对照 Qt 的三条入口（`importing.py:153-163` 的 `getFile()`、`main.py:112-137` 的窗口
+`dropEvent`、`deckbrowser.py:399` 的「导入文件」），**实现都在 `tauri/src/importing.rs`**：
+
+| 入口 | 怎么进 | 做什么 |
+| --- | --- | --- |
+| 牌组列表底部「导入文件」 | 页面发 `pycmd("import")` | `prompt_and_import`：弹**原生文件对话框**（`rfd`），拿到路径后按扩展名挑页面 |
+| 主窗口拖入文件 | Tauri 的 `WindowEvent::DragDrop`（主窗口**保留**拦截，才拿得到真实路径） | `on_drop`：存在的文件才收、目录跳过、`.colpkg` 排除（`main.py:131` 同样过滤）、一次只导一个，然后同上 |
+| 其它调用方 | `importing::open_for_path`（例如测试里用 `ANKI_OPEN_PATH` 顶掉对话框） | 同上 |
+
+挑页面的规则（`target_for_path` + `route_for`，与 Qt 的 `importing.py:137-146` 一一对应）：
+
+| 文件 | 打开 |
+| --- | --- |
+| `.apkg`、`.zip` | `import-anki-package/<百分号编码的路径>`（`import_dialog.py:68` 就是这个 URL 形状） |
+| `.csv`、`.tsv`、`.txt` | `import-csv/<…>` |
+| 其他 | 弹 `importing-unable-to-import-filename` 提示框，不开窗 |
+
+路径走**一个 URL 段**（catch-all 路由 `[...path]`）：`/` 保留，`\`、`:`、空格等都百分号
+编码（`importing::encode_path`，与 JS 的 `quote` 默认行为一致），页面再 `decodeURIComponent`。
+**已知差异**：整体替换集合的包（`.colpkg`、`collection.apkg`、`backup-*.apkg`）与 Mnemosyne
+`.db` 只提示「不支持」，Qt 那边会走 `import_colpkg` / 重命名当前集合。
+
+验证：`tauri/tools/import-check.mjs`（由 `verify-decks.ps1` 调用）—— 建临时牌组 + 卡片 →
+`exportAnkiPackage` 导出成夹具（**牌组限定**）→ 删掉临时牌组与卡片 → 用 Playwright 打开
+宿主会打开的那个 URL → 点「导入」→ 断言牌组与卡片真的进了集合、页面发过 `importDone`、
+页面无报错 → 收尾删干净。宿主那一半（原生对话框 + 挑页面 + URL 编码）由
+`verify-decks.ps1` 的日志断言覆盖（`打开窗口: import -> …import-anki-package/…import-fixture.apkg`），
+纯逻辑（按扩展名挑页面、拖入时的过滤）由 `importing.rs` 的 `#[cfg(test)]` 单测覆盖。
+
+两个坑记在这里：
+
+- `ExportAnkiPackageRequest.limit` 是 `ExportLimit`，它**自己还有一层同名 oneof**：要写
+  `limit: { limit: { case: "deckId", value: id } }`。少一层不报错，但会**静默导出整个集合**
+  —— 夹具里连别的牌组与笔记都在，导回去会把集合搅乱（踩过）；
+- 导入是**分步落库**的：牌组先出现、`note` 晚一步。判断"导入完成"要等**卡片**，等牌组会
+  读到「0 张」（踩过）。
+- 新集合的默认配置 `mergeNotetypes=false`，而**从同一份集合导出的 apkg 里那个笔记类型
+  与集合里的是同一个（同 id）** —— 这个组合下导入只建牌组、**不带笔记**（`apkg/import/
+  notes.rs:144` 那条分支；页面还传了 `alertOnError: false`，所以看着"没报错却什么都没
+  导进来"）。检查脚本因此先像用户勾上「合并笔记类型」那样把配置开上，导入完还原。
 
 ### 图像遮挡（内嵌遮罩编辑器）
 
@@ -1211,6 +1255,7 @@ browserSearch：图表 → 浏览器搜索
 | `fields-check.mjs` | `verify-editor.ps1` 调用的「字段…」检查：加字段 → 保存 → RPC 复查 → 原始字节还原 |
 | `cards-check.mjs` | `verify-editor.ps1` 调用的「卡片…」检查：改模板 → **未保存**的改动出现在预览里 → 加卡片类型 → 保存 → RPC 复查 → 原始字节还原 |
 | `drop-check.mjs` | `verify-editor.ps1` 调用的「拖入文件」检查：页面里合成带 PNG 的 drop → 字段出现 `<img src="paste-…">` → 真落进 `collection.media` → 保存后复查 → 还原 |
+| `import-check.mjs` | `verify-decks.ps1` 调用的导入检查：造 `.apkg` 夹具 → 删掉临时牌组/卡片 → 页面导入 → RPC 复查牌组与卡片进库 → `importDone` → 收尾 |
 | `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
 | `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带） |
@@ -1275,9 +1320,9 @@ browserSearch：图表 → 浏览器搜索
 - **M2 已完成**：mediasrv 的 32 个平台端点全部有实现，详见上文各节。
   唯一没验证的是 **Android 上的录音**：这里统一用 `cpal`（Android 走 oboe），
   而 Qt/AnkiDroid 用的是 `MediaRecorder`，需要在真机确认。
-- ~~拖入文件（HTML5 drop）~~ —— **已实现**：见「编辑器」的「拖入文件（HTML5 drop）」；
-  剩下的是「拖 `.apkg` 到主窗口导入」（PARITY 6.7）与「操作系统 → WebView2」那一步的
-  真机确认。
+- ~~拖入文件（HTML5 drop）~~ —— **已实现**：编辑器窗口见「编辑器」的「拖入文件（HTML5
+  drop）」，主窗口拖入 `.apkg` 导入见「导入」；剩下的是「操作系统 → WebView2」那一步的
+  真机确认与 `.apkg` 双击打开（PARITY 6.7）。
 - **M3**：导入导出、图像遮挡、Android 的 SAF 适配。
 - **M4**：Windows MSI 打包与签名；Android 的 `tauri android init/build`。
 

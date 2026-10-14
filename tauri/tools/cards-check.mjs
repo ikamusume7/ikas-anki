@@ -102,7 +102,10 @@ async function waitFor(probe, timeoutMs = 8000) {
 const names = NotetypeNames.fromBinary(
     await rpc("getNotetypeNames", new Empty({}).toBinary()),
 );
-const target = names.entries[0];
+// 挑普通问答类型：新建集合里 `entries[0]` 是「遮盖」/Image Occlusion —— 它的模板要
+// 有遮挡字段，预览时会弹「未在此卡片上找到填空」，把后面的点击卡死（第一次跑就栽在这里）
+const target =
+    names.entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name)) ?? names.entries[0];
 if (!target) {
     console.error("集合里没有笔记类型");
     process.exit(2);

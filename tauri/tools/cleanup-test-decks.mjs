@@ -15,7 +15,7 @@ const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
 const base = `http://127.0.0.1:${port}`;
 
 // 各检查脚本用的临时牌组名前缀：牌组列表（decks-check）、浏览器（browser-check）
-const prefixes = ["TauriTemp", "TauriDecks", "TauriCreated", "TauriRenamed"];
+const prefixes = ["TauriTemp", "TauriDecks", "TauriCreated", "TauriRenamed", "TauriImport"];
 
 async function rpc(method, body) {
     const response = await fetch(`${base}/_anki/${method}`, {

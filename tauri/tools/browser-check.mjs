@@ -173,6 +173,38 @@ if (!card) {
     process.exit(2);
 }
 
+// 首屏搜索是 `deck:current`，后面的「选中第 2 行」「双击第 2 行」都需要至少两行 ——
+// 全新的集合里只有一张卡片，这里先补一张陪跑的（与 `verify-editor.ps1` / `decks-check.mjs`
+// 补卡片同一思路；只在不足两张时才补）
+const cardDeckId = Card.fromBinary(
+    await rpc("getCard", new CardId({ cid: BigInt(card.id) }).toBinary()),
+).deckId;
+const notesInDeck = SearchResponse.fromBinary(
+    await rpc(
+        "searchNotes",
+        new SearchRequest({ search: `did:${cardDeckId}` }).toBinary(),
+    ),
+).ids;
+if (notesInDeck.length < 2) {
+    const note = Note.fromBinary(
+        await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()),
+    );
+    await rpc(
+        "addNote",
+        new AddNoteRequest({
+            note: new Note({
+                notetypeId: note.notetypeId,
+                // 字段数照抄现有笔记（它就是这张卡对应的笔记类型）
+                fields: note.fields.map((_, index) =>
+                    index === 0 ? `TauriBrowser 陪跑卡片${Date.now() % 100_000}` : "陪跑",
+                ),
+            }),
+            deckId: cardDeckId,
+        }).toBinary(),
+    );
+    console.log(`牌组 ${cardDeckId} 里不足两张卡片，补了一张陪跑卡片`);
+}
+
 const allColumns = BrowserColumns.fromBinary(
     await rpc("allBrowserColumns", new Empty({}).toBinary()),
 ).columns;
@@ -263,7 +295,8 @@ try {
     );
     check(
         "侧栏已渲染牌组",
-        sidebarItems.some((item) => item.includes("Default")),
+        // 默认牌组的名字随界面语言（`Default` / 「系统默认」）
+        sidebarItems.some((item) => /Default|系统默认/.test(item)),
         sidebarItems.slice(0, 5).join(" / "),
     );
 

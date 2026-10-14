@@ -86,7 +86,9 @@ function bridgeShim(config) {
 const names = NotetypeNames.fromBinary(
     await rpc("getNotetypeNames", new Empty({}).toBinary()),
 );
-const target = names.entries[0];
+// 挑普通问答类型：新建集合里 `entries[0]` 可能是「遮盖」/Image Occlusion
+const target =
+    names.entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name)) ?? names.entries[0];
 if (!target) {
     console.error("集合里没有笔记类型");
     process.exit(2);

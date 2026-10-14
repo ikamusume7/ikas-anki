@@ -46,7 +46,7 @@
 | 3.1 | ⚠️ | **牌组选项** | 已能开（复习界面「更多」→「选项」）；还差**牌组列表上的 Options 入口**（等 1.1） | `qt/aqt/deckoptions.py`、`ts/routes/deck-options/[...deckId]` |
 | 3.2 | ⚠️ | **统计图** | 已能开（主窗口 `t` / `Shift+t`，见「复习界面」）；差**按当前牌组打开**（Qt 传 `_selectedDeck()`，这里是整个集合，页面里可换）与工具栏入口 | `qt/aqt/stats.py`、`main.py:1331` |
 | 3.3 | ⚠️ | **偏好设置** | 已能开（主窗口 `Ctrl+P`）；Qt 的对话框底部有 Close 按钮，这里用窗口的 ×（页面自己没有关闭按钮） | `qt/aqt/preferences.py`、`main.py:1459` |
-| 3.4 | ⚠️ | **导入** | 牌组列表底部的「导入文件」能开（`ts/routes/import-page`，模态窗口）；**没做端到端导入验证**，也还没有 File → Import / `.apkg` 双击 | `qt/aqt/import_export/importing.py`、`qt/aqt/deckbrowser.py:399` |
+| 3.4 | ⚠️ | **导入** | **三条入口都通**（对照 Qt）：牌组列表底部「导入文件」（`pycmd("import")` → `importing::prompt_and_import`）、主窗口拖入文件（`WindowEvent::DragDrop` → `importing::on_drop`，`main.py:112-137`，存在的文件才收、`.colpkg` 排除、一次只导一个）、以及 `ANKI_OPEN_PATH` 顶掉对话框后的选文件路径。宿主先弹**原生文件对话框**（`importing.py:153-163`），再按扩展名挑页面：`.apkg`/`.zip` → `import-anki-package/<百分号编码的路径>`（`import_dialog.py:68`）、`.csv`/`.tsv`/`.txt` → `import-csv/<…>`、其他 → 弹 `importing-unable-to-import-filename`。端到端验证在 `verify-decks.ps1`（`import-check.mjs` 造 `.apkg` 夹具 → 页面导入 → RPC 复查）。**差**：整体替换集合（`.colpkg`、`collection.apkg`、`backup-*.apkg`）与 Mnemosyne `.db` 只提示不支持；`.apkg` 双击打开见 6.7 | `qt/aqt/import_export/importing.py`、`qt/aqt/deckbrowser.py:399`、`qt/aqt/main.py:112-137` |
 | 3.5 | ⚠️ | **图像遮挡** | 已核对并验证：**这个版本没有独立的遮挡窗口**，「遮挡」按钮只是把编辑器页面里的 `ImageOcclusionPage`（掩码编辑器）切出来；「选图片」走宿主的 `/openFilePicker`。`tools/occlusion-check.mjs` 覆盖了「按钮出现 → 图片选择器 → 拷进媒体夹 → 掩码编辑器渲染出图片」。**没覆盖**：画遮罩并保存成遮挡笔记 | `ts/routes/editor/NoteEditor.svelte:795-815`、`ts/routes/image-occlusion/` |
 | 3.6 | ⚠️ | **自定义学习 / 筛选牌组** | **自定义学习已实现**：概览里的「自定义学习」（快捷键 `C`）→ 新写的 `ts/routes/custom-study/`（六个选项 + cram 的四选一 + 标签包含/排除，走 `CustomStudy` RPC，验证见 `tools/custom-study-check.mjs`）。**差**：Qt 的 `TagLimit` 标签选择对话框（这里是两个文本框）、**编辑已有筛选牌组**的 `FilteredDeckConfigDialog`（`filtered_deck.py`，未做） | `qt/aqt/customstudy.py`、`qt/aqt/overview.py:284-292` |
 
@@ -90,7 +90,7 @@
 | 6.4 | ❌ | 录音格式 | 直接给 WAV；Anki 用外部 `lame` 转 MP3（装了的话） | `qt/aqt/sound.py` 的 `encode_audio` |
 | 6.5 | ❌ | 原生取色器 | `saveCustomColours`（编辑器自定义颜色）没有 | `qt/aqt/mediasrv.py` 的取色器端点 |
 | 6.6 | ❌ | **addon（插件）支持** | 完全没有。装了插件的用户会明显觉得不一样 | `qt/aqt/addons.py` |
-| 6.7 | ⚠️ | 文件关联 | 双击 `.apkg` 导入、拖到图标上导入都没有（属 M4 打包） | `qt/aqt/main.py` 的命令行参数处理 |
+| 6.7 | ⚠️ | 文件关联 | **拖入文件已通**：主窗口保留 Tauri 的拖放拦截，`DragDropEvent` → `importing::on_drop`（`main.py:112-137`）；**差**双击 `.apkg` 打开（要 Windows 文件关联，属 M4 打包）与命令行带文件启动 | `qt/aqt/main.py` 的命令行参数处理 |
 | 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（已对齐）；但列宽这类"外壳自己的"配置不互通（见 5.7） | —— |
 
 验收：需要真机/真账号（同步）；其余可用 RPC + 界面断言。

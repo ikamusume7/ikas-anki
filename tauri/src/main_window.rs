@@ -217,21 +217,6 @@ pub async fn open_cards_for_current(state: &AppState) -> Result<()> {
     )
 }
 
-/// 打开「导入文件」窗口（牌组列表底部的按钮；Qt 的 `deckbrowser.py:399` → `mw.onImport()`
-/// → 模态的 ImportDialog）。
-///
-/// 标题取 Qt 的 `import_dialog.py:75`（`tr.decks_import_file()`）。
-pub fn open_import(state: &AppState) -> Result<()> {
-    tracing::info!("打开导入窗口");
-    windows::open(
-        state,
-        &WindowSpec::new(windows::IMPORT, "import-page/")
-            .title(state.backend.i18n().translate("decks-import-file", None))
-            .size(900.0, 640.0)
-            .modal(true),
-    )
-}
-
 /// 「获取共享牌组」（Qt 的 `deckbrowser.py:396` → `openLink(aqt.appShared + "decks")`）：
 /// 交给系统默认浏览器打开 ankiweb 的共享牌组页（与 Qt 走 `open_link` 一样）。
 pub fn open_shared_decks() -> Result<()> {

@@ -5,7 +5,8 @@
 #   2. 截首屏真实窗口（decks.png）
 #   3. 跑 decks-check.mjs：表头 / 折叠展开 / 点牌组进概览 / 概览「学习」/ 齿轮菜单
 #      （选项、重命名、删除）/ 新建牌组 / 底部按钮 / 工具栏
-#   4. 宿主断言：牌组选项窗口、导入窗口、概览「学习」切到复习页
+#   4. 宿主断言：牌组选项窗口、导入窗口（`import-anki-package/<编码路径>`）、
+#      概览「学习」切到复习页
 #   5. `d` / `s` / `study` 桥接命令（等价于全局快捷键）让主窗口来回切页
 #
 # 前置：已按 TAURI_HANDOVER.md §2 构建过（`cd tauri; cargo build`），
@@ -34,6 +35,10 @@ if (-not (Test-Path $exePath)) {
     throw "找不到可执行文件：$exePath（请先在 tauri/ 下 cargo build）"
 }
 
+# 先收掉可能还在跑的旧实例：上一次运行留下的进程会占着 run.log（删除会失败）
+Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 500
+
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $logPath = Join-Path $OutDir "run.log"
 $errPath = Join-Path $OutDir "run.err"
@@ -41,13 +46,19 @@ foreach ($path in @($logPath, $errPath)) {
     if (Test-Path $path) { Remove-Item $path -Force }
 }
 
-Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force
-
 $env:ANKI_API_PORT = "$Port"
 $env:ANKI_API_KEY = $ApiKey
 $env:ANKI_COLLECTION = (Join-Path $root $Collection)
 $env:ANKI_START_PAGE = "decks"
 $env:ANKI_LANG = $Lang
+
+# 「导入文件」按钮与 Qt 一样先弹**原生文件对话框**（`importing.py:153-163`），自动化里没法
+# 点它，所以用 `ANKI_OPEN_PATH` 顶掉（与 verify-editor 给遮挡夹具用的是同一套办法）。
+# 这个变量宿主在启动时就固定了，因此必须在 Start-Process 之前设好；指向的 .apkg 由下面的
+# import-check.mjs 现造出来。
+$fixtureApkg = [System.IO.Path]::GetFullPath((Join-Path $root "$OutDir/import-fixture.apkg"))
+$env:ANKI_OPEN_PATH = $fixtureApkg
+$env:ANKI_IMPORT_FIXTURE = $fixtureApkg
 
 function Read-Log {
     param([string]$Path)
@@ -110,6 +121,21 @@ try {
         -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "decks.png") `
         -WaitSeconds 20 -TitleLike "Anki"
 
+    # 上一次跑崩了会留下临时牌组，而 decks-check 按名字前缀找自己那份 —— 留着会让它
+    # 认错牌组（「折叠父牌组后子牌组消失」就是这么挂的）。开跑前先清一遍
+    Write-Host "清理上次可能残留的临时牌组…"
+    node tauri/tools/cleanup-test-decks.mjs | Out-Null
+
+    # 导入链路（PARITY 3.4 + 6.7）：先造一份 .apkg 夹具并走一遍「页面导入」，
+    # 这样下面 decks-check 点「导入文件」时 `ANKI_OPEN_PATH` 指向的文件是真实存在的
+    Write-Host "验证导入链路（造夹具 + 页面端到端导入）…"
+    $env:SHOT_DIR = $OutDir
+    node tauri/tools/import-check.mjs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "import-check.mjs 有失败项" -ForegroundColor Red
+        $passed = $false
+    }
+
     Write-Host "跑 decks-check.mjs（Playwright）…"
     node tauri/tools/decks-check.mjs
     if ($LASTEXITCODE -ne 0) {
@@ -137,11 +163,21 @@ try {
     node tauri/tools/custom-study-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
+    # 「导入文件」按钮：宿主先弹原生文件对话框（测试里被 `ANKI_OPEN_PATH` 顶掉），再按
+    # 文件名挑页面 —— `.apkg` 应该开 `import-anki-package/<百分号编码的路径>`
+    # （对照 `importing.py:137-146` 与 `import_dialog.py:68`）
     if (-not (Wait-LogPattern "打开窗口: import ->" 20)) {
         Write-Host "「导入文件」没有开窗" -ForegroundColor Red
         $passed = $false
     } else {
         Write-Host "导入窗口已打开" -ForegroundColor Green
+    }
+    $importLog = Read-Log $logPath
+    if ($importLog -notmatch "import-anki-package/.*import-fixture\.apkg") {
+        Write-Host "导入窗口没有开在 .apkg 对应的页面上（见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "导入窗口开在 import-anki-package/<编码路径> 上" -ForegroundColor Green
     }
     if (-not (Wait-LogCount -Pattern "主窗口导航到: http://127.0.0.1:$Port/_anki/legacyPageData" -Minimum 1 -TimeoutSeconds 20)) {
         Write-Host "概览「学习」没有切到复习页" -ForegroundColor Red
@@ -188,6 +224,8 @@ try {
     if ($proc -and -not $proc.HasExited) {
         Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force
     }
+    # 夹具是一次性的（import-check.mjs 刻意留着它，好让「导入文件」有东西可开）
+    if (Test-Path $fixtureApkg) { Remove-Item $fixtureApkg -Force }
 }
 
 Write-Host ""

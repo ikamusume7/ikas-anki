@@ -26,6 +26,7 @@ use serde_json::json;
 
 use crate::browser;
 use crate::editor;
+use crate::importing;
 use crate::main_window;
 use crate::platform::record;
 use crate::preview;
@@ -184,11 +185,12 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             windows::close(state, window);
             None
         }
-        // 牌组列表底部：导入文件（`deckbrowser.py:399` → `mw.onImport()`）与
-        // 获取共享牌组（`deckbrowser.py:396` → `openLink(appShared + "decks")`）
+        // 牌组列表底部：导入文件（`deckbrowser.py:399` → `mw.onImport()` →
+        // `prompt_for_file_then_import()`：**先弹文件对话框**，再按文件名开对应的页面，
+        // 见 `crate::importing`）与获取共享牌组（`deckbrowser.py:396` → `openLink(...)`）
         "import" => {
-            if let Err(error) = main_window::open_import(state) {
-                tracing::warn!("打开导入窗口失败: {error:#}");
+            if let Err(error) = importing::prompt_and_import(state) {
+                tracing::warn!("导入失败: {error:#}");
             }
             None
         }

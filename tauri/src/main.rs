@@ -13,6 +13,7 @@ mod backend;
 mod bridge;
 mod browser;
 mod editor;
+mod importing;
 mod legacy;
 mod main_window;
 mod method_table;
@@ -122,20 +123,30 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     tracing::info!("窗口将加载: {url}");
 
     let parsed: tauri::Url = url.parse()?;
-    WebviewWindowBuilder::new(app, windows::MAIN, WebviewUrl::External(parsed))
+    let main_window = WebviewWindowBuilder::new(app, windows::MAIN, WebviewUrl::External(parsed))
         .title("Anki")
         .inner_size(1200.0, 820.0)
-        // 拖入文件（HTML5 drop，见 `tauri/README.md`）：Tauri 默认会顶掉 WebView2 的拖放
-        // 处理器，页面就收不到 drop 事件了；上游 `reviewer.py:355` 是开着 `allow_drops`
-        // 的（复习界面里往输入框拖东西与浏览器行为一致），所以这里也关掉 Tauri 的拦截。
-        // 注意：关掉之后就收不到 Rust 侧的 `DragDropEvent` 了，将来做「拖 `.apkg` 到主
-        // 窗口导入」（PARITY 6.7）要落在页面里做。
-        .disable_drag_drop_handler()
+        // 主窗口**保留** Tauri 的拖放拦截：这样 Rust 侧能拿到拖入文件的**真实路径**
+        // （`WindowEvent::DragDrop`），才能像 Qt 那样"把 .apkg 拖到主窗口就导入"
+        // （`main.py:112-137`，见 `crate::importing::on_drop`）。代价是页面的 HTML5 drop
+        // 收不到（WebView2 的拖放处理器被 Tauri 顶掉了）—— 上游 `reviewer.py:355` 虽然
+        // 开着 `allow_drops`，但复习界面里本来也没什么可拖进去的东西，权衡下来选路径。
+        // 需要 HTML5 drop 的是编辑器那几类窗口，它们走 `WindowSpec::html5_drops`。
         // 在任何页面脚本之前注入：补鉴权头 + 提供 bridgeCommand，
         // 并把窗口标签交给脚本（`/_anki/pycmd` 据此判断命令来自哪个窗口）
         .initialization_script(bridge::script(&api_key, windows::MAIN))
         .build()?;
-    tracing::info!("主窗口: 已关闭 Tauri 的文件拖放拦截，HTML5 drop 交给页面");
+
+    // 拖入文件 → 导入（对照 `main.py:112-137`）
+    let state_for_drop = state.clone();
+    main_window.on_window_event(move |event| {
+        if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            if let Err(error) = importing::on_drop(&state_for_drop, paths) {
+                tracing::warn!("处理拖入文件失败: {error:#}");
+            }
+        }
+    });
+    tracing::info!("主窗口: 保留 Tauri 的拖放拦截（拖入文件交给 crate::importing）");
 
     open_extra_windows(&state);
 

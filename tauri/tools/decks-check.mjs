@@ -21,6 +21,13 @@ import { chromium } from "playwright";
 import { Deck, DeckId, DeckIds } from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { OpChangesWithId } from "../../out/ts/lib/generated/anki/collection_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
+import { AddNoteRequest, Note } from "../../out/ts/lib/generated/anki/notes_pb.js";
+import {
+    Notetype,
+    NotetypeId,
+    NotetypeNames,
+} from "../../out/ts/lib/generated/anki/notetypes_pb.js";
+import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40031";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
@@ -101,6 +108,42 @@ const addDeck = async (name) =>
             ),
         ).id,
     );
+
+// 空的**默认牌组**会被后端从树里藏掉（`hide_default_deck`，`rslib/src/decks/tree.rs:182`：
+// 只要还有别的牌组，默认牌组就不显示），于是「当前牌组有高亮」会因为默认牌组压根没渲染出来
+// 而失败 —— 真实用户的默认牌组通常有卡片。所以先确保当前牌组里有卡片
+// （与 `verify-editor.ps1` 给复习界面补卡片同一思路）
+const searchNotes = async (query) =>
+    SearchResponse.fromBinary(
+        await rpc("searchNotes", new SearchRequest({ search: query }).toBinary()),
+    ).ids;
+if ((await searchNotes(`did:${originalDeck}`)).length === 0) {
+    const names = NotetypeNames.fromBinary(
+        await rpc("getNotetypeNames", new Empty({}).toBinary()),
+    );
+    // 与 `seed-card.mjs` 一样优先挑普通问答类型：新建集合里 `entries[0]` 可能是
+    // 「遮盖」/Image Occlusion，那样补出来的是一张遮挡笔记 —— 编辑器检查（`editor-check.mjs`）
+    // 接着要编辑复习队列里的这张卡，会因为没有可编辑字段而失败
+    const pick =
+        names.entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name)) ?? names.entries[0];
+    const notetype = Notetype.fromBinary(
+        await rpc("getNotetype", new NotetypeId({ ntid: pick.id }).toBinary()),
+    );
+    await rpc(
+        "addNote",
+        new AddNoteRequest({
+            note: new Note({
+                notetypeId: notetype.id,
+                // 字段数必须与笔记类型一致（新建集合里第一个可能是 5 个字段的 Image Occlusion）
+                fields: notetype.fields.map((field, index) =>
+                    index === 0 ? `TauriDecks 补的卡片${stamp}` : field.name,
+                ),
+            }),
+            deckId: originalDeck,
+        }).toBinary(),
+    );
+    console.log(`当前牌组（${originalDeck}）是空的，补了一张卡片（否则它不会出现在列表里）`);
+}
 
 const parentId = await addDeck(parentName);
 // `addDeck` 走上游的 `col.decks.id(name)`：`::` 里的祖先牌组会被顺带建出来
