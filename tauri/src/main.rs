@@ -125,10 +125,17 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     WebviewWindowBuilder::new(app, windows::MAIN, WebviewUrl::External(parsed))
         .title("Anki")
         .inner_size(1200.0, 820.0)
+        // 拖入文件（HTML5 drop，见 `tauri/README.md`）：Tauri 默认会顶掉 WebView2 的拖放
+        // 处理器，页面就收不到 drop 事件了；上游 `reviewer.py:355` 是开着 `allow_drops`
+        // 的（复习界面里往输入框拖东西与浏览器行为一致），所以这里也关掉 Tauri 的拦截。
+        // 注意：关掉之后就收不到 Rust 侧的 `DragDropEvent` 了，将来做「拖 `.apkg` 到主
+        // 窗口导入」（PARITY 6.7）要落在页面里做。
+        .disable_drag_drop_handler()
         // 在任何页面脚本之前注入：补鉴权头 + 提供 bridgeCommand，
         // 并把窗口标签交给脚本（`/_anki/pycmd` 据此判断命令来自哪个窗口）
         .initialization_script(bridge::script(&api_key, windows::MAIN))
         .build()?;
+    tracing::info!("主窗口: 已关闭 Tauri 的文件拖放拦截，HTML5 drop 交给页面");
 
     open_extra_windows(&state);
 

@@ -6,6 +6,9 @@
 #   3. 断言编辑器窗口打开、并**真的载入了 note**（靠注入脚本回传的 editorLoaded）
 #   4. 截取窗口真实渲染，再走一次关闭流程
 #
+# 之后还会串上三块检查：编辑器工具栏的「字段…」「卡片…」两个对话框，以及
+# 「拖入文件」的媒体链路（见脚本里的注释）。
+#
 # 前置：已按 TAURI_HANDOVER.md §2 构建过（`cd tauri; cargo build` →
 #       `tauri/target/debug/anki-tauri.exe`）。
 #
@@ -49,13 +52,14 @@ $env:ANKI_LANG = $Lang
 
 # 图像遮挡的「选图片」要弹原生的打开对话框（没法自动点），所以造一张真图片并让
 # 宿主直接返回它（`platform/dialogs.rs` 的 `ANKI_OPEN_PATH`，与 `ANKI_SAVE_PATH` 同类）。
-# 1x1 的透明 PNG，够 `addMediaFromPath` 拷进媒体夹。
+# 1x1 的透明 PNG（70 字节，IHDR/IDAT/IEND 的 CRC 都验过 —— 之前那张是坏的，
+# 只是没人解码它才一直没暴露；拖入文件的检查会真的让后端解码图片）。
 $occlusionFixture = Join-Path $OutDir "occlusion-fixture.png"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 [System.IO.File]::WriteAllBytes(
     $occlusionFixture,
     [Convert]::FromBase64String(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
     )
 )
 $env:ANKI_OPEN_PATH = $occlusionFixture
@@ -176,6 +180,26 @@ try {
     }
     $env:SHOT_DIR = $OutDir
     node tauri/tools/cards-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 拖入文件（PARITY 4.4）：宿主侧只有一件事要保证 —— **关掉 Tauri 对 WebView2 拖放的
+    # 拦截**，否则页面根本收不到 HTML5 drop（`windows.rs` 的 `WindowSpec::html5_drops`）。
+    # 「操作系统把文件交给 WebView2」这一步没法在自动化里可靠复现（要真的按住鼠标拖），
+    # 所以这里只断言宿主确实关掉了拦截；页面侧的媒体链路（图片 → 媒体夹 → 字段里的
+    # <img> → 保存）用 Playwright 合成 DataTransfer 来验（`drop-check.mjs`）
+    Write-Host "验证「拖入文件」链路…"
+    $log = Read-Log $logPath
+    foreach ($pattern in @(
+            "主窗口: 已关闭 Tauri 的文件拖放拦截",
+            "窗口 edit-current: 已关闭 Tauri 的文件拖放拦截")) {
+        if ($log -notmatch [regex]::Escape($pattern)) {
+            Write-Host "缺少日志：$pattern" -ForegroundColor Red
+            $passed = $false
+        } else {
+            Write-Host "宿主已关闭拖放拦截：$pattern" -ForegroundColor Green
+        }
+    }
+    node tauri/tools/drop-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
     # 关闭流程：编辑器的「关闭」按钮就是发这条 RPC（NoteEditor.svelte 的 closeEditCurrent）

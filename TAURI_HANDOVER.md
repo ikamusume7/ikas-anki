@@ -48,7 +48,7 @@
 | --- | --- |
 | `tauri/tools/verify-reviewer.ps1` | 复习界面：启动 → 补卡片 → 截真实窗口 → 布局断言 |
 | `tauri/tools/verify-m2.ps1` | 平台能力：剪贴板文件列表 / TTS 合成 / 录音闭环 + 多窗口命令归属 |
-| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
+| `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **拖入文件**（合成 drop → 媒体落库）→ **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
 | `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带 |
 | `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → `d`/`s`/`study` 切页 |
@@ -389,12 +389,15 @@ tauri/src/
    └─ pycmd.rs        POST /_anki/pycmd
 
 tauri/tools/           验证脚本：verify-reviewer.ps1（复习界面）、verify-m2.ps1
-                       （平台能力）、verify-editor.ps1（编辑当前卡片）、
-                       verify-addcards.ps1（添加卡片）、verify-browser.ps1（浏览器）、
-verify-decks.ps1（牌组列表）、
-                       capture-window.ps1（截真实窗口，多窗口用 -TitleLike 选择）、
-                       visual-check.mjs / m2-check.mjs / editor-check.mjs /
-                       addcards-check.mjs / browser-check.mjs、seed-card.mjs、
+                       （平台能力）、verify-editor.ps1（编辑当前卡片 + 字段/卡片对话框
+                       + 拖入文件 + 图像遮挡）、verify-addcards.ps1（添加卡片）、
+                       verify-browser.ps1（浏览器）、verify-decks.ps1（牌组列表 +
+                       自定义学习）、capture-window.ps1（截真实窗口，多窗口用
+                       -TitleLike 选择）、visual-check.mjs / m2-check.mjs /
+                       editor-check.mjs / fields-check.mjs / cards-check.mjs /
+                       drop-check.mjs / addcards-check.mjs / browser-check.mjs /
+                       decks-check.mjs / cleanup-test-decks.mjs /
+                       custom-study-check.mjs / occlusion-check.mjs、seed-card.mjs、
                        set-tts-template.mjs、check-prefs21.mjs
 
 ts/routes/decks/      新写的牌组列表页面（主窗口默认页）：+page.svelte（牌组树、计数、
@@ -854,6 +857,31 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
    检查脚本里就是这么写的）。顺带：点工具栏的「重置」会弹原生 `confirm`，Playwright 要
    `page.on("dialog", d => d.accept())` 才能过。
 
+### 5.32 拖入文件（HTML5 drop）：宿主得先"让开"，检查脚本有三个坑
+
+Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是把事件发成
+`DragDropEvent`），页面因此收不到 HTML5 drop —— 上游 TS 那套 `data-transfer.ts`
+一行都改不了、也一行都不用改，宿主只要在开窗时调一次
+`disable_drag_drop_handler()`（`WindowSpec::html5_drops`）。这个坑不查文档会一直在
+"页面为什么不响应拖入"上打转。
+
+写检查脚本（`drop-check.mjs`）时踩到的三个坑：
+
+1. **`locator.dispatchEvent("drop", { dataTransfer })` 是假的**：事件在页面里读不到
+   `dataTransfer`，编辑器拿到 `undefined` 后静默什么都不做。要在页面里自己
+   `new DragEvent("drop", { dataTransfer })` —— 用 `elementHandle.evaluate` 拿到元素，
+   事件在页面内造、页面内派发。
+2. **编辑器的字段在 shadow DOM 里**：`page.evaluate` 里的 `document.querySelector` 找不到
+   `[contenteditable="true"]`（探查出来是 0 个），但 Playwright 的 locator 能穿透
+   shadow DOM，元素句柄要从 locator 上拿。
+3. **后端会真的解码图片**：`convertPastedImage` 走 image crate，随手抄的 1x1 PNG base64
+   很可能是坏的（CRC 对不上）→ 直接 500。夹具图要先验一遍 CRC（遮挡那份夹具原来就是坏的，
+   只因没人解码它才一直没暴露）。
+
+另外记一条**没覆盖**的：合成事件只能验页面这一侧，"操作系统把文件交给 WebView2"那一步
+要真机手工确认，自动化里只断言宿主日志（`verify-editor.ps1` 里的两条
+「已关闭 Tauri 的文件拖放拦截」）。
+
 ---
 
 ## 6. 剩余工作
@@ -922,7 +950,7 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
   只剩 `saveCustomColours` 卡在原生取色器能力（`rfd` 没有暴露自定义调色板的 API）。
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
-  `arboard`。仍未覆盖的是**拖入文件**（HTML5 drop），属 M3 的编辑器链路。
+  `arboard`。**拖入文件**（HTML5 drop）不走剪贴板，见 §6.4 的 4.4。
 - ~~`getConfigJson` / `setConfigJson`~~ —— 这两个由 rslib 的 `ConfigService` 直接
   服务，实测可用（`getAllConfig` → 200），从来不是缺口。
 
@@ -981,6 +1009,18 @@ rslib 的同名方法对缺失的键直接报错。编辑器要读 `renderMathja
     「窗口 → 笔记类型」还记了「窗口 → 那张 note」，再带上复习卡的 `ord`（`?notetype=&ord=&note=`）。
     验证见 `tools/cards-check.mjs`（由 `verify-editor.ps1` 调用）。
     差：帮助按钮、系统字体下拉、下拉里没有 Qt 的字段摘要、复制后没有提示。
+  - **已完成**：**拖入文件（HTML5 drop，4.4）** —— 页面链路本来就是上游 TS 的
+    （`data-transfer.ts` 的 `handleDrop`：图片/音频/URL/文本/HTML 五支，媒体走
+    `addMediaFile` / `convertPastedImage`），宿主要做的只是**别挡路**：Tauri 默认会
+    顶掉 WebView2 的拖放处理器，所以 `WindowSpec` 加了 `html5_drops` →
+    `disable_drag_drop_handler()`（编辑器三类窗口 / 主窗口 / 预览窗口，对照
+    `editor.py:120`、`reviewer.py:355`、`previewer.py:158` 的 `allow_drops`）。
+    验证见 `tools/drop-check.mjs`（由 `verify-editor.ps1` 调用，页面里合成带 PNG 的
+    drop → 字段里的 `<img src="paste-…">` → 媒体真的落进 `collection.media`）。
+    **没覆盖**「操作系统 → WebView2」那一步（只能真机手工确认）；关掉拦截之后 Rust 侧
+    收不到 `DragDropEvent`，将来的「拖 `.apkg` 到主窗口导入」（6.7）要落在页面里做。
+    顺带核对：**4.3「编辑器更多菜单」在上游并不存在**（工具栏已迁到 TS，`editor.py`
+    没有 `onMore`），`PARITY.md` 已按"不存在"标注。
   - **已完成**：**自定义学习**（3.6）—— 概览里的「自定义学习」（`C`）→ 新写的
     `ts/routes/custom-study/`（六个选项 + cram 四选一 + 标签包含/排除，走
     `CustomStudy` RPC；确定后宿主把主窗口导航到当前牌组的概览）。验证见
@@ -1135,7 +1175,6 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的三个窗口都
    注意有些"新窗口"不必新写界面 —— `card-info/<cid>`、`change-notetype/<id>`
    这类**仓库里已有的路由**直接复用即可（§3.7 第 7 条）；反过来，"原生对话框"这类
    宿主独有能力（保存路径、消息框）则要按 §3.7 第 6 条补端点。
-3. 若只做小步：`current_caller`（editor / reviewer 的 TTS 打断语义）与
-   拖入文件（HTML5 drop）属音频 / 编辑器细节；工程化侧还有把 §2.1 的构建步骤
-   接进 `just`、补 `tauri/capabilities/`、换掉占位图标。`more` 命令、卡片布局与
-   预览器则同样卡在"缺界面"上。
+3. 若只做小步：4.5「未保存拦截 / `EditorState`」、`current_caller`（editor /
+   reviewer 的 TTS 打断语义）属编辑器 / 音频细节；工程化侧还有把 §2.1 的构建步骤
+   接进 `just`、补 `tauri/capabilities/`、换掉占位图标。

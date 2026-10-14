@@ -230,7 +230,9 @@ fn ensure_window(state: &AppState) -> Result<()> {
         &WindowSpec::new(windows::PREVIEW, format!("_anki/legacyPageData?id={page}"))
             // 对照 `previewer.py:77` 的 `setWindowTitle(tr.actions_preview())`
             .title(state.backend.i18n().actions_preview())
-            .size(700.0, 620.0),
+            .size(700.0, 620.0)
+            // 上游 `previewer.py:158` 也开了 `allow_drops`
+            .html5_drops(true),
     )?;
     Ok(())
 }

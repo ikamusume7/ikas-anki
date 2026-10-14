@@ -482,8 +482,8 @@ Qt 把底部栏放在**独立的 WebView**（`mw.bottomWeb`）里；这里放在
 已验证：往剪贴板放两个文件（其中一个名字带空格）后，`readClipboard` 返回正确的
 `file://` 列表且空格被转义；写入方向覆盖 `image/*` 与 `text/*`。
 
-**未覆盖**：拖入文件（HTML5 drop）。Qt 那边由 WebView 的 `dropEvent` 处理，而 WebView2
-是否把 `text/uri-list` 暴露给页面的 `dataTransfer` 尚未验证 —— 属于编辑器链路（M3）。
+**拖入文件**（HTML5 drop）不走剪贴板这套 —— 页面读的是 `dataTransfer`，见「编辑器」的
+「拖入文件（HTML5 drop）」。
 
 ### 计时与评分按钮
 
@@ -888,6 +888,46 @@ PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
 保存 → 用 RPC 复查模板与卡片类型都落库 → 用原始字节还原，并截图
 `out/editor-check/cards.png` 与真实窗口 `cards-window.png`。
 
+### 拖入文件（HTML5 drop）
+
+编辑器工具栏与字段都在页面上，拖入文件也一样：**上游 TS 早就实现了整套逻辑**
+（`ts/routes/editor/rich-text-input/data-transfer.ts` 的 `handleDrop` → 图片 / 音频 /
+URL / 文本 / HTML 五支），落回字段走 `pasteHTML`，媒体落库走 rslib 的 `addMediaFile`
+/ `convertPastedImage` —— 宿主**一个端点都不用加**。
+
+宿主唯一要做的是**别挡路**：Tauri 默认会顶掉 WebView2 自己的拖放处理器（好把事件发成
+`DragDropEvent`），页面就收不到 HTML5 drop 了。`WindowSpec` 因此多了 `html5_drops`，
+打开它就给窗口调 `disable_drag_drop_handler()`：
+
+| 窗口 | 上游对应的地方 |
+| --- | --- |
+| `edit-current` / `add-cards` / `browser-editor` | `editor.py:120` 的 `self.web.allow_drops = True` |
+| 主窗口（复习界面 / 牌组列表） | `reviewer.py:355` |
+| `preview` | `previewer.py:158` |
+
+（`clayout.py:371` 也给卡片布局的预览开了，不过我们这个页面的预览是 iframe，drop 由
+外层页面处理，没有额外的开关。）
+
+差异：开关一关，Rust 侧就收不到 `DragDropEvent` 了 —— 将来做「拖 `.apkg` 到主窗口导入」
+（PARITY 6.7）要落在页面里做。
+
+验证：`tauri/tools/drop-check.mjs`（由 `verify-editor.ps1` 调用）—— 用 Playwright 在
+页面里**合成**一次带真 PNG 文件的 `drop`，断言图片插进字段（`<img src="paste-<哈希>.jpg">`）、
+文件真的落进 `collection.media`、失焦保存后集合里的 note 也有它、页面无报错，最后还原
+字段并删掉生成的媒体文件。**没覆盖**「操作系统 → WebView2」那一步（要真的按住鼠标拖），
+那半只能靠 `verify-editor.ps1` 断言宿主日志「已关闭 Tauri 的文件拖放拦截」。
+
+写这个检查时踩到的三个坑（别再踩）：
+
+- `locator.dispatchEvent("drop", { dataTransfer })` 造出来的事件在页面里**读不到**
+  `dataTransfer`（编辑器拿到 `undefined`，于是什么都不发生），得用
+  `elementHandle.evaluate` 在页面里自己 `new DragEvent("drop", { dataTransfer })`；
+- 字段在 **shadow DOM** 里，`page.evaluate` 里的 `document.querySelector` 找不到它，
+  要用 Playwright 的 locator（它穿透 shadow DOM）；
+- 顺手记一条：后端会**真的解码**图片（`convertPastedImage` → image crate），随手抄的
+  1x1 PNG base64 很可能是坏的（原来的遮挡夹具就是，只是没人解码它才一直没暴露），
+  挑一张 CRC 正确的再写进脚本。
+
 ### 图像遮挡（内嵌遮罩编辑器）
 
 这个版本的 Anki **没有独立的遮挡窗口**：遮挡编辑器就是编辑器页面里的
@@ -1170,6 +1210,7 @@ browserSearch：图表 → 浏览器搜索
 | `editor-check.mjs` | 编辑器「改字段 → 保存」的检查：Playwright 真实敲键盘，再用 RPC 复查集合内容 |
 | `fields-check.mjs` | `verify-editor.ps1` 调用的「字段…」检查：加字段 → 保存 → RPC 复查 → 原始字节还原 |
 | `cards-check.mjs` | `verify-editor.ps1` 调用的「卡片…」检查：改模板 → **未保存**的改动出现在预览里 → 加卡片类型 → 保存 → RPC 复查 → 原始字节还原 |
+| `drop-check.mjs` | `verify-editor.ps1` 调用的「拖入文件」检查：页面里合成带 PNG 的 drop → 字段出现 `<img src="paste-…">` → 真落进 `collection.media` → 保存后复查 → 还原 |
 | `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
 | `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带） |
@@ -1234,8 +1275,9 @@ browserSearch：图表 → 浏览器搜索
 - **M2 已完成**：mediasrv 的 32 个平台端点全部有实现，详见上文各节。
   唯一没验证的是 **Android 上的录音**：这里统一用 `cpal`（Android 走 oboe），
   而 Qt/AnkiDroid 用的是 `MediaRecorder`，需要在真机确认。
-- **未覆盖的剪贴板路径**：拖入文件（HTML5 drop）依赖 WebView2 是否把
-  `text/uri-list` 暴露给页面的 `dataTransfer`，属编辑器链路（M3）。
+- ~~拖入文件（HTML5 drop）~~ —— **已实现**：见「编辑器」的「拖入文件（HTML5 drop）」；
+  剩下的是「拖 `.apkg` 到主窗口导入」（PARITY 6.7）与「操作系统 → WebView2」那一步的
+  真机确认。
 - **M3**：导入导出、图像遮挡、Android 的 SAF 适配。
 - **M4**：Windows MSI 打包与签名；Android 的 `tauri android init/build`。
 

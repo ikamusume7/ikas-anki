@@ -107,6 +107,8 @@ pub struct WindowSpec {
     pub modal: bool,
     /// 是否始终置顶（录音对话框需要，否则会被编辑窗口盖住）
     pub always_on_top: bool,
+    /// 是否让**页面**处理 HTML5 drop（编辑器/复习界面要能把文件拖成媒体）
+    pub html5_drops: bool,
 }
 
 impl WindowSpec {
@@ -121,6 +123,7 @@ impl WindowSpec {
             height: 760.0,
             modal: false,
             always_on_top: false,
+            html5_drops: false,
         }
     }
 
@@ -146,6 +149,14 @@ impl WindowSpec {
     #[must_use]
     pub fn always_on_top(mut self, always_on_top: bool) -> Self {
         self.always_on_top = always_on_top;
+        self
+    }
+
+    /// 让页面处理 HTML5 drop（把文件拖进字段 → 变成媒体）。
+    /// 详见 `tauri/README.md` 的「拖入文件（HTML5 drop）」。
+    #[must_use]
+    pub fn html5_drops(mut self, html5_drops: bool) -> Self {
+        self.html5_drops = html5_drops;
         self
     }
 }
@@ -183,6 +194,17 @@ pub fn open(state: &AppState, spec: &WindowSpec) -> Result<()> {
         builder = builder
             .position(f64::from(geometry.x), f64::from(geometry.y))
             .inner_size(geometry.width, geometry.height);
+    }
+
+    // 拖入文件（HTML5 drop，见 `tauri/README.md` 的「拖入文件（HTML5 drop）」）：
+    // Tauri 默认会**顶掉 WebView2 自己的拖放处理器**（好把事件发成 `DragDropEvent`），
+    // 代价是页面收不到 HTML5 drop。
+    // 上游 Qt 那边是反过来的：`webview.py:550-552` 的 `dropEvent` 直接把事件交给页面
+    // （`editor.py:120` / `reviewer.py:355` / `previewer.py:158` / `clayout.py:371`
+    // 这几个 webview 打开 `allow_drops`）。所以这几类窗口要显式关掉 Tauri 的拦截。
+    if spec.html5_drops {
+        builder = builder.disable_drag_drop_handler();
+        tracing::info!("窗口 {}: 已关闭 Tauri 的文件拖放拦截，HTML5 drop 交给页面", spec.label);
     }
 
     // 模态窗口挂在主窗口下，保证它始终浮在主窗口之上

@@ -221,7 +221,8 @@ async fn open_editor_for_note(state: &AppState, note_id: i64) -> Result<()> {
         state,
         &WindowSpec::new(windows::BROWSER_EDITOR, "editor/?mode=browser")
             .title(state.backend.i18n().studying_edit())
-            .size(800.0, 620.0),
+            .size(800.0, 620.0)
+            .html5_drops(true),
     )?;
     if existed {
         // 窗口已存在 = 页面早已就绪：直接注入（否则要等它下次报到）

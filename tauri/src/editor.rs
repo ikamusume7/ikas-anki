@@ -67,7 +67,9 @@ pub async fn open_current_card(state: &AppState) -> Result<()> {
         &WindowSpec::new(windows::EDIT_CURRENT, "editor/?mode=current")
             // 对照 `qt/aqt/editcurrent.py:26` 的 `self.setWindowTitle(tr.editing_edit_current())`
             .title(state.backend.i18n().editing_edit_current())
-            .size(800.0, 620.0),
+            .size(800.0, 620.0)
+            // 拖入文件 → 媒体（`editor.py:120` 的 `allow_drops`），见 `tauri/README.md`
+            .html5_drops(true),
     )
     .map_err(|error| anyhow::anyhow!("{error:#}"))
 }
@@ -82,7 +84,8 @@ pub fn open_add_cards(state: &AppState) -> Result<()> {
         state,
         &WindowSpec::new(windows::ADD_CARDS, "editor/?mode=add")
             .title(state.backend.i18n().actions_add())
-            .size(800.0, 620.0),
+            .size(800.0, 620.0)
+            .html5_drops(true),
     )
     .map_err(|error| anyhow::anyhow!("{error:#}"))
 }
