@@ -60,10 +60,13 @@ serde-pickle = "1"
 # `CF_HDROP`（在资源管理器里"复制"文件时写入的格式）。
 # 版本与主 workspace 的 `windows` 保持一致，避免编译出两份。
 [target.'cfg(windows)'.dependencies]
+# `Win32_UI_Controls_Dialogs`：原生取色器（`ChooseColorW`，见
+# `src/platform/colours.rs`）；其余是 `CF_HDROP` 剪贴板那套。
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
+    "Win32_UI_Controls_Dialogs",
     "Win32_UI_Shell",
 ] }
 

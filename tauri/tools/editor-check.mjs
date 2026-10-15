@@ -13,6 +13,8 @@
 
 import { chromium } from "playwright";
 
+import { GetCustomColoursResponse } from "../../out/ts/lib/generated/anki/collection_pb.js";
+import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
 import { Note, NoteId, UpdateNotesRequest } from "../../out/ts/lib/generated/anki/notes_pb.js";
 import { GetQueuedCardsRequest, QueuedCards } from "../../out/ts/lib/generated/anki/scheduler_pb.js";
 
@@ -62,6 +64,9 @@ function bridgeShim(config) {
         return originalFetch(input, init);
     };
     window.__bridgeCalls = [];
+    // 装成"宿主有原生取色器"（`tauri/src/bridge.rs` 在 Windows 上注入这个标记）：
+    // `ColorPicker.svelte` 据此把点击交给 `pickColour:` 桥接命令，见 PARITY 6.5
+    window.__ankiHostColourPicker = true;
     window.bridgeCommand = window.pycmd = (arg, callback) => {
         window.__bridgeCalls.push(String(arg));
         window
@@ -147,6 +152,60 @@ try {
         await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()),
     );
     check("已还原测试笔记", restored.fields[0] === original, `正面回到「${restored.fields[0]}」`);
+
+    // 5. 原生取色器（PARITY 6.5）
+    //    垫片装成"有原生取色器"的宿主（`tauri/src/bridge.rs` 在 Windows 上注入这个标记），
+    //    `ANKI_PICK_COLOUR` 钩子让宿主的 `pickColour` 不弹对话框直接返回这个颜色。
+    const pickColour = process.env.ANKI_PICK_COLOUR ?? "#ff00aa";
+    console.log(`宿主取色器标记: ${await page.evaluate(() => window.__ankiHostColourPicker)}`);
+    const saveStatus = await page.evaluate(async () => {
+        const response = await fetch("/_anki/saveCustomColours", {
+            method: "POST",
+            headers: { "Content-Type": "application/binary" },
+            body: new Uint8Array(),
+        });
+        return response.status;
+    });
+    check("平台端点 saveCustomColours 已实现", saveStatus === 200, `HTTP ${saveStatus}`);
+
+    await page.locator('[contenteditable="true"]').first().click();
+    await page.keyboard.press("Control+a");
+    await page.locator('input[type="color"]').first().click({ force: true });
+    await page.waitForTimeout(2500);
+    // 上色后字段要失焦才会写回集合（`NoteEditor` 的 focusout → updateCurrentNote）
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.waitForTimeout(1500);
+    // 存进 note 的颜色会被规范化成 `rgb(r, g, b)`（`TextColorButton.transformColor`）
+    const wanted = pickColour.replace("#", "");
+    const asRgb = `rgb(${parseInt(wanted.slice(0, 2), 16)}, ${parseInt(wanted.slice(2, 4), 16)}, ${parseInt(wanted.slice(4, 6), 16)})`;
+    const paintedNote = Note.fromBinary(
+        await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()),
+    );
+    check(
+        "原生取色器选的色写进了集合里的字段",
+        paintedNote.fields[0].includes(pickColour) || paintedNote.fields[0].includes(asRgb),
+        paintedNote.fields[0].slice(0, 80),
+    );
+    // 调色板落库（后端 `getCustomColours` 读的就是 `customColorPickerPalette`）
+    const palette = GetCustomColoursResponse.fromBinary(
+        await rpc("getCustomColours", new Empty({}).toBinary()),
+    );
+    check(
+        "选过的颜色进了自定义调色板",
+        palette.colours.includes(pickColour.toLowerCase()),
+        palette.colours.slice(0, 4).join(" / "),
+    );
+    // 收尾：把字段还原（颜色是刚加上的）
+    const paintedCleanup = Note.fromBinary(
+        await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()),
+    );
+    paintedCleanup.fields[0] = original;
+    await rpc("updateNotes", new UpdateNotesRequest({ notes: [paintedCleanup] }).toBinary());
+    check(
+        "已还原取色器改过的字段",
+        Note.fromBinary(await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()))
+            .fields[0] === original,
+    );
 } catch (error) {
     check("编辑器交互流程", false, String(error));
 } finally {

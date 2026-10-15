@@ -63,6 +63,8 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
     )
 )
 $env:ANKI_OPEN_PATH = $occlusionFixture
+# 原生取色器（PARITY 6.5）：系统对话框没法自动点，钩子让 `pickColour` 直接返回这个颜色
+$env:ANKI_PICK_COLOUR = "#ff00aa"
 
 function Read-Log {
     param([string]$Path)
@@ -219,6 +221,14 @@ try {
     Write-Host "验证「改字段 → 保存」链路…"
     node tauri/tools/editor-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 原生取色器：页面点了调色板 → 宿主的 pickColour（钩子直接返回颜色）
+    if ((Read-Log $logPath) -match "ANKI_PICK_COLOUR 生效") {
+        Write-Host "原生取色器走了宿主钩子" -ForegroundColor Green
+    } else {
+        Write-Host "没有看到原生取色器的宿主日志（见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    }
 
     # 图像遮挡：只有遮挡笔记类型才显示工具栏按钮；选图片走宿主的 /openFilePicker
     # （本版本没有独立的遮挡窗口，遮罩编辑器就内嵌在编辑器页面里）

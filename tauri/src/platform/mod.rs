@@ -12,6 +12,7 @@
 
 pub(crate) mod audio;
 mod clipboard;
+pub(crate) mod colours;
 mod config;
 pub(crate) mod dialogs;
 mod media;
@@ -78,6 +79,10 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         // 集合级配置。Qt 在 mediasrv 里自己实现（缺键时返回 null 而非报错），
         // 因此这里**不能**落到 rslib 的同名方法上，见 `config.rs`
         "getConfigJson" => config::get_collection_config_json(state, body),
+
+        // 原生取色器的调色板（上游是 mediasrv 的 `save_custom_colours`，
+        // `mediasrv.py:1122-1128`）；读那半边是后端的 `getCustomColours`
+        "saveCustomColours" => colours::save_custom_colours(state),
 
         // profile / meta 配置存储
         "getProfileConfigJson" => config::get_profile_config_json(state, body),

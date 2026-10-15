@@ -142,6 +142,7 @@ cargo build
 | `ANKI_LANG` | `en-US` | 界面语言，`zh_CN` / `zh-CN` 均可 |
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见 `tauri/README.md` 的「自动备份」 |
 | `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
+| `ANKI_PICK_COLOUR` | 空 | 测试钩子：原生取色器不弹对话框、直接当用户选了这个 `#rrggbb`（见 `tauri/README.md` 的「原生取色器」） |
 
 ### 2.4 冒烟测试（已脚本化）
 
@@ -1063,6 +1064,22 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 测试钩子 `ANKI_RESTORE_PATH`（路径或 `newest`）跳过原生文件对话框与确认框 ——
 这两步在验证脚本里都点不了；`newest` 让脚本能还原"5e 里刚点过『创建备份』生成的那一份"。
 
+### 5.42 pycmd 命令按窗口分发；程序化改 `<input>` 要等 flush
+
+1. **不是所有 pycmd 命令都走主窗口那份 match**：`dispatch` 先处理与窗口无关的，然后
+   `window != MAIN` 的一律交给 `dispatch_secondary`（编辑器窗口的命令就在那边）。
+   给"任何窗口都可能发"的命令加分支时，**要放在按窗口分发之前**，否则日志里只有
+   `窗口 edit-current 发来的未处理命令: pickColour:#0000ff` —— 命令收到了、没人处理。
+   （`pickColour:` 踩过这个坑。）
+2. **程序化改 `<input>` 再补发事件时，要先让 DOM 的 value 落地**：父组件
+   `WithColorHelper.setColor` 读的是 `event.currentTarget.value`，而 Svelte 的 prop
+   更新是异步的 —— 直接 `value = x; dispatchEvent(...)` 的话父组件读到的还是**旧值**
+   （表现为"选的新颜色没生效、上的是旧颜色"）。先 `inputRef.value = x` 再 `await tick()`，
+   然后派发 `input`/`change`。
+3. 顺手记一条 HTTP 层的：`POST /_anki/{method}` 要求 `Content-Type: application/binary`，
+   否则一律 403 —— 检查脚本里手写 `fetch` 时容易漏（`saveCustomColours` 的端点断言就这么
+   先失败过一次）。
+
 ---
 
 ## 6. 剩余工作
@@ -1128,7 +1145,12 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `closeEditCurrent` 见 §6.4，`searchInBrowser` 把 `SearchNode` 翻成搜索词再开/复用
   浏览器窗口（§3.7，实现在 `server/api.rs`），`openFieldsDialog` / `openCardsDialog`
   各自开着新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（见 §6.4）。
-  只剩 `saveCustomColours` 卡在原生取色器能力（`rfd` 没有暴露自定义调色板的 API）。
+- **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
+  （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
+  `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；
+  页面侧 `<input type="color">` 的点击改走 `pickColour:` 桥接命令（宿主能力标记
+  `window.__ankiHostColourPicker` 只在 Windows 注入），回调里写回颜色并补发
+  `input`/`change`。**差**：非 Windows 没有等价对话框。见 `tauri/README.md` 的「原生取色器」。
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。**拖入文件**（HTML5 drop）不走剪贴板，见 §6.4 的 4.4。
@@ -1430,6 +1452,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
+| 原生取色器 | `tauri/src/platform/colours.rs`（`ChooseColorW` + 色槽落库）、`tauri/src/platform/mod.rs`（`saveCustomColours` 端点）、`tauri/src/bridge.rs`（`__ankiHostColourPicker` 能力标记）、`tauri/src/server/pycmd.rs`（`pickColour:`，在按窗口分发之前）、`ts/routes/editor/editor-toolbar/ColorPicker.svelte`、`qt/aqt/mediasrv.py:1122-1128`（对照用）；验证：`editor-check.mjs` 的取色器两断言 + `verify-editor.ps1` 的 `ANKI_PICK_COLOUR` 钩子 |
 | 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
 | 自动备份与还原 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`；菜单 文件 → 创建备份 走 `create_now`）、`tauri/src/restore.rs`（文件 → 还原备份：关集合 → `importCollectionPackage` → 重开 → 回牌组列表）、`tauri/src/main.rs`（`backup::spawn`）、`tauri/src/server/pycmd.rs`（`backup` / `restoreBackup`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:441-477,726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` / `ANKI_RESTORE_PATH` 断言 |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |

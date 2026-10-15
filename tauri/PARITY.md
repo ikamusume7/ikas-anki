@@ -88,7 +88,7 @@
 | 6.2 | ✅ | 备份与恢复 | **自动备份**（`tauri/src/backup.rs`：启动时 + 每 5 分钟，`force=False`，目录与文件名与桌面版一致 `<profile>/backups/backup-*.colpkg`，份数由后端瘦身）、**手动「创建备份」入口**（菜单 文件 → 创建备份）、**还原备份**（文件 → 还原备份…：原生文件对话框默认开在备份目录 + 原生确认框 + 宿主关集合 → `importCollectionPackage` → 重开集合 → 回牌组列表）。**差**：没有「打开备份文件夹」这一项 | `qt/aqt/main.py:_backup`、`qt/aqt/main.py:441-477`、`qt/aqt/profiles.py` |
 | 6.3 | ⚠️ | 检查数据库 / 检查媒体 / 空卡片 | **有入口了**：牌组列表的菜单「工具」→ 检查数据库 / 检查媒体 / 空卡片，各自调 RPC 并弹出报告框（对照 `qt/aqt/dbcheck.py` / `mediacheck.py` / `emptycards.py`）。**差**：空卡片报告这里只显示文本（上游会渲染卡片列表并给「删除」按钮）、检查媒体的「删除未使用文件 / 恢复回收站」按钮 | Anki 主窗口 Tools 菜单 |
 | 6.4 | ❌ | 录音格式 | 直接给 WAV；Anki 用外部 `lame` 转 MP3（装了的话） | `qt/aqt/sound.py` 的 `encode_audio` |
-| 6.5 | ❌ | 原生取色器 | `saveCustomColours`（编辑器自定义颜色）没有 | `qt/aqt/mediasrv.py` 的取色器端点 |
+| 6.5 | ✅ | 原生取色器 | **已实现**：Windows 上用系统取色对话框（`ChooseColorW`，与 Qt 在 Windows 上用的是同一个），16 个自定义色槽写进集合配置 `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键，页面用后端的 `getCustomColours` 读）。页面侧 `<input type="color">` 的点击改走 `pickColour:<当前颜色>` 桥接命令（老宿主没有能力标记 `window.__ankiHostColourPicker` 时照旧用自带取色器）。**差**：非 Windows 平台没有等价的原生对话框（Android 上仍是页面自带的） | `qt/aqt/mediasrv.py:1122-1128` |
 | 6.6 | ❌ | **addon（插件）支持** | 完全没有。装了插件的用户会明显觉得不一样 | `qt/aqt/addons.py` |
 | 6.7 | ⚠️ | 文件关联 | **拖入文件已通**：主窗口保留 Tauri 的拖放拦截，`DragDropEvent` → `importing::on_drop`（`main.py:112-137`）；**差**双击 `.apkg` 打开（要 Windows 文件关联，属 M4 打包）与命令行带文件启动 | `qt/aqt/main.py` 的命令行参数处理 |
 | 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（已对齐）；但列宽这类"外壳自己的"配置不互通（见 5.7） | —— |

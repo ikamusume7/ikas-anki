@@ -74,6 +74,26 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
         return None;
     }
 
+    // 与窗口无关的命令：编辑器/浏览器/主窗口里都能点调色板（PARITY 6.5），
+    // 所以放在按窗口分发**之前**。`pickColour:<#rrggbb>` → 原生取色器（或测试钩子）。
+    if let Some(current) = command.strip_prefix("pickColour:") {
+        // 原生对话框是模态阻塞调用，得照 `platform::dispatch` 那套放到阻塞线程池里
+        let current = current.to_string();
+        let pick_state = state.clone();
+        return match tokio::task::spawn_blocking(move || {
+            crate::platform::colours::pick(&pick_state, &current)
+        })
+        .await
+        {
+            Ok(Some(colour)) => Some(colour),
+            Ok(None) => Some(String::new()),
+            Err(_) => {
+                tracing::warn!("取色器任务 panic");
+                Some(String::new())
+            }
+        };
+    }
+
     // 非主窗口只处理与它自己相关的命令（关窗、录音、编辑器），
     // 复习相关的命令一律不接受 —— 见文件头关于 `domDone` 的说明。
     if window != windows::MAIN {

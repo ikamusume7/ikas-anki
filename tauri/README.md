@@ -64,6 +64,7 @@ tauri/
 | `ANKI_LANG` | `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式） |
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见「自动备份」 |
 | `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
+| `ANKI_PICK_COLOUR` | 空 | 测试钩子：设了它，原生取色器不弹对话框、直接当用户选了这个 `#rrggbb`（见「原生取色器」） |
 
 ## 构建步骤
 
@@ -363,6 +364,30 @@ py tauri/tools/make-prefs21-fixture.py show out/prefs21.db tauri-test
 断言 `out/tauri-test/backups/backup-*.colpkg` 存在、>1KB 且是合法 zip（`PK`），以及还原后
 「新的牌组消失、备份里就有的牌组还在」。平时不设 `ANKI_BACKUP_NOW` 时，日志里是
 `备份检查: 现在还不需要备份` —— 说明后端的节流生效。
+
+## 原生取色器
+
+编辑器工具栏的「文字颜色 / 高亮颜色」调色板（PARITY 6.5）。上游的链路：`<input type="color">`
+在 Qt WebEngine 下弹的是 Qt 的取色器（Windows 上就是系统的 `ChooseColor` 对话框），页面在
+`click`/`change` 时调 `saveCustomColours`，mediasrv 把对话框的 16 个自定义色槽写进集合配置
+`customColorPickerPalette`（`qt/aqt/mediasrv.py:1122-1128`），下次页面用后端 RPC
+`getCustomColours` 把调色板画出来。
+
+WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主拿不到它的色槽，所以
+本外壳换成宿主侧的 `ChooseColorW`（与 Qt 在 Windows 上用的是同一个对话框）：
+
+| 组件 | 作用 |
+| --- | --- |
+| `tauri/src/platform/colours.rs` | `pickColour:<当前颜色>` → 弹原生对话框（带 16 个色槽，选完塞进第一位）；平台端点 `saveCustomColours` → 把色槽写进集合配置 |
+| `tauri/src/bridge.rs` | Windows 上注入 `window.__ankiHostColourPicker = true`（宿主能力标记） |
+| `ColorPicker.svelte` | 有这个标记时，点击不弹 Chromium 的取色器，改发 `pickColour:`，回调里写回颜色并补发 `input`/`change` |
+
+读的那半边没有改动：`getCustomColours` 是后端 RPC，一直可用。测试钩子
+`ANKI_PICK_COLOUR` 让 `pickColour` 不弹对话框直接返回该颜色 —— 系统对话框没法自动点，
+`verify-editor.ps1` 用它断言"选的色进了字段"与"色进了自定义调色板"。
+
+**差异**：非 Windows 平台没有等价的原生对话框（Android 上仍是页面自带的取色器）；
+原生对话框没有挂到主窗口上（不是模态子窗口）。
 
 ## 复习界面
 

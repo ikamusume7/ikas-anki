@@ -106,7 +106,14 @@ const SCRIPT: &str = r#"
 "#;
 
 pub fn script(api_key: &str, window_label: &str) -> String {
-    SCRIPT
+    let mut script = SCRIPT
         .replace("__API_KEY__", api_key)
-        .replace("__WINDOW_LABEL__", window_label)
+        .replace("__WINDOW_LABEL__", window_label);
+    // 宿主能力标记：Windows 上 `<input type="color">` 换成宿主侧的原生取色器
+    // （`crate::platform::colours`）。页面据此把点击交给 `pickColour:` 桥接命令；
+    // Qt 那边没有这个标记，照旧用 Qt 自己的取色器。见 PARITY 6.5。
+    if cfg!(windows) {
+        script.push_str("\nwindow.__ankiHostColourPicker = true;\n");
+    }
+    script
 }
