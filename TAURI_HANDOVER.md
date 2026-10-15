@@ -1479,6 +1479,12 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   「放弃输入」确认框里"选放弃 ⇒ 关窗"那一半也只能人工点一次（原生模态框）。
 - **预览的「仅背面」只验证了开关与配置落库**：断言了 `previewBothSides` 打开后切到
   答案面、关闭后回到问题面，但没有断言「问题与答案同时显示」的排版细节。
+- **`recordAudio` 依赖真实录音设备**：`verify-m2.ps1` 的「recordAudio 闭环」在这台机器上
+  会失败（`HTTP 500 找不到可用的录音设备`）—— 是环境问题，不是回归；有麦克风的机器上
+  再跑一遍即可。
+- **取色器的"颜色落到字段上"没有稳定断言**：字段上色走编辑器工具栏的 `surrounder`，
+  只在选区 active 时生效；检查脚本现在只断言宿主钩子 + 调色板落库（见
+  `tauri/README.md` 的「原生取色器」）。
 - 检查脚本跑完会把集合里的 `previewBothSides` 留成 `false`（它先打开再关掉），
   如果之前是打开的，需要手工再打开。
 
