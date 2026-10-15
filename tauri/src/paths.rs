@@ -45,7 +45,17 @@ impl AppPaths {
     /// - **仓库模式**（在源码树内运行）：直接用源目录，便于查看前端产物，
     ///   无需每次先跑打包流程。
     /// - **打包模式**：使用 Tauri 的资源目录。
+    ///
+    /// `ANKI_RESOURCE_DIR` 可以**强制**打包模式并指定资源根目录 —— 用来验证打出来的
+    /// 目录/安装包里资源是否齐全（在源码树里跑 release 二进制时，`repo_root()` 仍然
+    /// 命中，所以光靠默认逻辑没法测打包布局）。见 `tauri/tools/verify-package.ps1`。
     pub fn resolve(app: &AppHandle) -> Result<Self> {
+        if let Ok(root) = std::env::var("ANKI_RESOURCE_DIR") {
+            if !root.is_empty() {
+                tracing::info!("以打包模式运行（ANKI_RESOURCE_DIR）: {root}");
+                return Ok(Self::for_resource_dir(PathBuf::from(root)));
+            }
+        }
         if let Some(root) = repo_root() {
             // 用 `proto/anki` 是否存在作为「这是源码树」的判据
             if root.join("proto/anki").is_dir() {

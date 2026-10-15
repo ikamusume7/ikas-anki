@@ -69,6 +69,8 @@ tauri/
 
 ## 构建步骤
 
+> 打包与分发（可分发目录 / NSIS 安装包 / 签名 / Android）见 [`tauri/PACKAGING.md`](PACKAGING.md)。
+
 ### 1. protoc（版本 31.1）
 
 ```powershell

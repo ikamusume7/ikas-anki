@@ -13,6 +13,17 @@
         }
     },
     "bundle": {
-        "active": false
+        "active": true,
+        "targets": ["nsis"],
+        "icon": ["icons/icon.ico"],
+        "resources": {
+            "../qt/_aqt/data/web/": "web/",
+            "../out/sveltekit/": "sveltekit/"
+        },
+        "windows": {
+            "nsis": {
+                "installMode": "currentUser"
+            }
+        }
     }
 }

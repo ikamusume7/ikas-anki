@@ -241,7 +241,7 @@ try {
     );
     check(
         "子牌组默认可见（父牌组没被折叠）",
-        rows.some((row) => row.text.includes("Child")),
+        rows.some((row) => row.id === String(childId)),
     );
     check(
         "当前牌组有高亮",
@@ -255,7 +255,8 @@ try {
     await page.waitForTimeout(1200);
     check(
         "折叠父牌组后子牌组消失",
-        !(await deckRows()).some((row) => row.text.includes("Child")),
+        // 用 id 判：行文本只有叶子名（`name` 字段），别的残留牌组也叫 "Child"
+        !(await deckRows()).some((row) => row.id === String(childId)),
     );
     await parentRow.locator(".collapse").click();
     await page.waitForTimeout(1200);

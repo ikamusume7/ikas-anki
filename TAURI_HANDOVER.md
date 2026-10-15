@@ -52,7 +52,9 @@
     菜单栏，见 PARITY 1.2）。
   - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、
     启动行为（检查/备份）、Android
-- **M4 未开始**：打包与 Android
+- **M4 进行中**：**Windows 可分发目录**已做并验证（`tauri/tools/package.ps1` +
+  `verify-package.ps1`，`tauri/tauri.conf.json` 的 bundle 配置也写好了）——
+  `tauri/PACKAGING.md` 里写了布局、与 `tauri build` 的差别、签名与 Android 的缺口。
 
 **当前可直接验证**（六个一键脚本，详见 §2.4）：
 
@@ -144,6 +146,7 @@ cargo build
 | `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
 | `ANKI_PICK_COLOUR` | 空 | 测试钩子：原生取色器不弹对话框、直接当用户选了这个 `#rrggbb`（见 `tauri/README.md` 的「原生取色器」） |
 | `ANKI_SYNC_TICK_SECONDS` | 300 | 自动同步定时器的间隔（秒）。测试里设成 2，配合 profile 的 `autoSyncMediaMinutes=0` 就能在几秒内看到一次自动媒体同步 |
+| `ANKI_RESOURCE_DIR` | 空 | 强制**打包模式**并指定资源根目录（`<root>/web` + `<root>/sveltekit`）。在源码树里跑 release 二进制时默认仍走仓库模式，靠它才能验证打包布局，见 `tauri/tools/verify-package.ps1` |
 
 ### 2.4 冒烟测试（已脚本化）
 
@@ -1103,6 +1106,24 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 另外，同步的凭据（`syncKey` / `syncUser` / `customSyncUrl` / `syncMedia`）走 profile 配置，
 **不在集合里** —— 所以「还原备份」不会把它们清掉（与桌面版一致）。
 
+### 5.44 打包模式的四个坑（`package.ps1` / `verify-package.ps1`）
+
+1. **源码树里跑 release 二进制仍然是"仓库模式"**：`paths.rs::resolve` 用
+   `env!("CARGO_MANIFEST_DIR")` 找源码树，编译期就定死了，所以在仓库里根本测不到打包布局。
+   补了 `ANKI_RESOURCE_DIR`（强制打包模式 + 指定资源根）才测得出来。
+2. **`tauri.conf.json` 的 `resources` 是"源 → 目标"的映射**：
+   `{"../qt/_aqt/data/web/": "web/", "../out/sveltekit/": "sveltekit/"}`，与
+   `for_resource_dir()` 的 `<root>/web` + `<root>/sveltekit` 一致；`bundle.active` 原来是
+   `false`，不做安装包的话把它和 `icon` / `targets` 一起写清楚（有网再 `cargo tauri build`）。
+3. **`/imgs/...` 不是内置资源**：`assets.rs::handle_fallback` 只把 `_anki/`、`_app/`、
+   SvelteKit 路由和 `/favicon.ico` 交给 `serve_asset`，其余都当**集合媒体**。想验证
+   "legacy `web/` 在包里"，用 `/favicon.ico`（它映射到 `<web>/imgs/favicon.ico`）。
+4. **新写的验证脚本必须带 `ANKI_OPEN_PATH`**：不带的话「导入文件」会弹出**真的原生文件
+   对话框**并阻塞，整条链路 5 分钟后才以 `fetch failed` 收场（我在 verify-package 里又踩了
+   一次）。另外跑崩留下的临时牌组会让 `decks-check` 的折叠断言认错牌组 —— 现在
+   `decks-check` 的折叠断言改成**按 id 判**，`verify-package.ps1` 也先跑一遍
+   `cleanup-test-decks.mjs`。
+
 ---
 
 ## 6. 剩余工作
@@ -1381,10 +1402,13 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   > 复核方式（改了宿主要重编、改了页面要重建产物）：`cd tauri; cargo build` →
   > `corepack yarn build`（页面要在 `out/sveltekit`）→
   > `pwsh -File tauri/tools/verify-browser.ps1`。
-- **M4**：Windows 打包（**废弃整套 Briefcase 流程**，改 `tauri build`；
-  签名对象从 `Anki.exe` 换成 Tauri 产物）+ Android（`tauri android init/build`，
-  需处理 `INTERNET` 权限、cleartext、`getFilesDir()`、NDK 交叉编译）。
-  详见 `TAURI_MIGRATION_PLAN.md` §8。
+- **M4**：Windows 打包 —— **可分发目录已做并验证**：`tauri/tools/package.ps1` 组装
+  `anki-tauri.exe + web/ + sveltekit/`，`tauri/tools/verify-package.ps1` 用
+  `ANKI_RESOURCE_DIR` 强制打包模式（源码树里默认走仓库模式，见 §5.44）跑 release 产物，
+  断言页面/资源都能从包里取到并跑完整 `decks-check`。`tauri/tauri.conf.json` 的
+  `bundle`（NSIS + `resources` 映射 + 图标）也写好了，有网时 `cargo tauri build` 即可。
+  **差**：真正生成 NSIS/MSI 需要联网下载 Tauri CLI 与 WiX/NSIS；代码签名未做；
+  Android（`tauri android init/build`，需要 SDK/NDK）未做。详见 `tauri/PACKAGING.md`。
 
 ### 6.5 工程化
 
@@ -1487,7 +1511,8 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
-| 同步（登录 / 状态 / 同步入口） | `ts/routes/decks/+page.svelte`（工具栏同步按钮 + 登录/全量同步弹框 + `syncLogin`/`syncStatus`/`syncCollection`/`fullUploadOrDownload`）、`@tslib/profile`（`syncKey` 等 profile 配置键）、`qt/aqt/sync.py` + `qt/aqt/profiles.py:660-725` + `qt/aqt/toolbar.py:410-419`（对照用）；验证：`decks-check.mjs` 5i（假同步服务器） |
+| 打包（可分发目录） | `tauri/tools/package.ps1`、`tauri/tools/verify-package.ps1`、`tauri/tauri.conf.json`（bundle 配置）、`tauri/src/paths.rs`（`ANKI_RESOURCE_DIR` + `for_resource_dir`）、`tauri/PACKAGING.md`；验证：`verify-package.ps1` 跑 release 产物 + 完整 `decks-check` |
+| 同步（登录 / 状态 / 同步入口） | `ts/routes/decks/+page.svelte`（工具栏同步按钮 + 登录/全量同步弹框 + `syncLogin`/`syncStatus`/`syncCollection`/`fullUploadOrDownload`）、`tauri/src/autosync.rs`（启动一次 + 媒体定时器）、`@tslib/profile`（`syncKey` 等 profile 配置键）、`qt/aqt/sync.py` + `qt/aqt/profiles.py:660-725` + `qt/aqt/toolbar.py:410-419`（对照用）；验证：`decks-check.mjs` 5i/5j（假同步服务器） |
 | 原生取色器 | `tauri/src/platform/colours.rs`（`ChooseColorW` + 色槽落库）、`tauri/src/platform/mod.rs`（`saveCustomColours` 端点）、`tauri/src/bridge.rs`（`__ankiHostColourPicker` 能力标记）、`tauri/src/server/pycmd.rs`（`pickColour:`，在按窗口分发之前）、`ts/routes/editor/editor-toolbar/ColorPicker.svelte`、`qt/aqt/mediasrv.py:1122-1128`（对照用）；验证：`editor-check.mjs` 的取色器两断言 + `verify-editor.ps1` 的 `ANKI_PICK_COLOUR` 钩子 |
 | 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
 | 自动备份与还原 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`；菜单 文件 → 创建备份 走 `create_now`）、`tauri/src/restore.rs`（文件 → 还原备份：关集合 → `importCollectionPackage` → 重开 → 回牌组列表）、`tauri/src/main.rs`（`backup::spawn`）、`tauri/src/server/pycmd.rs`（`backup` / `restoreBackup`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:441-477,726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` / `ANKI_RESTORE_PATH` 断言 |
@@ -1517,11 +1542,11 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
    5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
    4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**菜单栏剩下的项**（Switch Profile / 全屏缩放 / 学习牌组 /
-   创建筛选牌组 / 检查更新 / add-ons / About —— 有的要窗口能力，有的要新界面）、
-   **6.2 的"还原备份 / 打开备份文件夹"**、**6.5 原生取色器**，**5.5–5.9 的几条
-   浏览器小差异**（侧栏分区、加标签补全、列设置存储、导出到 profile 目录的拦截），
-   以及 **6.x 的系统集成**（同步 / 备份 / addon —— 硬骨头）。
+   下一步按清单走：**打包与 Android**（M4：可分发目录已做并验证，见
+   `tauri/PACKAGING.md`；剩下的 NSIS/MSI 生成要联网，签名与 Android 未做）、
+   **同步剩下的几项**（冲突的完整处理、复习界面的同步链接、进度条、关闭时同步）、
+   **菜单栏 / 浏览器的小差异**（Switch Profile / 检查更新 / add-ons、侧栏分区、
+   加标签补全、列设置存储）。
    浏览器的三块大功能（管理笔记类型 / CSV·纯文本导出 / 查找重复）已经全部补完。
    「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），上游约 980 行，
    是模板/样式/预览最大的一块（§6.4 已作为「已完成」登记）。

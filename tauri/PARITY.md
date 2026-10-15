@@ -99,8 +99,8 @@
 
 | # | 状态 | 项 | 差距 |
 | --- | --- | --- | --- |
-| 7.1 | ❌ | Windows 安装包 | `bundle.active = false`，未验证真实安装包与签名 |
-| 7.2 | ❌ | Android | `tauri android init/build` 未做；录音（`cpal`/oboe vs `MediaRecorder`）、SAF、路径（`getFilesDir()`）都要过 |
+| 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做并验证**：`tauri/tools/package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致），`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`。`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标）也写好了。**差**：真正生成 NSIS/MSI 需要联网下载 Tauri CLI 与 WiX/NSIS（本环境没有）；代码签名未做。详见 `tauri/PACKAGING.md` |
+| 7.2 | ❌ | Android | `tauri android init/build` 未做；录音（`cpal`/oboe vs `MediaRecorder`）、SAF、路径（`getFilesDir()`）都要过；需要 Android SDK/NDK 与 Gradle 依赖下载 |
 | 7.3 | ❌ | 构建流程 | 静态资源仍靠手工命令，未接 `just` |
 | 7.4 | ❌ | `capabilities/` 与图标 | 目录缺失、图标是 favicon 副本 |
 
