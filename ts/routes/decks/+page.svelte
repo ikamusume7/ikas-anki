@@ -606,6 +606,15 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                         },
                     },
                     {
+                        // 还原备份（`onOpenBackup`）：选 .colpkg → 确认 → 宿主关集合/导入/重开
+                        label: translateRaw("qt-accel-load-backup"),
+                        action: "restoreBackup",
+                        run: () => {
+                            exportStatus = translateRaw("qt-accel-load-backup");
+                            bridgeCommand("restoreBackup");
+                        },
+                    },
+                    {
                         label: qtAccel("qt-accel-exit"),
                         action: "quit",
                         run: () => bridgeCommand("quit"),

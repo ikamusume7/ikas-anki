@@ -63,6 +63,7 @@ tauri/
 | `ANKI_API_KEY` | 随机生成 | 固定本机 API 密钥，仅用于调试与 e2e |
 | `ANKI_LANG` | `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式） |
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见「自动备份」 |
+| `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
 
 ## 构建步骤
 
@@ -354,11 +355,13 @@ py tauri/tools/make-prefs21-fixture.py show out/prefs21.db tauri-test
 | **每 5 分钟**一次（`main.py:1543-1549` 的定时器） | 同左（`backup::spawn` 起一个后台线程，5 分钟一轮） |
 | 是否真的落盘交给后端（`BackupLimits`：默认 **30 分钟**间隔 + 集合自上次备份后有改动，`rslib/src/collection/backup.rs:28-48`） | 同左（两个触发点都是 `force=False`，所以实际频率与 Qt 一致） |
 | 备份目录 `<profile>/backups`，文件名 `backup-<日期>-<时间>.colpkg`，份数由 `BackupLimits` 自动瘦身 | 同左（目录、文件名、瘦身都由后端负责） |
-| 还原：Tools → Open Backup（`main.py:441-477`） | **没做**（见 PARITY 6.2） |
+| 还原：Tools → Open Backup（`main.py:441-477`） | **已实现**：文件 → 还原备份… → 原生文件对话框（默认开在 `<profile>/backups`）→ 原生确认框 → 宿主 **关集合 → `importCollectionPackage` → 重开集合** → 关掉其它窗口、主窗口回牌组列表。`import_collection_package` 要求集合是**关着**的（`rslib/src/backend/import_export.rs:28` 的 `lock_closed_collection`），顺序不能反 |
 
 测试钩子：`ANKI_BACKUP_NOW=1` 在启动时**强制**备份一次并等它写完（默认间隔 30 分钟，
-脚本等不起）；`verify-decks.ps1` 用它断言 `out/tauri-test/backups/backup-*.colpkg`
-存在、>1KB 且是合法 zip（`PK`）。平时不设这个变量时，日志里是
+脚本等不起）；`ANKI_RESTORE_PATH`（路径，或 `newest` = 备份目录里最新的那份）让「文件 →
+还原备份」跳过原生文件对话框与确认框 —— 两者都自动点不了。`verify-decks.ps1` 用这两个钩子
+断言 `out/tauri-test/backups/backup-*.colpkg` 存在、>1KB 且是合法 zip（`PK`），以及还原后
+「新的牌组消失、备份里就有的牌组还在」。平时不设 `ANKI_BACKUP_NOW` 时，日志里是
 `备份检查: 现在还不需要备份` —— 说明后端的节流生效。
 
 ## 复习界面
@@ -712,16 +715,18 @@ Qt 的主窗口菜单栏是原生的、在所有状态下都在；本外壳把�
 
 | 菜单 | 项 | 实现 |
 | --- | --- | --- |
-| 文件 | 导入… / 导出…(Ctrl+E) / 创建备份 / 退出 | `import` / 导出对话框（范围=当前牌组）/ `backup` / `quit` 四条桥接命令（后两条是宿主侧：备份目录只有宿主知道） |
+| 文件 | 导入… / 导出…(Ctrl+E) / 创建备份 / 还原备份… / 退出 | `import` / 导出对话框（范围=当前牌组）/ `backup` / `restoreBackup` / `quit` 五条桥接命令（后三条是宿主侧：备份目录、关集合导入重开、退出都只有宿主能做） |
 | 编辑 | 撤销(Ctrl+Z) / 重做(Ctrl+Shift+Z) | `undo` / `redo` RPC + 刷新 |
 | 工具 | 学习牌组 / 创建筛选牌组(F) / 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项(Ctrl+P) | 学习牌组 = 一个「筛选框 + 完整牌组名列表 + 添加 / 学习」弹框（上游 `aqt/studydeck.py`）：确定后设为当前牌组并进概览，`添加` 新建的牌组也直接进概览；创建筛选牌组 = `aqt/filtered_deck.py` 的等价物（名字 / 搜索 / 顺序 / 限量 / 重排 / 即使为空也创建 → `addOrUpdateFilteredDeck`，顺序标签来自 `filteredDeckOrderLabels`）；三个 `check*` RPC 的结果弹框（`{@html}` 渲染后端给的报告）+ `notetypes` / `preferences` 桥接命令 |
 | 视图 | 全屏(F11) / 放大(Ctrl++) / 缩小(Ctrl+-) / 重置缩放(Ctrl+0) | `fullscreen` / `zoom:in|out|reset` 桥接命令 → 宿主 `set_fullscreen` / `set_zoom`（±0.1，钳在 0.3–3；Qt 也不持久化缩放） |
 | 帮助 | 用户手册 / 支持 Anki / 关于 | `helpPageLink(INDEX)` → `openLink`；捐赠链接 = `aqt.appDonate`；关于 = `about` 桥接命令返回 JSON（Anki 版本来自 `anki::version`，外壳版本是 `CARGO_PKG_VERSION`），页面渲染成弹框 |
 
 **差异**：菜单栏只在牌组列表页（复习界面是 legacy 页，那里仍是顶部工具栏，功能重合）；
-缺 Switch Profile、检查更新、add-ons；「关于」比上游少了 Python / Qt / Chromium 版本与
-贡献者名单；筛选牌组对话框没有第二个筛选条件、预览间隔（again/hard/good 秒数）、
-「搜索」按钮（浏览器的搜索编辑器）与 FSRS 专用排序（可提取性升/降序）。
+还原备份用的是原生文件对话框 + 原生确认框（上游同款），还原后会关掉其它窗口；
+缺 Switch Profile、检查更新、add-ons、「打开备份文件夹」；「关于」比上游少了
+Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第二个筛选条件、预览间隔
+（again/hard/good 秒数）、「搜索」按钮（浏览器的搜索编辑器）与 FSRS 专用排序
+（可提取性升/降序）。
 
 ### 与 Qt 的差异（有意为之）
 

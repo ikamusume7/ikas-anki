@@ -6,6 +6,7 @@
 //! 对照 mediasrv 的 `open_file_picker` / `ask_user` / `show_message_box` /
 //! `open_link`（原实现基于 Qt）。
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use anki_proto::frontend::AskUserRequest;
@@ -40,10 +41,27 @@ pub fn open_file_picker(body: &[u8]) -> HandlerResult {
 /// `openFilePickerForImageOcclusion`），`occlusion-check.mjs` 要能自动走完；
 /// `import-check.mjs` 用它给"导入文件"按钮喂一个 `.apkg`。
 pub fn pick_file(title: &str, extensions: &[String], filter_description: &str) -> Option<PathBuf> {
-    if let Ok(hook) = std::env::var("ANKI_OPEN_PATH") {
-        if !hook.is_empty() {
-            tracing::info!("ANKI_OPEN_PATH 生效，跳过打开对话框: {hook}");
-            return Some(PathBuf::from(hook));
+    pick_file_in(title, extensions, filter_description, None)
+}
+
+/// 同上，但可以指定**起始目录**（上游 `getFile(dir=...)`）。
+///
+/// 「文件 → 还原备份」用它把对话框开在 `<profile>/backups`
+/// （`main.py:441-467` 的 `dir=self.pm.backupFolder()`）。注意这个变体**不**看
+/// `ANKI_OPEN_PATH`：还原备份有自己的钩子（`ANKI_RESTORE_PATH`），两者指向的文件不同，
+/// 共用会因为验证脚本里那两个用途打架。
+pub fn pick_file_in(
+    title: &str,
+    extensions: &[String],
+    filter_description: &str,
+    directory: Option<&Path>,
+) -> Option<PathBuf> {
+    if directory.is_none() {
+        if let Ok(hook) = std::env::var("ANKI_OPEN_PATH") {
+            if !hook.is_empty() {
+                tracing::info!("ANKI_OPEN_PATH 生效，跳过打开对话框: {hook}");
+                return Some(PathBuf::from(hook));
+            }
         }
     }
 
@@ -59,6 +77,9 @@ pub fn pick_file(title: &str, extensions: &[String], filter_description: &str) -
             filter_description
         };
         dialog = dialog.add_filter(label, &extensions);
+    }
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
     }
 
     dialog.pick_file()

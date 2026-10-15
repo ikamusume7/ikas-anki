@@ -64,6 +64,9 @@ Get-ChildItem (Join-Path $root "$OutDir/*") -File -Include "*.apkg", "*.colpkg",
 # 默认要等 30 分钟的间隔，脚本等不起。备份目录与桌面版一致：`<profile>/backups`
 # （这里就是 out/tauri-test/backups）。
 $env:ANKI_BACKUP_NOW = "1"
+# 「文件 → 还原备份」：原生文件对话框与确认框都没法自动点，钩子设成 `newest`
+# （= 备份目录里最新的 backup-*.colpkg，也就是 5e 里点「创建备份」生成的那份）
+$env:ANKI_RESTORE_PATH = "newest"
 $backupDir = Join-Path $root "out/tauri-test/backups"
 if (Test-Path $backupDir) {
     Get-ChildItem (Join-Path $backupDir "backup-*.colpkg") -ErrorAction SilentlyContinue |
@@ -188,11 +191,19 @@ try {
 
     # 视图菜单：宿主真的改了窗口状态（decks-check 5e 点了 3 次缩放 + 按了 2 次 F11）
     $zoomCount = Count-Log "缩放: "
-    $fullScreenCount = Count-Log "全屏: "
-    if ($zoomCount -ge 3 -and $fullScreenCount -ge 2) {
+    $fullScreenCount = Count-Log "全屏: "    if ($zoomCount -ge 3 -and $fullScreenCount -ge 2) {
         Write-Host "视图菜单生效（缩放 $zoomCount 次、全屏 $fullScreenCount 次）" -ForegroundColor Green
     } else {
         Write-Host "视图菜单没生效（缩放 $zoomCount 次、全屏 $fullScreenCount 次）" -ForegroundColor Red
+        $passed = $false
+    }
+
+    # 文件 → 还原备份：宿主流程是「关集合 → importCollectionPackage → 重开」
+    $restoreLog = Read-Log $logPath
+    if ($restoreLog -match "还原备份: " -and $restoreLog -match "备份已还原，集合已重新打开") {
+        Write-Host "还原备份走了宿主流程（关集合 → 导入 → 重开）" -ForegroundColor Green
+    } else {
+        Write-Host "没有看到还原备份的宿主日志（见 $logPath）" -ForegroundColor Red
         $passed = $false
     }
 

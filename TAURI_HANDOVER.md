@@ -141,6 +141,7 @@ cargo build
 | `ANKI_API_KEY` | 随机 | 固定 API 密钥 |
 | `ANKI_LANG` | `en-US` | 界面语言，`zh_CN` / `zh-CN` 均可 |
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见 `tauri/README.md` 的「自动备份」 |
+| `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
 
 ### 2.4 冒烟测试（已脚本化）
 
@@ -1046,6 +1047,22 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 （`[...nodes.values()].map(...)`），要么把 `nodes` 也写进语句里。检查脚本里遇到
 「先空后有的列表」，也要等条目出现（`waitForSelector("[data-...]")`）而不是只等容器。
 
+### 5.41 `import_collection_package` 要求集合**关着**（还原备份的顺序）
+
+`rslib/src/backend/import_export.rs:28` 第一行就是 `let _guard = self.lock_closed_collection()?;`
+—— 集合开着时这个 RPC 直接报错。所以「文件 → 还原备份」必须是
+`closeCollection` → `importCollectionPackage` → `openCollection`（上游
+`main.py:457-475` 的 `unloadProfile()` → 导入 → `loadProfile()` 也是这个顺序）。
+注意两点：
+
+1. 不管导入成没成，都要把集合**开回来**（`AppBackend::open_collection(&profile)`），
+   否则外壳就废了 —— `crate::restore::restore_from` 把导入结果与重开结果分开处理；
+2. 导入的请求里带的是路径（`backup_path` / `col_path` / `media_folder` / `media_db`），
+   不是"当前集合"的句柄，所以宿主得自己把 profile 的三条路径给全。
+
+测试钩子 `ANKI_RESTORE_PATH`（路径或 `newest`）跳过原生文件对话框与确认框 ——
+这两步在验证脚本里都点不了；`newest` 让脚本能还原"5e 里刚点过『创建备份』生成的那一份"。
+
 ---
 
 ## 6. 剩余工作
@@ -1115,14 +1132,16 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。**拖入文件**（HTML5 drop）不走剪贴板，见 §6.4 的 4.4。
-- **自动备份**（1.5 与 6.2 的一半）—— **已实现**：`tauri/src/backup.rs`，启动时 +
-  每 5 分钟各 `createBackup(force=False)`，是否落盘交给后端的 `BackupLimits`
-  （默认 30 分钟 + 集合自上次备份后有改动）；目录 `<profile>/backups`、文件名
-  `backup-<日期>-<时间>.colpkg` 都与桌面版一致。**与 Qt 的差异**：Qt 是"关闭时 + 每 5
-  分钟"，外壳换成"启动时 + 每 5 分钟"（外壳没有优雅关闭的保证）。验证：
-  `verify-decks.ps1` 用测试钩子 `ANKI_BACKUP_NOW=1` 断言产物存在、>1KB 且是合法 zip。
-  **差**：还原备份（Tools → Open Backup）、打开备份文件夹、手动「创建备份」入口
-  （要等主窗口菜单栏）。
+- **自动备份与还原**（1.5 与 6.2）—— **已实现**：`tauri/src/backup.rs` 负责自动备份
+  （启动时 + 每 5 分钟各 `createBackup(force=False)`，是否落盘交给后端的 `BackupLimits`；
+  目录 `<profile>/backups`、文件名 `backup-<日期>-<时间>.colpkg` 都与桌面版一致）。
+  **与 Qt 的差异**：Qt 是"关闭时 + 每 5 分钟"，外壳换成"启动时 + 每 5 分钟"（外壳没有
+  优雅关闭的保证）。`tauri/src/restore.rs` 负责**还原备份**（菜单 文件 → 还原备份…，
+  对照 `main.py:441-477`）：原生文件对话框（默认开在备份目录）+ 原生确认框 → 宿主
+  **关集合 → `importCollectionPackage` → 重开集合** → 关掉其它窗口、主窗口回牌组列表
+  （顺序不能反，见 §5.41）。验证：`verify-decks.ps1` 用 `ANKI_BACKUP_NOW` 断言备份产物，
+  用 `ANKI_RESTORE_PATH=newest` 断言还原后"新牌组消失、备份里就有的牌组还在"。
+  **差**：没有「打开备份文件夹」这一项。
 - ~~`getConfigJson` / `setConfigJson`~~ —— 这两个由 rslib 的 `ConfigService` 直接
   服务，实测可用（`getAllConfig` → 200），从来不是缺口。
 
@@ -1412,7 +1431,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
 | 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
-| 自动备份 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`）、`tauri/src/main.rs`（`backup::spawn`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` 断言 |
+| 自动备份与还原 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`；菜单 文件 → 创建备份 走 `create_now`）、`tauri/src/restore.rs`（文件 → 还原备份：关集合 → `importCollectionPackage` → 重开 → 回牌组列表）、`tauri/src/main.rs`（`backup::spawn`）、`tauri/src/server/pycmd.rs`（`backup` / `restoreBackup`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:441-477,726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` / `ANKI_RESTORE_PATH` 断言 |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
 | 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
 | 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |

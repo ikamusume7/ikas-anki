@@ -23,6 +23,7 @@ mod platform;
 mod preview;
 mod reviewer;
 mod reviewer_menu;
+mod restore;
 mod server;
 mod state;
 mod windows;

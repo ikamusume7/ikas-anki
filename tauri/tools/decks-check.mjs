@@ -837,6 +837,26 @@ try {
     await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
     check("已清理筛选牌组与夹具卡片", !(await deckNames()).includes(filteredName));
 
+    // 5h. 文件 → 还原备份（`main.py:441-477`）####################################
+    // verify-decks 用 `ANKI_RESTORE_PATH=newest`：还原「备份目录里最新的 .colpkg」——
+    // 那一份是 5e 里点「创建备份」生成的（在 parent/child 建好之后、这一节之前），
+    // 所以还原后 parent/child 还在，而这一节新建的标记牌组应该消失（集合被整份替换）
+    const restoreMarker = `TauriRestore${stamp}`;
+    await addDeck(restoreMarker);
+    check("还原前新建了标记牌组", (await deckNames()).includes(restoreMarker));
+    await clickMenu(0, "restoreBackup");
+    // 宿主：关集合 → 导入备份 → 重开 → 回牌组列表（页面会被重新导航一次）
+    await page.waitForTimeout(6000);
+    const namesAfterRestore = await deckNames();
+    check(
+        "还原后标记牌组消失（集合被备份替换）",
+        !namesAfterRestore.includes(restoreMarker),
+        namesAfterRestore.filter((name) => name.includes("Tauri")).join(" / ") || "（只剩测试牌组）",
+    );
+    check("还原后备份里的牌组还在", namesAfterRestore.includes(parentName));
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
     await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });

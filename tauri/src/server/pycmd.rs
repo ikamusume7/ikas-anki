@@ -212,6 +212,13 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             state.app.exit(0);
             None
         }
+        // 文件 → 还原备份（`main.py:441-477`）：选 .colpkg → 确认 → 关集合 → 导入 → 重开
+        "restoreBackup" => {
+            if let Err(error) = crate::restore::prompt_and_restore(state).await {
+                tracing::warn!("还原备份失败: {error:#}");
+            }
+            None
+        }
         // 视图菜单：全屏（`main.py:1484-1495`）与缩放（`main.py:1462-1470`，±0.1 / 重置 1.0）。
         // 切的是**发命令的那个窗口**（Qt 切的是当前活动窗口）。
         "fullscreen" => {
