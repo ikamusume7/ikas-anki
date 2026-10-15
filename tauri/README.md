@@ -389,6 +389,25 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 **差异**：非 Windows 平台没有等价的原生对话框（Android 上仍是页面自带的取色器）；
 原生对话框没有挂到主窗口上（不是模态子窗口）。
 
+## 同步
+
+工具栏最右的「同步」（快捷键 `Y`，对照 `toolbar.py:410-419` 的同步链接）：
+
+| 步骤 | 实现 |
+| --- | --- |
+| 未登录 → 登录框 | 邮箱 + 密码 + 「自定义同步服务器」（对照 `aqt/sync.py` 的 `SyncLoginDialog`）；`syncLogin` → `syncKey`/`syncUser` 写进 **profile 配置**（`prefs21.db`，键名与 `qt/aqt/profiles.py:660-725` 一致） |
+| 已登录 → 同步 | `syncStatus` → `syncCollection`（`syncMedia` 取自 profile 的 `syncMedia`，默认 true）；服务端要求完整同步时弹「上传 / 下载」二选一 → `fullUploadOrDownload` |
+| 状态显示 | 按钮的 `data-sync-state`（off / idle / syncing / error）+ 列表下方的 `#sync-status` 文案（后端错误原文；个别情况下后端不带消息，页面上就只剩一个 `Error:` —— 已知小瑕疵） |
+
+**验证**（`decks-check.mjs` 5i）：检查脚本自己起一个**假同步服务器**（只实现
+`/sync/hostKey` 与 `/sync/meta`；同步协议的响应是 zstd 压的 JSON + `anki-original-size`
+头），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 → 再点同步」：
+断言登录请求打到 `/sync/hostKey`、`syncKey`/`syncUser` 落进 profile、按钮不再是未登录态、
+状态请求打到 `/sync/meta`、页面给出提示；收尾清掉凭据。
+
+**差**：媒体同步（`syncMedia`/`MediaSyncStatus`）、同步进度与取消、自动同步、
+「AnkiWeb 冲突」的完整处理、复习界面工具栏上的同步链接（那里只有四个链接）。
+
 ## 复习界面
 
 复习屏走的是 **legacy 页面机制**（对照 Qt 的 `stdHtml` + `set_page_html`）：
@@ -768,8 +787,8 @@ Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第
 | 拖拽排序（同一层内调顺序） | 其实没有：Qt 也只支持改父级，同层顺序由后端按名字排 | 同左 |
 | 默认牌组删除保护 | 默认牌组也能删（删了会重建） | **默认牌组的「删除」被禁用** |
 | 菜单栏 | 原生 `QMenuBar`，所有状态都在（File/Edit/Tools/Help） | 画在牌组列表页顶部（见上面「菜单栏」一节）：文件/编辑/工具/帮助，能实现的项都接了；复习界面没有它（那里只有顶部工具栏） |
-| 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮都没有 |
-| 同步按钮 | 有（带同步状态/旋转图标） | 没有（本外壳未实现同步） |
+| 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮只在牌组列表页 |
+| 同步按钮 | 有（带同步状态/旋转图标，`toolbar.py:410-419`） | 有了：工具栏最右的「同步」（`Y` 键）——未登录时弹登录框，已登录时跑同步；`data-sync-state` 有 off/idle/syncing/error 四态，见「同步」 |
 | 「今日学习」一行 | `statistics-studied-today` | 同一个 key（内容是后端算好的，按 HTML 渲染） |
 
 ### 已验证
@@ -1531,7 +1550,7 @@ browserSearch：图表 → 浏览器搜索
     「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏；概览面板还有描述
     （可编辑 + markdown）、选项、自定义学习 / 筛选牌组的重建·清空、取消埋藏，牌组行可
     拖拽改父级，见「牌组列表」。
-    **剩下的**：同步按钮、复习界面的工具栏、概览计数的「埋藏差值」那一列、菜单栏里
+    **剩下的**：复习界面的工具栏、概览计数的「埋藏差值」那一列、菜单栏里
     Switch Profile / 全屏缩放 / 学习牌组 / 创建筛选牌组 / 检查更新 / add-ons / About
     这几项（RPC 或窗口能力还不具备）。
   - ~~`edit`~~ —— **已实现**：打开「编辑当前卡片」窗口，见「编辑器」。

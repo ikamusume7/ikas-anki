@@ -46,6 +46,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         RenameDeckRequest,
     } from "@generated/anki/decks_pb";
     import { Empty } from "@generated/anki/generic_pb";
+    import {
+        SyncAuth,
+        SyncCollectionResponse_ChangesRequired,
+        SyncStatusResponse_Required,
+    } from "@generated/anki/sync_pb";
     import { HelpPageLinkRequest_HelpPage } from "@generated/anki/links_pb";
     import { UnburyDeckRequest_Mode } from "@generated/anki/scheduler_pb";
     import * as tr from "@generated/ftl";
@@ -59,6 +64,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         deckTree,
         emptyFilteredDeck,
         filteredDeckOrderLabels,
+        fullUploadOrDownload,
         getCurrentDeck,
         getDeck,
         getDeckNames,
@@ -75,12 +81,16 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         setCurrentDeck,
         setDeckCollapsed,
         studiedToday,
+        syncCollection,
+        syncLogin,
+        syncStatus,
         unburyDeck,
         undo,
         updateDeck,
     } from "@generated/backend";
     import { bridgeCommand } from "@tslib/bridgecommand";
     import { ModuleName, setupI18n } from "@tslib/i18n";
+    import { getProfileConfig, setProfileConfig } from "@tslib/profile";
     import { onMount } from "svelte";
 
     import Modal from "$lib/components/Modal.svelte";
@@ -148,6 +158,14 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let filteredResched = false;
     /** 「即使为空也创建」勾选（上游 `decks_create_even_if_empty`） */
     let filteredAllowEmpty = false;
+    /** 同步（PARITY 6.1）：登录弹框、状态机、全量同步的二选一 */
+    let syncModal: Modal;
+    let syncFullModal: Modal;
+    let syncUser = "";
+    let syncPassword = "";
+    let syncEndpoint = "";
+    let syncState: "off" | "idle" | "syncing" | "error" = "off";
+    let syncMessage = "";
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -425,6 +443,135 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     /** 视图 → 放大 / 缩小 / 重置：宿主侧 `set_zoom`（`main.py:1462-1470`）。 */
     function zoomView(mode: "in" | "out" | "reset"): void {
         bridgeCommand(`zoom:${mode}`);
+    }
+
+    // 同步（PARITY 6.1）#########################################################
+
+    /**
+     * 凭据存在 **profile 配置**里，与桌面版同一批键（`qt/aqt/profiles.py:660-725`）：
+     * `syncKey`（host key，未登录时不存在）、`syncUser`、`customSyncUrl`、`syncMedia`。
+     * 外壳的 profile 配置后端就是桌面版的 `prefs21.db`，所以两边看到的是同一份凭据。
+     */
+    async function loadSyncState(): Promise<void> {
+        syncState = (await getProfileConfig("syncKey")) ? "idle" : "off";
+    }
+
+    async function currentSyncAuth(): Promise<SyncAuth | null> {
+        const hkey: string | null = await getProfileConfig("syncKey");
+        if (!hkey) {
+            return null;
+        }
+        const endpoint: string | null = await getProfileConfig("customSyncUrl");
+        return new SyncAuth({ hkey, endpoint: endpoint || undefined });
+    }
+
+    /** 工具栏「同步」/ `Y`：没登录先弹登录框，否则直接同步（`main.py:on_sync_button_clicked`）。 */
+    function askSync(): void {
+        void (async () => {
+            if (syncState === "syncing") {
+                return;
+            }
+            const auth = await currentSyncAuth();
+            if (!auth) {
+                await openSyncLogin();
+                return;
+            }
+            await runSync(auth);
+        })();
+    }
+
+    /** 登录弹框（对照 `aqt/sync.py` 的 `SyncLoginDialog`：邮箱 + 密码 + 自定义服务器）。 */
+    async function openSyncLogin(): Promise<void> {
+        syncUser = (await getProfileConfig("syncUser")) ?? "";
+        syncEndpoint = (await getProfileConfig("customSyncUrl")) ?? "";
+        syncPassword = "";
+        syncMessage = "";
+        syncModal.show();
+    }
+
+    /** 登录：`syncLogin` → `syncKey` / `syncUser` 落进 profile（`profiles.py:660-663`）。 */
+    async function doSyncLogin(): Promise<void> {
+        syncState = "syncing";
+        syncMessage = "";
+        try {
+            const auth = await syncLogin({
+                username: syncUser,
+                password: syncPassword,
+                endpoint: syncEndpoint || undefined,
+            });
+            await setProfileConfig("syncKey", auth.hkey);
+            await setProfileConfig("syncUser", syncUser);
+            if (syncEndpoint) {
+                await setProfileConfig("customSyncUrl", syncEndpoint);
+            }
+            syncPassword = "";
+            syncModal.hide();
+            await runSync(
+                new SyncAuth({
+                    hkey: auth.hkey,
+                    endpoint: auth.endpoint || syncEndpoint || undefined,
+                }),
+            );
+        } catch (problem) {
+            syncState = "error";
+            syncMessage = String(problem);
+        }
+    }
+
+    /** 同步：`syncStatus` → `syncCollection`（`aqt/sync.py` 的 `sync()`）。 */
+    async function runSync(auth: SyncAuth): Promise<void> {
+        syncState = "syncing";
+        syncMessage = "";
+        try {
+            const status = await syncStatus(auth);
+            if (status.required !== SyncStatusResponse_Required.NO_CHANGES) {
+                // 需要完整同步（上传或下载）：上游会弹一个二选一对话框
+                syncState = "idle";
+                syncMessage = tr.syncConflictExplanation();
+                syncFullModal.show();
+                return;
+            }
+            const syncMedia: boolean = (await getProfileConfig("syncMedia")) ?? true;
+            const result = await syncCollection({ auth, syncMedia });
+            if (
+                result.required === SyncCollectionResponse_ChangesRequired.FULL_SYNC ||
+                result.required === SyncCollectionResponse_ChangesRequired.FULL_UPLOAD ||
+                result.required === SyncCollectionResponse_ChangesRequired.FULL_DOWNLOAD
+            ) {
+                syncState = "idle";
+                syncMessage = result.serverMessage || tr.syncConflictExplanation();
+                syncFullModal.show();
+                return;
+            }
+            syncState = "idle";
+            syncMessage = result.serverMessage || tr.syncMediaComplete();
+        } catch (problem) {
+            // 同步失败时后端有时给不带消息的错误（例如同步协议层的问题），
+            // 这时用上游那句"AnkiWeb 出了问题"兜底
+            const text = String(problem).replace(/[\u200b-\u200d\ufeff]/g, "").trim();
+            const bare = text.length === 0 || /^Error[:\s]*$/.test(text);
+            syncState = "error";
+            syncMessage = bare ? tr.syncServerError() : text;
+        }
+    }
+
+    /** 全量同步（上传 / 下载），对照 `sync.py` 的 `full_sync()`。 */
+    async function startFullSync(upload: boolean): Promise<void> {
+        const auth = await currentSyncAuth();
+        if (!auth) {
+            return;
+        }
+        syncFullModal.hide();
+        syncState = "syncing";
+        syncMessage = "";
+        try {
+            await fullUploadOrDownload({ auth, upload });
+            syncState = "idle";
+            syncMessage = upload ? tr.syncUploadingToAnkiweb() : tr.syncDownloadingFromAnkiweb();
+        } catch (problem) {
+            syncState = "error";
+            syncMessage = String(problem);
+        }
     }
 
     // 工具 → 学习牌组 ##########################################################
@@ -1031,6 +1178,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             void askFilteredDeck();
             return;
         }
+        // 工具栏「同步」的快捷键 `Y`（`toolbar.py:412`）
+        if (event.key.toLowerCase() === "y" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            askSync();
+            return;
+        }
         if (event.ctrlKey || event.metaKey || event.altKey) {
             // 菜单栏的加速键（对照 `forms/main.ui`）：导出 `Ctrl+E`（1.4 的那条）、
             // 撤销/重做 `Ctrl+Z` / `Ctrl+Shift+Z`、首选项 `Ctrl+P`、缩放 `Ctrl+=`/`-`/`0`
@@ -1134,9 +1287,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ModuleName.ABOUT,
                 // 工具栏的「浏览」「统计」住在 ftl/qt/qt-misc.ftl，没有类型化函数
                 ModuleName.QT_MISC,
+                // 同步（`sync-*`，核心模块）
+                ModuleName.SYNC,
             ],
         });
         await reload();
+        await loadSyncState();
         // 概览面板：`?deck=<id>` 或 `?deck=current`（宿主 `s` 用后者）
         const wanted = new URLSearchParams(window.location.search).get("deck");
         if (wanted) {
@@ -1205,7 +1361,21 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             title={tr.actionsShortcutKey({ val: "T" })}
             on:click={() => bridgeCommand("stats")}>{translateRaw("qt-misc-stats")}</button
         >
+        <!-- 同步（`toolbar.py:410-419`）：`Y` 键与点击等价，`data-sync-state` 供界面/检查读 -->
+        <button
+            class="link sync"
+            id="sync"
+            data-sync-state={syncState}
+            title={tr.actionsShortcutKey({ val: "Y" })}
+            aria-label={translateRaw("qt-misc-sync")}
+            on:click={askSync}>{translateRaw("qt-misc-sync")}</button
+        >
     </div>
+
+    <!-- 同步的状态/结果（上游是工具栏变色 + 弹出的对话框） -->
+    {#if syncMessage}
+        <div class="sync-status" id="sync-status" data-sync-state={syncState}>{syncMessage}</div>
+    {/if}
 
     {#if overview}
         <!-- 概览（Qt 的 Overview 页面） -->
@@ -1444,6 +1614,70 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             id="study-deck-study"
             disabled={!studyChoice}
             on:click={() => void studyChosenDeck()}>{tr.decksStudy()}</button
+        >
+    </div>
+</Modal>
+
+<!-- 同步登录（对照 `aqt/sync.py` 的 `SyncLoginDialog`：邮箱 + 密码 + 自定义服务器） -->
+<Modal bind:this={syncModal} modalKey="sync-login" onOkClicked={() => void doSyncLogin()}>
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{translateRaw("qt-misc-sync")}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <label class="col-form-label" for="sync-user">{tr.syncAnkiwebIdLabel()}</label>
+        <input id="sync-user" class="form-control" bind:value={syncUser} />
+        <label class="col-form-label" for="sync-password">{tr.syncPasswordLabel()}</label>
+        <input id="sync-password" class="form-control" type="password" bind:value={syncPassword} />
+        <label class="col-form-label" for="sync-endpoint"
+            >{translateRaw("qt-misc-custom-sync-server")}</label
+        >
+        <input id="sync-endpoint" class="form-control" bind:value={syncEndpoint} />
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" on:click={syncModal.cancelHandler}>
+            {tr.actionsCancel()}
+        </button>
+        <button
+            type="button"
+            class="btn btn-primary"
+            id="sync-login"
+            on:click={() => void doSyncLogin()}>{tr.syncLogInButton()}</button
+        >
+    </div>
+</Modal>
+
+<!-- 完整同步的二选一（对照 `sync.py` 的 `full_sync`：上传覆盖 / 下载覆盖） -->
+<Modal bind:this={syncFullModal} modalKey="sync-full">
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{tr.syncConflictExplanation()}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <p id="sync-full-hint">{tr.syncConflictExplanation()}</p>
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button
+            type="button"
+            class="btn btn-secondary"
+            id="sync-download"
+            on:click={() => void startFullSync(false)}>{tr.syncDownloadFromAnkiweb()}</button
+        >
+        <button
+            type="button"
+            class="btn btn-primary"
+            id="sync-upload"
+            on:click={() => void startFullSync(true)}>{tr.syncUploadToAnkiweb()}</button
         >
     </div>
 </Modal>
@@ -1845,6 +2079,26 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     .shortcut {
         color: var(--fg-faint, #777);
+    }
+
+    /* 工具栏的同步链接（对照 `toolbar.py:410-419` 的变色与转圈） */
+    .link.sync[data-sync-state="off"] {
+        opacity: 0.6;
+    }
+
+    .link.sync[data-sync-state="syncing"] {
+        color: var(--fg-link, #06c);
+    }
+
+    .link.sync[data-sync-state="error"] {
+        color: var(--fg-error, #c00);
+    }
+
+    .sync-status {
+        margin-top: 0.5rem;
+        color: var(--fg);
+        font-size: 0.9rem;
+        white-space: pre-wrap;
     }
 
     /* 「学习牌组」的名字列表（对照 `studydeck.ui` 的 `QListWidget`） */

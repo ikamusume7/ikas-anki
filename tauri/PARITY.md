@@ -84,7 +84,7 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 6.1 | ❌ | **同步** | 没有同步入口/状态/冲突处理 | `qt/aqt/sync.py`、`rslib/src/sync` |
+| 6.1 | ⚠️ | **同步** | **登录 / 同步入口 / 状态有了**：工具栏最右边的「同步」（`Y` 键，`toolbar.py:410-419` 的等价物）→ 未登录时弹「邮箱 + 密码 + 自定义服务器」登录框 → `syncLogin` → `syncKey`/`syncUser` 存进 **profile 配置**（`prefs21.db`，与桌面版同一批键，`profiles.py:660-725`）→ `syncStatus` → `syncCollection`，需要完整同步时给「上传 / 下载」二选一（`fullUploadOrDownload`）。验证：`decks-check.mjs` 5i 节起一个**假同步服务器**（只实现 `/sync/hostKey` + `/sync/meta`）跑通登录与状态请求。**差**：媒体同步（`syncMedia`/`MediaSyncStatus`）、同步进度与取消、自动同步与「AnkiWeb 冲突」的完整处理、复习界面工具栏上的同步链接 | `qt/aqt/sync.py`、`rslib/src/sync` |
 | 6.2 | ✅ | 备份与恢复 | **自动备份**（`tauri/src/backup.rs`：启动时 + 每 5 分钟，`force=False`，目录与文件名与桌面版一致 `<profile>/backups/backup-*.colpkg`，份数由后端瘦身）、**手动「创建备份」入口**（菜单 文件 → 创建备份）、**还原备份**（文件 → 还原备份…：原生文件对话框默认开在备份目录 + 原生确认框 + 宿主关集合 → `importCollectionPackage` → 重开集合 → 回牌组列表）。**差**：没有「打开备份文件夹」这一项 | `qt/aqt/main.py:_backup`、`qt/aqt/main.py:441-477`、`qt/aqt/profiles.py` |
 | 6.3 | ⚠️ | 检查数据库 / 检查媒体 / 空卡片 | **有入口了**：牌组列表的菜单「工具」→ 检查数据库 / 检查媒体 / 空卡片，各自调 RPC 并弹出报告框（对照 `qt/aqt/dbcheck.py` / `mediacheck.py` / `emptycards.py`）。**差**：空卡片报告这里只显示文本（上游会渲染卡片列表并给「删除」按钮）、检查媒体的「删除未使用文件 / 恢复回收站」按钮 | Anki 主窗口 Tools 菜单 |
 | 6.4 | ❌ | 录音格式 | 直接给 WAV；Anki 用外部 `lame` 转 MP3（装了的话） | `qt/aqt/sound.py` 的 `encode_audio` |

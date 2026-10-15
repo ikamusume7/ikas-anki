@@ -17,9 +17,17 @@
 //   node tauri/tools/decks-check.mjs
 
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import { chromium } from "playwright";
+
+import { SetSettingJsonRequest } from "../../out/ts/lib/generated/anki/frontend_pb.js";
+import {
+    Json as GenericJson,
+    String as GenericString,
+} from "../../out/ts/lib/generated/anki/generic_pb.js";
 
 import {
     Deck,
@@ -857,6 +865,139 @@ try {
     await page.goto(`${base}/decks/`, { waitUntil: "load" });
     await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
 
+    // 5i. 同步（PARITY 6.1）######################################################
+    // 起一个**假同步服务器**：只实现 `/sync/hostKey` 与 `/sync/meta`（同步协议的真实
+    // 响应是 zstd 压的 JSON，`rslib/src/sync/login.rs` 的测试也是这么 mock 的）。
+    // 端点在 profile 配置里（`customSyncUrl`），与桌面版同一把键。
+    const syncPaths = [];
+    const zstdJson = (value) => zlib.zstdCompressSync(Buffer.from(JSON.stringify(value)));
+    const fakeSync = http.createServer((request, response) => {
+        syncPaths.push(request.url ?? "");
+        // 同步协议的响应：zstd 压的 JSON + `anki-original-size` 头（客户端拿它当进度总量，
+        // 缺了会直接报 "missing original size" —— 消息还是空的，很难查）
+        const send = (value) => {
+            const raw = Buffer.from(JSON.stringify(value));
+            response.writeHead(200, {
+                "Content-Type": "application/octet-stream",
+                "anki-original-size": String(raw.length),
+            });
+            response.end(zlib.zstdCompressSync(raw));
+        };
+        if (request.url === "/sync/hostKey") {
+            send({ key: "fake-host-key" });
+            return;
+        }
+        if (request.url === "/sync/meta") {
+            send({
+                mod: 1,
+                scm: 1,
+                usn: 1,
+                ts: 1,
+                msg: "fake sync server",
+                cont: true,
+                hostNum: 1,
+            });
+            return;
+        }
+        response.writeHead(500, { "Content-Type": "text/plain" });
+        response.end("fake sync server: only hostKey/meta are implemented");
+    });
+    await new Promise((resolve) => fakeSync.listen(0, "127.0.0.1", resolve));
+    const syncEndpoint = `http://127.0.0.1:${fakeSync.address().port}/`;
+    const setProfile = (key, value) =>
+        rpc(
+            "setProfileConfigJson",
+            new SetSettingJsonRequest({
+                key,
+                valueJson: new TextEncoder().encode(JSON.stringify(value)),
+            }).toBinary(),
+        );
+    const profileSyncValue = async (key) => {
+        // 平台端点回的是 `generic.Json`（protobuf，字段 1 是 JSON 字节），不是裸 JSON
+        const bytes = await rpc(
+            "getProfileConfigJson",
+            new GenericString({ val: key }).toBinary(),
+        );
+        const text = new TextDecoder().decode(GenericJson.fromBinary(bytes).json).trim();
+        return text ? JSON.parse(text) : null;
+    };
+    await setProfile("customSyncUrl", syncEndpoint);
+    await setProfile("syncKey", null);
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    check(
+        "同步按钮存在且初始是未登录状态",
+        (await page.locator("#sync[data-sync-state='off']").count()) === 1,
+        await page.locator("#sync").getAttribute("data-sync-state"),
+    );
+
+    // 点同步 → 没登录 → 弹登录框 → 登录（对照 `sync.py` 的 SyncLoginDialog）
+    await page.locator("#sync").click();
+    await page.waitForSelector(".modal.show #sync-user", { timeout: 5000 });
+    await page.locator(".modal.show #sync-user").fill("tauri@example.com");
+    await page.locator(".modal.show #sync-password").fill("hunter2");
+    await page.locator(".modal.show #sync-endpoint").fill(syncEndpoint);
+    await page.locator(".modal.show #sync-login").click();
+    await page.waitForTimeout(3000);
+    console.log(
+        `登录后的提示: ${
+            await page.locator("#sync-status").innerText().catch(() => "（没有提示）")
+        }`,
+    );
+    // 登录失败时弹框会开着，先关掉免得挡住后面的点击
+    if (await page.locator(".modal.show #sync-login").count()) {
+        await page.locator(".modal.show .btn-close").click();
+        await page.waitForTimeout(300);
+    }
+    check("登录请求打到了同步服务器", syncPaths.includes("/sync/hostKey"), syncPaths.join(" / "));
+    check(
+        "host key 存进了 profile 配置（syncKey）",
+        (await profileSyncValue("syncKey")) === "fake-host-key",
+        JSON.stringify(await profileSyncValue("syncKey")),
+    );
+    check(
+        "syncUser 也存了",
+        (await profileSyncValue("syncUser")) === "tauri@example.com",
+        JSON.stringify(await profileSyncValue("syncUser")),
+    );
+    check(
+        "登录后按钮不再是未登录状态",
+        (await page.locator("#sync[data-sync-state='off']").count()) === 0,
+        await page.locator("#sync").getAttribute("data-sync-state"),
+    );
+
+    // 再点一次同步：会先去问同步状态（`/sync/meta`），随后要么提示需要完整同步
+    // （假服务器的 mod/scm 都很旧），要么直接报错 —— 两种都算"真的连上了"
+    syncPaths.length = 0;
+    await page.locator("#sync").click();
+    await page.waitForTimeout(4000);
+    check(
+        "同步状态请求打到了 /sync/meta",
+        syncPaths.includes("/sync/meta"),
+        syncPaths.join(" / ") || "（没有请求）",
+    );
+    check(
+        "页面给出了同步结果/提示",
+        ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").length > 0,
+        ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").slice(0, 60),
+    );
+    if (await page.locator(".modal.show #sync-upload").count()) {
+        await page.locator(".modal.show #sync-upload").click();
+        await page.waitForTimeout(3000);
+        check("全量上传打到了 /sync/upload", syncPaths.includes("/sync/upload"), syncPaths.join(" / "));
+    }
+
+    // 收尾：清掉同步凭据（把 fixture 留在未登录状态），关掉假服务器
+    await setProfile("syncKey", null);
+    await setProfile("customSyncUrl", null);
+    await new Promise((resolve) => fakeSync.close(resolve));
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    check(
+        "已清掉同步凭据（回到未登录）",
+        (await page.locator("#sync[data-sync-state='off']").count()) === 1,
+    );
+
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
     await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });
@@ -886,7 +1027,11 @@ try {
     const toolbar = await page.evaluate(() =>
         [...document.querySelectorAll(".toolbar .link")].map((el) => el.textContent.trim()),
     );
-    check("工具栏有四个链接（同步未实现）", toolbar.length === 4, toolbar.join(" / "));
+    check(
+        "工具栏有五个链接（牌组/添加/浏览/统计/同步）",
+        toolbar.length === 5 && toolbar[4] === "同步",
+        toolbar.join(" / "),
+    );
     await page.locator(".toolbar .link").nth(2).click();
     await page.waitForTimeout(800);
     check("工具栏「浏览」发出 browse", (await bridgeCalls()).includes("browse"));

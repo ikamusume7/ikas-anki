@@ -1080,6 +1080,24 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    否则一律 403 —— 检查脚本里手写 `fetch` 时容易漏（`saveCustomColours` 的端点断言就这么
    先失败过一次）。
 
+### 5.43 同步协议要 `anki-original-size` 头；平台配置端点回的是 protobuf
+
+写"假同步服务器"（`decks-check.mjs` 5i）时踩到的三条：
+
+1. **同步响应 = zstd 压的 JSON + `anki-original-size` 响应头**：客户端拿这个头当进度总量，
+   缺了直接 `missing original size`（`rslib/src/sync/http_client/io_monitor.rs:144-147`）——
+   而且这个错误的**消息是空的**，页面上只显示 `Error:`，很难查。照
+   `rslib/src/sync/login.rs` 的测试 mock 写就不会错。
+2. **平台配置端点（`getProfileConfigJson` 等）回的是 `generic.Json` protobuf**，
+   不是裸 JSON：响应体开头是 `0a 04`（字段 1 = bytes，长度 4）再跟 `null`。
+   检查脚本里要 `GenericJson.fromBinary(bytes).json` 再 `TextDecoder` 解。
+3. 生成的类名与 `generic.proto` 的 message 同名：`generic.String` → **`String`**
+   （导入时得 `import { String as GenericString }`），Rust 侧那边的别名才是
+   `GenericString`。
+
+另外，同步的凭据（`syncKey` / `syncUser` / `customSyncUrl` / `syncMedia`）走 profile 配置，
+**不在集合里** —— 所以「还原备份」不会把它们清掉（与桌面版一致）。
+
 ---
 
 ## 6. 剩余工作
@@ -1145,6 +1163,13 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `closeEditCurrent` 见 §6.4，`searchInBrowser` 把 `SearchNode` 翻成搜索词再开/复用
   浏览器窗口（§3.7，实现在 `server/api.rs`），`openFieldsDialog` / `openCardsDialog`
   各自开着新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（见 §6.4）。
+- **同步**（6.1）—— **登录 / 同步入口 / 状态已做**：工具栏最右的「同步」（`Y` 键）→
+  未登录弹「邮箱 + 密码 + 自定义服务器」→ `syncLogin` → `syncKey`/`syncUser` 写进
+  **profile 配置**（`prefs21.db`，与桌面版同一批键，见 `qt/aqt/profiles.py:660-725`）
+  → `syncStatus` → `syncCollection`，需要完整同步时给「上传 / 下载」二选一
+  （`fullUploadOrDownload`）。验证见 `decks-check.mjs` 5i（自带**假同步服务器**）。
+  **差**：媒体同步、同步进度/取消、自动同步、冲突的完整处理、复习界面工具栏上的同步链接；
+  另外后端不带消息的失败在页面上只显示 `Error:`（`sync-server-error` 兜底没生效，小瑕疵）。
 - **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
   （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
   `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；
@@ -1452,6 +1477,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
+| 同步（登录 / 状态 / 同步入口） | `ts/routes/decks/+page.svelte`（工具栏同步按钮 + 登录/全量同步弹框 + `syncLogin`/`syncStatus`/`syncCollection`/`fullUploadOrDownload`）、`@tslib/profile`（`syncKey` 等 profile 配置键）、`qt/aqt/sync.py` + `qt/aqt/profiles.py:660-725` + `qt/aqt/toolbar.py:410-419`（对照用）；验证：`decks-check.mjs` 5i（假同步服务器） |
 | 原生取色器 | `tauri/src/platform/colours.rs`（`ChooseColorW` + 色槽落库）、`tauri/src/platform/mod.rs`（`saveCustomColours` 端点）、`tauri/src/bridge.rs`（`__ankiHostColourPicker` 能力标记）、`tauri/src/server/pycmd.rs`（`pickColour:`，在按窗口分发之前）、`ts/routes/editor/editor-toolbar/ColorPicker.svelte`、`qt/aqt/mediasrv.py:1122-1128`（对照用）；验证：`editor-check.mjs` 的取色器两断言 + `verify-editor.ps1` 的 `ANKI_PICK_COLOUR` 钩子 |
 | 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
 | 自动备份与还原 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`；菜单 文件 → 创建备份 走 `create_now`）、`tauri/src/restore.rs`（文件 → 还原备份：关集合 → `importCollectionPackage` → 重开 → 回牌组列表）、`tauri/src/main.rs`（`backup::spawn`）、`tauri/src/server/pycmd.rs`（`backup` / `restoreBackup`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:441-477,726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` / `ANKI_RESTORE_PATH` 断言 |
