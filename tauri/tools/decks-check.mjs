@@ -16,12 +16,20 @@
 //   $env:ANKI_API_PORT="40031"; $env:ANKI_API_KEY="test-key-123"
 //   node tauri/tools/decks-check.mjs
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { chromium } from "playwright";
 
 import { Deck, DeckId, DeckIds } from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { OpChangesWithId } from "../../out/ts/lib/generated/anki/collection_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
-import { AddNoteRequest, Note } from "../../out/ts/lib/generated/anki/notes_pb.js";
+import {
+    AddNoteRequest,
+    AddNoteResponse,
+    Note,
+    RemoveNotesRequest,
+} from "../../out/ts/lib/generated/anki/notes_pb.js";
 import {
     Notetype,
     NotetypeId,
@@ -282,6 +290,84 @@ try {
     await page.locator(".modal.show #deck-name").fill(parentName);
     await page.locator(".modal.show .modal-footer .btn-primary").click();
     await page.waitForTimeout(1200);
+
+    // 5b. 齿轮 → 导出（`deckbrowser.py:317-319` → `main.py:1398-1401`）#########
+    // 夹具：父牌组里一张笔记（marker），默认牌组里另一张（另一个 marker）。
+    // 导成「笔记纯文本」后直接读文件断言 —— 这样能真的验证「只导了这个牌组」
+    // （`ExportLimit` 是双层 oneof，少嵌一层会静默变成整个集合，见 §5.33）。
+    const exportDir = process.env.ANKI_SAVE_PATH ?? "";
+    if (!exportDir) {
+        console.log("没有设置 ANKI_SAVE_PATH，跳过「齿轮 → 导出」检查");
+    } else {
+        const basic = NotetypeNames.fromBinary(
+            await rpc("getNotetypeNames", new Empty({}).toBinary()),
+        ).entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name));
+        const basicNotetype = Notetype.fromBinary(
+            await rpc("getNotetype", new NotetypeId({ ntid: basic.id }).toBinary()),
+        );
+        const addNote = async (deckId, firstField) =>
+            AddNoteResponse.fromBinary(
+                await rpc(
+                    "addNote",
+                    new AddNoteRequest({
+                        note: new Note({
+                            notetypeId: basic.id,
+                            fields: basicNotetype.fields.map((field, index) =>
+                                index === 0 ? firstField : field.name,
+                            ),
+                        }),
+                        deckId,
+                    }).toBinary(),
+                ),
+            ).noteId;
+        const deckMarker = `TauriDeckExport${stamp}`;
+        const otherMarker = `TauriOtherExport${stamp}`;
+        const deckNote = await addNote(parentId, deckMarker);
+        const otherNote = await addNote(originalDeck, otherMarker);
+
+        const textFiles = () => fs.readdirSync(exportDir).filter((name) => name.endsWith(".txt"));
+        const before = new Set(textFiles());
+        await gearAction(parentId, "export");
+        await page.waitForSelector(".modal.show #export-format", { timeout: 5000 });
+        const scopeOptions = await page.locator("#export-scope option").allInnerTexts();
+        check(
+            "齿轮导出的范围默认是「该牌组」",
+            (await page.locator("#export-scope").inputValue()) === "deck",
+            scopeOptions.join(" / "),
+        );
+        await page.locator("#export-format").selectOption("notes-txt");
+        await page.waitForTimeout(200);
+        await page.locator("#export-confirm").click();
+        await page.waitForTimeout(3000);
+        const produced = textFiles().find((name) => !before.has(name));
+        const exportedText = produced
+            ? fs.readFileSync(path.join(exportDir, produced), "utf8")
+            : "";
+        // 建议文件名用牌组名（上游 `exporting.py:173-180`；非法字符换成 `_`）
+        const expectedName = `${parentName.replace(/[\\/?<>:*|"^]/g, "_")}.txt`;
+        check(
+            "齿轮导出的文件名用了牌组名",
+            produced === expectedName,
+            `${produced ?? "（没有新文件）"}（期望 ${expectedName}）`,
+        );
+        check(
+            "导出内容只有这个牌组的笔记",
+            exportedText.includes(deckMarker) && !exportedText.includes(otherMarker),
+            `含本牌组标记=${exportedText.includes(deckMarker)} 含别的牌组标记=${exportedText.includes(otherMarker)}`,
+        );
+        if (produced) {
+            fs.rmSync(path.join(exportDir, produced), { force: true });
+        }
+        await rpc(
+            "removeNotes",
+            new RemoveNotesRequest({ noteIds: [deckNote, otherNote], cardIds: [] }).toBinary(),
+        );
+        check(
+            "已清理导出检查的笔记",
+            (await searchNotes(deckMarker)).length === 0 &&
+                (await searchNotes(otherMarker)).length === 0,
+        );
+    }
 
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();

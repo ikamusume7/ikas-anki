@@ -31,7 +31,7 @@
     卡片信息、更改笔记类型、查找替换、**查找重复**、跳转、反选/全选/选中笔记）、撤销重做、
     **导出（apkg / colpkg / 笔记纯文本 / 卡片纯文本）**，以及**预览与卡片信息两个独立窗口**。
   - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
-    牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/删除）、
+    牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/**导出**/删除）、
     底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与两处**顶部工具栏**
     （牌组/添加/浏览/统计）。
   - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通；
@@ -410,7 +410,8 @@ tauri/tools/           验证脚本：verify-reviewer.ps1（复习界面）、ve
                        set-tts-template.mjs、check-prefs21.mjs
 
 ts/routes/decks/      新写的牌组列表页面（主窗口默认页）：+page.svelte（牌组树、计数、
-                      折叠、概览面板、齿轮菜单、底部三按钮、快捷键 d/s/t/a/b）
+                      折叠、概览面板、齿轮菜单（重命名/选项/导出/删除）、底部三按钮、
+                      快捷键 d/s/t/a/b；导出复用浏览器的 `ExportDialog.svelte`）
 ts/routes/cards/      新写的「卡片…」对话框（编辑器工具栏，上游是 Qt 的 clayout.py）：
                       +page.svelte（三块编辑区 + 卡片类型增删改重排 + 选项菜单 +
                       RenderUncommittedCard 预览）
@@ -430,6 +431,8 @@ ts/routes/browser/    新写的浏览器页面：+page.svelte（搜索/排序/�
                        ContextMenu.svelte（行右键菜单，`data-action` 供验证脚本点击）、
                        FormModal.svelte（到期日/重排/重置/查找替换共用的表单弹框）、
                        ExportDialog.svelte（导出对话框：四种格式与勾选项）、
+                       exporting.ts（两个导出入口共用的逻辑：格式映射 / ExportLimit /
+                       保存路径 / 导出 RPC）、
                        FindDuplicatesModal.svelte（查找重复：字段 + 筛选器 + 分组报告 +
                        Tag Duplicates）、
                        menu.ts（菜单与表单的类型）、DeckPickerModal.svelte、
@@ -1090,11 +1093,14 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
     **差**：Qt 是独立非模态对话框、搜索框带历史、后端没有批量取字段的接口（逐条 `getNote`，
     大集合慢）。
   - **已完成**：**导出**（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本）——
-    对话框与导出 RPC 都在页面里，宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）；
-    验证脚本会真的导出 `.apkg`（检查是合法 zip）与两份 `.txt`（按
-    `#separator:tab` / 列说明头与内容断言）。格式与勾选项的对照表见
-    `tauri/README.md` 的「导出（四种格式）」。**差**：没有牌组下拉（只有
-    「选中的笔记 / 全部集合」）、没有独立的"选列"对话框、不做"导出到 profile 目录"的拦截。
+    对话框与导出逻辑在页面侧（`ts/routes/browser/ExportDialog.svelte` +
+    `exporting.ts`），宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）。
+    **两个入口**：浏览器「更多」→ 导出（范围=选中的笔记 / 全部集合）、
+    牌组列表的齿轮 → 导出（`deckbrowser.py:317-327`，范围=该牌组 / 全部集合，
+    建议文件名用牌组名）。验证：`browser-check.mjs` 真的导出 `.apkg`（检查是合法 zip）
+    与两份 `.txt`（按 `#separator:tab` / 列说明头与内容断言）；`decks-check.mjs` 从齿轮
+    导出笔记纯文本并**读回文件**断言只有这个牌组的笔记（正好守住 §5.33 的双层 oneof）。
+    **差**：上游的范围下拉列着所有牌组、没有"选列"对话框、不做"导出到 profile 目录"的拦截。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
@@ -1302,7 +1308,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 | 录音与 TTS | `tauri/src/platform/record.rs`、`tauri/src/platform/audio.rs`、`qt/aqt/sound.py`、`qt/aqt/tts.py` |
 | 编辑器窗口（编辑当前 / 添加卡片 / 浏览器编辑区） | `tauri/src/editor.rs`、`ts/routes/editor/`、`qt/aqt/editor.py`（宿主契约）、`qt/aqt/addcards.py`（关闭确认） |
 | 浏览器窗口 | `tauri/src/browser.rs`、`ts/routes/browser/`（新写）、`qt/aqt/browser/browser.py` + `table/model.py` + `sidebar/tree.py` + `find_and_replace.py`（对照用）、`qt/aqt/forms/browser.ui`（动作表与快捷键） |
-| 导出（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框、格式与勾选项、导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py` + `forms/exporting.ui`（对照用）、`rslib/src/import_export/text/csv/export.rs`（纯文本格式） |
+| 导出（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本；入口：浏览器「更多」+ 牌组列表齿轮） | `ts/routes/browser/exporting.ts`（格式映射 / `ExportLimit` / 保存路径 / 导出 RPC）、`ts/routes/browser/ExportDialog.svelte`（对话框）、`ts/routes/decks/+page.svelte`（齿轮入口）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py` + `forms/exporting.ui`（对照用）、`rslib/src/import_export/text/csv/export.rs`（纯文本格式） |
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |

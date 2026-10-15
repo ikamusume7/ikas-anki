@@ -52,6 +52,14 @@ $env:ANKI_COLLECTION = (Join-Path $root $Collection)
 $env:ANKI_START_PAGE = "decks"
 $env:ANKI_LANG = $Lang
 
+# 齿轮 → 导出：原生保存框没法自动点（与 verify-browser 同一套 `ANKI_SAVE_PATH` 钩子），
+# 指向产物目录时文件名用页面建议的那个（这里就是牌组名）
+$env:ANKI_SAVE_PATH = (Join-Path $root $OutDir)
+# 上一次跑留下的导出产物会让「新文件」判定失效
+Get-ChildItem (Join-Path $root "$OutDir/*") -File -Include "*.apkg", "*.colpkg", "*.txt" `
+    -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+
 # 「导入文件」按钮与 Qt 一样先弹**原生文件对话框**（`importing.py:153-163`），自动化里没法
 # 点它，所以用 `ANKI_OPEN_PATH` 顶掉（与 verify-editor 给遮挡夹具用的是同一套办法）。
 # 这个变量宿主在启动时就固定了，因此必须在 Start-Process 之前设好；指向的 .apkg 由下面的
@@ -155,6 +163,15 @@ try {
         $passed = $false
     } else {
         Write-Host "自定义学习窗口已打开" -ForegroundColor Green
+    }
+
+    # 齿轮 → 导出：内容由 decks-check.mjs 断言（它读回页面建议的文件名），这里确认
+    # 确实走的是 `ANKI_SAVE_PATH` 钩子而不是弹原生保存框
+    if ((Read-Log $logPath) -notmatch "ANKI_SAVE_PATH 生效，跳过保存对话框") {
+        Write-Host "齿轮 → 导出没有走保存路径钩子" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "齿轮 → 导出走了保存路径钩子（内容见 decks-check 的输出）" -ForegroundColor Green
     }
 
     # 自定义学习窗口本身：六个选项 / cram 的列表 / 确定后建出筛选牌组并切成当前牌组

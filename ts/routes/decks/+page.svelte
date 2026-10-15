@@ -14,8 +14,9 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
   的 `open:<did>` → `_onOpen` → `set_current_deck` + `mw.onOverview()`）；
 - 折叠箭头 → `collapse:<did>`（`deckbrowser.py:258`，写回集合的 `study_collapsed`）；
 - Shift+点击整行 → `select:<did>`（`deckbrowser.py:248`，只切当前牌组）；
-- 齿轮 → `opts:<did>` → 重命名 / 选项 / 删除（`deckbrowser.py:293-296,309-324`；
-  Qt 还有「导出」，本外壳没做，见 README 的差异表）；
+- 齿轮 → `opts:<did>` → 重命名 / 选项 / **导出** / 删除（`deckbrowser.py:293-296,309-327`；
+  导出走 `mw.onExport(did=...)` → `ExportDialog(mw, did=did)`，范围默认是**这个牌组**，
+  建议文件名也用牌组名 —— 复用浏览器那套 `ExportDialog.svelte` + `exporting.ts`）；
 - 底部按钮：获取共享牌组 / 创建牌组 / 导入文件（`deckbrowser.py:382-394`）；
 - 底部还有一行「今日学习」（`deckbrowser.py:207-210` 的 `studied_today`）。
 
@@ -59,7 +60,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     // 菜单是浏览器页面里那一个（行右键与工具栏「更多」共用）；它是通用组件，
     // 这里直接复用，省得再写一份定位/关闭逻辑
     import ContextMenu from "../browser/ContextMenu.svelte";
-    import type { MenuSection } from "../browser/menu";
+    import ExportDialog from "../browser/ExportDialog.svelte";
+    import { performExport } from "../browser/exporting";
+    import type { ExportChoice, MenuSection } from "../browser/menu";
 
     interface Row {
         node: DeckTreeNode;
@@ -79,6 +82,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     let textModal: Modal;
     let confirmModal: Modal;
+    /** 导出对话框（与浏览器「更多」→ 导出共用）；打开时记下是哪个牌组 */
+    let exportDialog: ExportDialog;
+    let exportDeck: { id: bigint; name: string } | null = null;
+    /** 导出之后的提示（上游是一个 tooltip；牌组列表没有状态栏，就放在底部那一行） */
+    let exportStatus = "";
     /** 文本弹框在做什么：新建牌组 / 重命名 */
     let textMode: "create" | "rename" = "create";
     let textValue = "";
@@ -230,6 +238,32 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     // 齿轮菜单 ################################################################
 
+    /**
+     * 齿轮 → 导出：导出**这个牌组**（`deckbrowser.py:326-327` 的 `_export` →
+     * `main.py:1398-1401` 的 `onExport(did=…)`）。
+     *
+     * 对话框与导出逻辑跟浏览器「更多」→ 导出共用（`ExportDialog.svelte` +
+     * `exporting.ts`），区别只是范围默认「该牌组」、建议文件名用牌组名。
+     */
+    async function runDeckExport(choice: ExportChoice): Promise<void> {
+        const deck = exportDeck;
+        if (!deck) {
+            return;
+        }
+        busy = true;
+        try {
+            const message = await performExport(choice, { deck });
+            if (message) {
+                exportStatus = message;
+            }
+        } catch (problem) {
+            console.error("导出失败", problem);
+            exportStatus = String(problem);
+        } finally {
+            busy = false;
+        }
+    }
+
     function openGear(node: DeckTreeNode, event: MouseEvent): void {
         event.preventDefault();
         event.stopPropagation();
@@ -259,6 +293,15 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                         label: tr.actionsOptions(),
                         action: "options",
                         run: () => bridgeCommand(`opts:${node.deckId}`),
+                    },
+                    {
+                        label: tr.actionsExport(),
+                        action: "export",
+                        run: () => {
+                            exportStatus = "";
+                            exportDeck = { id: node.deckId, name: node.name };
+                            exportDialog.show({ deck: exportDeck });
+                        },
                     },
                     {
                         label: tr.actionsDelete(),
@@ -322,6 +365,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ModuleName.STATISTICS,
                 ModuleName.STUDYING,
                 ModuleName.SCHEDULING,
+                // 齿轮里的「导出」用的是 `ExportDialog.svelte`（`exporting-*` 文案）
+                ModuleName.EXPORTING,
                 // 工具栏的「浏览」「统计」住在 ftl/qt/qt-misc.ftl，没有类型化函数
                 ModuleName.QT_MISC,
             ],
@@ -466,6 +511,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         <div class="studied" id="studied-today">{@html studied}</div>
     {/if}
 
+    <!-- 导出之后的提示（上游是 tooltip） -->
+    {#if exportStatus}
+        <div class="export-status" id="export-status">{exportStatus}</div>
+    {/if}
+
     <!-- 底部按钮（对照 `deckbrowser.py:382-394`） -->
     <div class="bottom">
         <button class="btn btn-secondary" id="deck-shared" on:click={() => bridgeCommand("shared")}
@@ -488,6 +538,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         onclose={() => (gear = null)}
     />
 {/if}
+
+<!-- 齿轮 → 导出（与浏览器那边共用同一个对话框与 `exporting.ts`） -->
+<ExportDialog bind:this={exportDialog} onExport={(choice) => void runDeckExport(choice)} />
 
 <!-- 新建/重命名共用这一个文本弹框（Qt 是两个 `getOnlyText` 对话框） -->
 <Modal bind:this={textModal} modalKey="deck-text" onOkClicked={() => void applyText()}>
@@ -630,6 +683,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     .studied {
         margin-top: 0.75rem;
         color: var(--fg-faint, #666);
+        font-size: 0.9rem;
+    }
+
+    .export-status {
+        margin-top: 0.5rem;
+        color: var(--fg);
         font-size: 0.9rem;
     }
 

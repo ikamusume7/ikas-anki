@@ -686,7 +686,7 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 | --- | --- | --- |
 | 概览 | 独立页面（`moveToState("overview")`） | 同一页面的面板（`?deck=<id>`），少一次状态切换 |
 | 牌组描述 / 自定义学习 / 取消埋藏 / 清空筛选牌组 | 概览底部一组按钮（`overview.py:283-314`） | 没做 |
-| 牌组导出 | 齿轮菜单里有「导出」 | 没做（导出对话框本身已在浏览器里，见「导出（四种格式）」；牌组列表的齿轮入口还没接，见 `tauri/PARITY.md` 5.3） |
+| 牌组导出 | 齿轮菜单里有「导出」 | **已实现**：齿轮 → 导出 → 与本页共用的导出对话框，范围默认「该牌组」（`limit = deckId`）、建议文件名用牌组名；验证见 `decks-check.mjs`（导出笔记纯文本 → 读回文件断言只有这个牌组的笔记） |
 | 拖拽排序、默认牌组删除保护 | Qt 允许拖动调整牌组顺序；默认牌组也能删（会重建） | 没做排序；**默认牌组的「删除」被禁用**（测试集合全靠它装卡片） |
 | 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮都没有 |
 | 同步按钮 | 有（带同步状态/旋转图标） | 没有（本外壳未实现同步） |
@@ -697,9 +697,11 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 `tauri/tools/verify-decks.ps1`（+ `decks-check.mjs`）：以 `ANKI_START_PAGE=decks` 启动
 → 截首屏真实窗口（`out/decks-check/decks.png`）→ Playwright 走一遍：表头与三列计数、
 当前牌组高亮、折叠/展开（写回 `studyCollapsed`）、点牌组进概览（URL + 当前牌组 +
-「学习」按钮）、概览「学习」发出 `study`、齿轮菜单（`opts:<did>` / 重命名 / 删除）、
-新建牌组与删除、底部按钮、工具栏 → 宿主断言牌组选项窗口、导入窗口、概览「学习」真的
-切到复习页，以及 `d` / `s` / `study` 三个桥接命令的来回切页（切到复习页后还会取队列）。
+「学习」按钮）、概览「学习」发出 `study`、齿轮菜单（`opts:<did>` / 重命名 /
+**导出**：范围默认该牌组、文件名用牌组名、导出的笔记纯文本里只有这个牌组的笔记 / 删除）、
+新建牌组与删除、底部按钮、工具栏 → 宿主断言牌组选项窗口、导入窗口、导出走了
+`ANKI_SAVE_PATH` 钩子、概览「学习」真的切到复习页，以及 `d` / `s` / `study` 三个桥接
+命令的来回切页（切到复习页后还会取队列）。
 检查会临时建/删牌组，并还原当前牌组；失败留下的临时牌组用
 `tauri/tools/cleanup-test-decks.mjs` 清掉。
 
@@ -1168,8 +1170,17 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 
 ### 导出（四种格式）
 
-对话框是页面自己的（`ExportDialog.svelte`），格式与选项照 `qt/aqt/import_export/exporting.py`
-的 `ExportDialog`（`exporter_changed()` 按格式显隐选项，`exporting.py:98-111`）：
+对话框是页面自己的（`ExportDialog.svelte`，浏览器与牌组列表共用），背后的逻辑在
+`exporting.ts`（格式映射 / `ExportLimit` / 问宿主要保存路径 / 调导出 RPC）。
+格式与选项照 `qt/aqt/import_export/exporting.py` 的 `ExportDialog`
+（`exporter_changed()` 按格式显隐选项，`exporting.py:98-111`）：
+
+两个入口：
+
+| 入口 | 上游 | 范围下拉 |
+| --- | --- | --- |
+| 浏览器「更多」→ 导出 | `browser.py:377` 的 `_on_export_notes`（带选中的 nids） | 选中的笔记（N）/ 全部集合 |
+| 牌组列表的齿轮 → 导出 | `deckbrowser.py:317-327` → `main.py:1398-1401` 的 `onExport(did=…)` | **该牌组**（默认）/ 全部集合 |
 
 | 格式 | 扩展名 | 后端 RPC | 选项 |
 | --- | --- | --- | --- |
@@ -1187,14 +1198,16 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
   `#guid/#notetype/#deck/#tags column:<N>`（列号后端算），没有单独的表头行。
   **没有另做"选列"对话框** —— 列由勾选项决定（上游 Qt 也是这样）。
 - **`limit` 是双层 oneof**：`{ limit: { case: "noteIds"|"wholeCollection"|"deckId", value } }`。
-  三个导出 RPC 共用 `ExportLimit`，页面统一走 `limitFor(scope, noteIds)`（用生成的类构造，
-  写错类型编译期就报）。少嵌一层**不报错**，而是静默导出整个集合（踩过，见
-  `TAURI_HANDOVER.md` §5.33）。
+  三个导出 RPC 共用 `ExportLimit`，两个入口统一走 `exporting.ts` 的
+  `limitFor(choice, context)`（用生成的类构造，写错类型编译期就报）。少嵌一层**不报错**，
+  而是静默导出整个集合（踩过，见 `TAURI_HANDOVER.md` §5.33）—— `decks-check.mjs`
+  就是用「别的牌组的笔记不该出现在文件里」把这条守住的。
 - 导出后的提示照 Qt：apkg / 笔记文本用 `exporting-note-exported(count)`、卡片文本用
   `exporting-card-exported(count)`、colpkg 用 `exporting-collection-exported`（无计数）。
-- **差异**：范围只有「选中的笔记 / 全部集合」——上游是牌组下拉（可逐个牌组导出，默认
-  文件名也取牌组名）；不做"导出到 profile 目录就拒绝"的拦截（PARITY 5.9）；保存路径走
-  宿主的 `saveFileDialog`，建议文件名固定 `集合-<时间戳>.<ext>`。
+- **差异**：上游的范围下拉列着**所有牌组**（可以在这里换一个牌组导出，默认文件名取它）；
+  这里只有两个入口各自的两个选项（浏览器：选中的笔记 / 全部集合；牌组列表：该牌组 /
+  全部集合）；不做"导出到 profile 目录就拒绝"的拦截（PARITY 5.9）；保存路径走宿主的
+  `saveFileDialog`，浏览器入口的建议文件名是 `集合-<时间戳>.<ext>`、牌组入口用牌组名。
 
 ### 查找重复
 
@@ -1384,8 +1397,8 @@ browserSearch：图表 → 浏览器搜索
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → 管理笔记类型窗口 → `searchInBrowser` 复用路径 → 关闭连带） |
 | `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行、导出四种格式（含读回产出的 CSV）、查找重复（判重 / 跳转 / 打标签），并观察页面发往宿主的桥接命令 |
 | `notetypes-check.mjs` | `verify-browser.ps1` 调用的「管理笔记类型」检查：列表渲染 / 两步添加（原厂 + 克隆，RPC 复查字段数）/ 重命名 / 删除确认文案 / 「字段…」「卡片…」两条端点，收尾把临时类型删干净 |
-| `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单/新建删除 → `d`/`s`/`study` 切页） |
-| `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入，并用 RPC 复查当前牌组/牌组是否真的建删 |
+| `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单（含**导出**）/新建删除 → `d`/`s`/`study` 切页） |
+| `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入、导出笔记纯文本并读回文件断言牌组范围，并用 RPC 复查当前牌组/牌组是否真的建删 |
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
 | `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
 | `custom-study-check.mjs` | `verify-decks.ps1` 调用的自定义学习检查：六个选项 / cram 四选一 / 确定后建出筛选牌组并切成当前牌组（用 RPC 复查并还原） |
@@ -1426,7 +1439,7 @@ browserSearch：图表 → 浏览器搜索
   - ~~牌组列表~~ —— **已实现**（新写的 SvelteKit 页面，启动默认页）：牌组树与今日
     计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
     「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏，见「牌组列表」。
-    **剩下的**：牌组描述、自定义学习、拖拽排序、导出、同步按钮、复习界面的工具栏。
+    **剩下的**：牌组描述、拖拽排序、同步按钮、复习界面的工具栏。
   - ~~`edit`~~ —— **已实现**：打开「编辑当前卡片」窗口，见「编辑器」。
   - ~~添加卡片~~ —— **已实现**：裸 `a` → `pycmd("add")` → `editor/?mode=add` 窗口，
     见「编辑器」（Qt 的入口在主窗口工具栏 / 全局快捷键 `a`）。

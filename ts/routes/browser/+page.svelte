@@ -27,11 +27,7 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
 
     import { ConfigKey_String, OptionalStringConfigKey } from "@generated/anki/config_pb";
     import type { DeckTreeNode } from "@generated/anki/decks_pb";
-    import { openFilePickerRequest } from "@generated/anki/frontend_pb";
-    import { Empty, String as GenericString } from "@generated/anki/generic_pb";
-    import { ExportLimit } from "@generated/anki/import_export_pb";
-    import { NoteIds } from "@generated/anki/notes_pb";
-    import { postProto } from "@generated/post";
+    import { Empty } from "@generated/anki/generic_pb";
     import type { BrowserRow, BrowserColumns_Column } from "@generated/anki/search_pb";
     import {
         BrowserColumns_Sorting,
@@ -56,10 +52,6 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         cardsOfNote,
         clearUnusedTags,
         deckTree,
-        exportAnkiPackage,
-        exportCardCsv,
-        exportCollectionPackage,
-        exportNoteCsv,
         findAndReplace,
         getCard,
         getNote,
@@ -90,6 +82,7 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     import ContextMenu from "./ContextMenu.svelte";
     import DeckPickerModal from "./DeckPickerModal.svelte";
     import ExportDialog from "./ExportDialog.svelte";
+    import { performExport } from "./exporting";
     import FindDuplicatesModal from "./FindDuplicatesModal.svelte";
     import FormModal from "./FormModal.svelte";
     import type { ExportChoice, FormValues, MenuSection } from "./menu";
@@ -1092,35 +1085,6 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         updateTitle();
     }
 
-    /** Qt 的时间戳格式（`import_export/exporting.py:179` 的 `%Y-%m-%d@%H-%M-%S`）。 */
-    function timestampSuffix(): string {
-        const now = new Date();
-        const pad = (value: number) => `${value}`.padStart(2, "0");
-        return [
-            `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-            `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`,
-        ].join("@");
-    }
-
-    /**
-     * 问宿主要一个保存路径。
-     *
-     * `saveFileDialog` 是**外壳新增的平台端点**（上游没有：Qt 的导出对话框直接用原生
-     * `getSaveFile()`，`exporting.py:119-140`）。请求复用 `OpenFilePickerRequest`，
-     * 其中 `key` 按外壳约定传建议的文件名（见 `platform/dialogs.rs` 的注释）。
-     * 用户取消时返回空串。
-     */
-    async function askSavePath(extension: string, filterLabel: string): Promise<string> {
-        const request = new openFilePickerRequest({
-            title: tr.actionsExport(),
-            key: `${tr.exportingCollection()}-${timestampSuffix()}.${extension}`,
-            filterDescription: filterLabel,
-            extensions: [extension],
-        });
-        const response = await postProto("saveFileDialog", request, GenericString);
-        return response.val;
-    }
-
     /** 导出（`browser.py:377` 的 `_on_export_notes` + `import_export/exporting.py`）。 */
     async function askExport(): Promise<void> {
         const noteIds = await noteIdsOfSelection();
@@ -1128,50 +1092,11 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
             return;
         }
         exportNoteIds = noteIds;
-        exportDialog.show(noteIds.length);
+        exportDialog.show({ selectedCount: noteIds.length });
     }
 
     /**
-     * 格式 → 扩展名 / 保存框上的筛选名（对照各 `Exporter` 的 `extension` + `name()`，
-     * `exporting.py:232-365`）。
-     *
-     * 必须是函数：`tr.*` 要等 `onMount` 里 `setupI18n` 之后才有内容，写成顶层常量会在
-     * 组件初始化时就把 `missing key: …` 定下来（§5.22 / §5.26）。
-     */
-    function exportFormatOf(format: ExportChoice["format"]): {
-        extension: string;
-        label: string;
-    } {
-        switch (format) {
-            case "apkg":
-                return { extension: "apkg", label: tr.exportingAnkiDeckPackage() };
-            case "colpkg":
-                return { extension: "colpkg", label: tr.exportingAnkiCollectionPackage() };
-            case "notes-txt":
-                return { extension: "txt", label: tr.exportingNotesInPlainText() };
-            case "cards-txt":
-                return { extension: "txt", label: tr.exportingCardsInPlainText() };
-        }
-    }
-
-    /**
-     * 范围 → `ExportLimit`。
-     *
-     * 注意 `ExportLimit` 里还有一个同名的 `limit` oneof，构造时要嵌一层 —— 少嵌一层
-     * 不会报错，而是**静默导出整个集合**（见 TAURI_HANDOVER §5.33）。这里用生成的类
-     * 显式构造，让类型检查帮忙挡住这种写法。
-     */
-    function limitFor(scope: ExportChoice["scope"], noteIds: number[]): ExportLimit {
-        return new ExportLimit({
-            limit:
-                scope === "selection"
-                    ? { case: "noteIds", value: new NoteIds({ noteIds: noteIds.map(BigInt) }) }
-                    : { case: "wholeCollection", value: new Empty({}) },
-        });
-    }
-
-    /**
-     * 按对话框的选择真的导出。
+     * 按对话框的选择真的导出（逻辑在 `exporting.ts`，牌组列表的齿轮导出共用它）。
      *
      * 对照 `exporting.py:142-160` 的 `options()` 与四个 `Exporter.export()`：给 `nids`
      * 时 `limit` 是这些笔记，否则是整份集合；勾选项一一对应请求里的字段。
@@ -1181,64 +1106,11 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         if (noteIds.length === 0) {
             return;
         }
-        const { extension, label } = exportFormatOf(choice.format);
-        const path = await askSavePath(extension, label);
-        if (!path) {
-            return; // 用户取消
-        }
         busy = true;
         try {
-            switch (choice.format) {
-                case "colpkg":
-                    // colpkg 没有 `limit`（整个集合），见 `ColpkgExporter.export()`
-                    await exportCollectionPackage({
-                        outPath: path,
-                        includeMedia: choice.includeMedia,
-                        legacy: choice.legacy,
-                    });
-                    // 对照 `exporting.py:248`：`exporting_collection_exported()`
-                    flash(tr.exportingCollectionExported());
-                    break;
-                case "apkg": {
-                    const exported = await exportAnkiPackage({
-                        outPath: path,
-                        options: {
-                            withScheduling: choice.includeScheduling,
-                            withDeckConfigs: choice.includeDeckConfigs,
-                            withMedia: choice.includeMedia,
-                            legacy: choice.legacy,
-                        },
-                        limit: limitFor(choice.scope, noteIds),
-                    });
-                    // 对照 `exporting.py:286`：`exporting_note_exported(count=…)`
-                    flash(tr.exportingNoteExported({ count: exported.val }));
-                    break;
-                }
-                case "notes-txt": {
-                    // `NoteCsvExporter.export()`（`exporting.py:317-337`）
-                    const exported = await exportNoteCsv({
-                        outPath: path,
-                        withHtml: choice.includeHtml,
-                        withTags: choice.includeTags,
-                        withDeck: choice.includeDeck,
-                        withNotetype: choice.includeNotetype,
-                        withGuid: choice.includeGuid,
-                        limit: limitFor(choice.scope, noteIds),
-                    });
-                    flash(tr.exportingNoteExported({ count: exported.val }));
-                    break;
-                }
-                case "cards-txt": {
-                    // `CardCsvExporter.export()`（`exporting.py:349-365`）
-                    const exported = await exportCardCsv({
-                        outPath: path,
-                        withHtml: choice.includeHtml,
-                        limit: limitFor(choice.scope, noteIds),
-                    });
-                    // 对照 `exporting.py:355`：`exporting_card_exported(count=…)`
-                    flash(tr.exportingCardExported({ count: exported.val }));
-                    break;
-                }
+            const message = await performExport(choice, { noteIds });
+            if (message) {
+                flash(message);
             }
         } catch (problem) {
             flash(String(problem));

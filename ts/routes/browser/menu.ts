@@ -50,8 +50,11 @@ export interface ExportChoice {
      * `cards-txt` = 卡片纯文本（`CardCsvExporter`）。
      */
     format: "apkg" | "colpkg" | "notes-txt" | "cards-txt";
-    /** 只对带牌组下拉的格式（apkg / 两种文本）有效：选中的笔记还是整个集合 */
-    scope: "selection" | "all";
+    /**
+     * 导出范围：`selection` = 浏览器里选中的笔记、`deck` = 从牌组列表齿轮导出的那个
+     * 牌组、`all` = 整个集合。colpkg 只有「整个集合」。
+     */
+    scope: "selection" | "all" | "deck";
     includeScheduling: boolean;
     includeDeckConfigs: boolean;
     includeMedia: boolean;

@@ -23,7 +23,8 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 GUID / 旧版 = false。
 
 差异：
-- 范围只有「选中的笔记 / 全部集合」两档（上游的牌组下拉可以逐个牌组导出）；
+- 范围下拉：从浏览器打开是「选中的笔记 / 全部集合」，从**牌组列表的齿轮**打开是
+  「<牌组名> / 全部集合」（上游是一个列着所有牌组的下拉，可以在这里换成别的牌组）；
 - 「笔记纯文本 / 卡片纯文本」的列由**后端按勾选项决定**（`rslib/src/import_export/
   text/csv/export.rs`），没有另做一套选列对话框；
 - 确认按钮点了以后由页面去问宿主要保存路径（`saveFileDialog`），再调导出 RPC；
@@ -117,14 +118,35 @@ GUID / 旧版 = false。
     let legacy = false;
     /** 选中的笔记数（用来给「选中的笔记」加个数量，对照 Qt 的 deck 下拉） */
     let selectedCount = 0;
+    /**
+     * 范围下拉的选项：从浏览器打开是「选中的笔记 / 全部集合」，从牌组列表的齿轮打开是
+     * 「<牌组名> / 全部集合」（对照 `exporting.py:78-84` 的 deck 下拉）。
+     *
+     * 在 `show()` 里算 —— `tr.*` 要等 `setupI18n` 之后才有内容（§5.22 / §5.26）。
+     */
+    let scopeChoices: { value: ExportChoice["scope"]; label: string }[] = [];
 
     $: options = formatOptions[format];
 
-    export function show(count: number): void {
-        selectedCount = count;
+    export function show(
+        choice: { selectedCount?: number; deck?: { id: bigint; name: string } } = {},
+    ): void {
+        selectedCount = choice.selectedCount ?? 0;
         // 初值照 `exporting.ui` + `exporting.py:88`（每次打开都重置）
         format = "apkg";
-        scope = "selection";
+        scope = choice.deck ? "deck" : "selection";
+        scopeChoices = choice.deck
+            ? [
+                  { value: "deck", label: choice.deck.name },
+                  { value: "all", label: tr.exportingAllDecks() },
+              ]
+            : [
+                  {
+                      value: "selection",
+                      label: `${tr.exportingSelectedNotes()}（${selectedCount}）`,
+                  },
+                  { value: "all", label: tr.exportingAllDecks() },
+              ];
         includeScheduling = true;
         includeDeckConfigs = false;
         includeMedia = true;
@@ -189,10 +211,9 @@ GUID / 旧版 = false。
             <div class="mb-2">
                 <label class="col-form-label" for="export-scope">{plain(tr.exportingInclude())}</label>
                 <select id="export-scope" class="form-select" bind:value={scope}>
-                    <option value="selection">
-                        {tr.exportingSelectedNotes()}（{selectedCount}）
-                    </option>
-                    <option value="all">{tr.exportingAllDecks()}</option>
+                    {#each scopeChoices as choice (choice.value)}
+                        <option value={choice.value}>{choice.label}</option>
+                    {/each}
                 </select>
             </div>
         {/if}
