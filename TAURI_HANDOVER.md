@@ -1088,6 +1088,10 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    缺了直接 `missing original size`（`rslib/src/sync/http_client/io_monitor.rs:144-147`）——
    而且这个错误的**消息是空的**，页面上只显示 `Error:`，很难查。照
    `rslib/src/sync/login.rs` 的测试 mock 写就不会错。
+   假 `meta` 的 **`ts` 必须是当前时间**：客户端会跟本地时钟比，差 300 秒以上直接报
+   `ClockIncorrect`（`rslib/src/sync/collection/status.rs:56-59`，**消息同样是空的**）。
+   另外状态检查有 300 秒缓存（`backend/sync.rs:325`），检查脚本里要挂住
+   `/sync/meta` **和** `/sync/start` 才能稳定停在"同步中"。
 2. **平台配置端点（`getProfileConfigJson` 等）回的是 `generic.Json` protobuf**，
    不是裸 JSON：响应体开头是 `0a 04`（字段 1 = bytes，长度 4）再跟 `null`。
    检查脚本里要 `GenericJson.fromBinary(bytes).json` 再 `TextDecoder` 解。
@@ -1163,13 +1167,15 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `closeEditCurrent` 见 §6.4，`searchInBrowser` 把 `SearchNode` 翻成搜索词再开/复用
   浏览器窗口（§3.7，实现在 `server/api.rs`），`openFieldsDialog` / `openCardsDialog`
   各自开着新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（见 §6.4）。
-- **同步**（6.1）—— **登录 / 同步入口 / 状态已做**：工具栏最右的「同步」（`Y` 键）→
-  未登录弹「邮箱 + 密码 + 自定义服务器」→ `syncLogin` → `syncKey`/`syncUser` 写进
-  **profile 配置**（`prefs21.db`，与桌面版同一批键，见 `qt/aqt/profiles.py:660-725`）
-  → `syncStatus` → `syncCollection`，需要完整同步时给「上传 / 下载」二选一
-  （`fullUploadOrDownload`）。验证见 `decks-check.mjs` 5i（自带**假同步服务器**）。
-  **差**：媒体同步、同步进度/取消、自动同步、冲突的完整处理、复习界面工具栏上的同步链接；
-  另外后端不带消息的失败在页面上只显示 `Error:`（`sync-server-error` 兜底没生效，小瑕疵）。
+- **同步**（6.1）—— **登录 / 同步入口 / 状态 / 媒体同步 / 取消已做**：工具栏最右的
+  「同步」（`Y` 键）→ 未登录弹「邮箱 + 密码 + 自定义服务器」→ `syncLogin` →
+  `syncKey`/`syncUser` 写进 **profile 配置**（`prefs21.db`，与桌面版同一批键，见
+  `qt/aqt/profiles.py:660-725`）→ `syncStatus` → `syncCollection` →（`syncMedia` 开着时）
+  `syncMedia` + 轮询 `mediaSyncStatus` 显示后端本地化好的进度；需要完整同步时给
+  「上传 / 下载」二选一（`fullUploadOrDownload`）；同步中再点一次 = 取消
+  （`abortSync`/`abortMediaSync`）。验证见 `decks-check.mjs` 5i（自带**假同步服务器**）。
+  **差**：自动同步定时器、冲突的完整处理、复习界面工具栏上的同步链接、进度条；
+  媒体同步的 happy path 没有自动化覆盖，后端不带消息的失败在页面上只显示 `Error:`。
 - **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
   （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
   `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；

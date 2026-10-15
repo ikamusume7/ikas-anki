@@ -397,16 +397,20 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 | --- | --- |
 | 未登录 → 登录框 | 邮箱 + 密码 + 「自定义同步服务器」（对照 `aqt/sync.py` 的 `SyncLoginDialog`）；`syncLogin` → `syncKey`/`syncUser` 写进 **profile 配置**（`prefs21.db`，键名与 `qt/aqt/profiles.py:660-725` 一致） |
 | 已登录 → 同步 | `syncStatus` → `syncCollection`（`syncMedia` 取自 profile 的 `syncMedia`，默认 true）；服务端要求完整同步时弹「上传 / 下载」二选一 → `fullUploadOrDownload` |
+| 媒体同步 | 集合同步成功后（且 `syncMedia` 开着）`syncMedia` 在后台跑 + 轮询 `mediaSyncStatus`，把后端本地化好的「Checked / Added / Removed」显示出来（最多轮询 5 分钟） |
+| 取消 | 同步中再点一次「同步」→ `abortSync` + `abortMediaSync`（对照上游进度对话框的 Abort）；被取消的请求当作正常结束，显示「媒体同步已中止」 |
 | 状态显示 | 按钮的 `data-sync-state`（off / idle / syncing / error）+ 列表下方的 `#sync-status` 文案（后端错误原文；个别情况下后端不带消息，页面上就只剩一个 `Error:` —— 已知小瑕疵） |
 
 **验证**（`decks-check.mjs` 5i）：检查脚本自己起一个**假同步服务器**（只实现
 `/sync/hostKey` 与 `/sync/meta`；同步协议的响应是 zstd 压的 JSON + `anki-original-size`
-头），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 → 再点同步」：
-断言登录请求打到 `/sync/hostKey`、`syncKey`/`syncUser` 落进 profile、按钮不再是未登录态、
-状态请求打到 `/sync/meta`、页面给出提示；收尾清掉凭据。
+头，`meta` 的 `ts` 必须是当前时间），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 →
+再点同步 → 同步中取消」：断言登录请求打到 `/sync/hostKey`、`syncKey`/`syncUser` 落进
+profile、按钮不再是未登录态、状态请求打到 `/sync/meta`、页面给出提示、同步中按钮进入
+`syncing`、取消后回到 `idle` 且显示「媒体同步已中止」；收尾清掉凭据。
 
-**差**：媒体同步（`syncMedia`/`MediaSyncStatus`）、同步进度与取消、自动同步、
-「AnkiWeb 冲突」的完整处理、复习界面工具栏上的同步链接（那里只有四个链接）。
+**差**：自动同步的定时器（`autoSyncMediaMinutes`）、「AnkiWeb 冲突」的完整处理（只做了
+上传/下载入口）、复习界面工具栏上的同步链接、进度条（只有文字状态）；媒体同步的
+**happy path** 没有自动化覆盖（假服务器只实现到 `meta`，跑通整条集合/媒体协议太重）。
 
 ## 复习界面
 

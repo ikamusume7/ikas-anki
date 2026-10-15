@@ -870,9 +870,14 @@ try {
     // 响应是 zstd 压的 JSON，`rslib/src/sync/login.rs` 的测试也是这么 mock 的）。
     // 端点在 profile 配置里（`customSyncUrl`），与桌面版同一把键。
     const syncPaths = [];
+    // 让假服务器"卡住"的路径（用来验证取消：不响应，连接一直开着）
+    const hangingPaths = new Set();
     const zstdJson = (value) => zlib.zstdCompressSync(Buffer.from(JSON.stringify(value)));
     const fakeSync = http.createServer((request, response) => {
         syncPaths.push(request.url ?? "");
+        if (hangingPaths.has(request.url ?? "")) {
+            return;
+        }
         // 同步协议的响应：zstd 压的 JSON + `anki-original-size` 头（客户端拿它当进度总量，
         // 缺了会直接报 "missing original size" —— 消息还是空的，很难查）
         const send = (value) => {
@@ -892,7 +897,10 @@ try {
                 mod: 1,
                 scm: 1,
                 usn: 1,
-                ts: 1,
+                // `ts` 必须是**当前时间**：客户端跟本地时钟比，差 300 秒以上会直接
+                // 报 `ClockIncorrect`（`rslib/src/sync/collection/status.rs:56-59`，
+                // 而且那个错误的消息是空的）
+                ts: Math.floor(Date.now() / 1000),
                 msg: "fake sync server",
                 cont: true,
                 hostNum: 1,
@@ -982,10 +990,42 @@ try {
         ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").slice(0, 60),
     );
     if (await page.locator(".modal.show #sync-upload").count()) {
-        await page.locator(".modal.show #sync-upload").click();
-        await page.waitForTimeout(3000);
-        check("全量上传打到了 /sync/upload", syncPaths.includes("/sync/upload"), syncPaths.join(" / "));
+        await page.locator(".modal.show .btn-close").click();
+        await page.waitForTimeout(300);
     }
+
+    // 取消：让同步请求"挂住"，同步中的按钮再点一次 = 取消（`abortSync`/`abortMediaSync`）。
+    // 状态检查可能有 300 秒缓存（`backend/sync.rs:325`），所以 `/sync/meta` 与
+    // `/sync/start` 都挂住，保证这一轮一定停在"同步中"
+    hangingPaths.add("/sync/meta");
+    hangingPaths.add("/sync/start");
+    syncPaths.length = 0;
+    await page.locator("#sync").click();
+    await page.waitForTimeout(3000);
+    check(
+        "同步中按钮进入 syncing 状态",
+        (await page.locator("#sync[data-sync-state='syncing']").count()) === 1,
+        await page.locator("#sync").getAttribute("data-sync-state"),
+    );
+    check(
+        "同步请求打到了同步服务器",
+        syncPaths.some((url) => url === "/sync/meta" || url === "/sync/start"),
+        syncPaths.join(" / ") || "（没有请求）",
+    );
+    await page.locator("#sync").click();
+    await page.waitForTimeout(4000);
+    check(
+        "取消后回到 idle 状态",
+        (await page.locator("#sync[data-sync-state='idle']").count()) === 1,
+        await page.locator("#sync").getAttribute("data-sync-state"),
+    );
+    check(
+        "取消后页面有提示",
+        ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").length > 0,
+        ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").slice(0, 40),
+    );
+    hangingPaths.delete("/sync/meta");
+    hangingPaths.delete("/sync/start");
 
     // 收尾：清掉同步凭据（把 fixture 留在未登录状态），关掉假服务器
     await setProfile("syncKey", null);

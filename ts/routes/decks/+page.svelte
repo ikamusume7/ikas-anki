@@ -83,6 +83,10 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         studiedToday,
         syncCollection,
         syncLogin,
+        syncMedia,
+        mediaSyncStatus,
+        abortSync,
+        abortMediaSync,
         syncStatus,
         unburyDeck,
         undo,
@@ -166,6 +170,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let syncEndpoint = "";
     let syncState: "off" | "idle" | "syncing" | "error" = "off";
     let syncMessage = "";
+    /** 用户点了取消：让在飞的同步把错误当"已取消"处理，而不是报错 */
+    let syncCancelled = false;
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -465,10 +471,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         return new SyncAuth({ hkey, endpoint: endpoint || undefined });
     }
 
-    /** 工具栏「同步」/ `Y`：没登录先弹登录框，否则直接同步（`main.py:on_sync_button_clicked`）。 */
+    /** 工具栏「同步」/ `Y`：同步中再点一次 = 取消；没登录先弹登录框。 */
     function askSync(): void {
         void (async () => {
             if (syncState === "syncing") {
+                await cancelSync();
                 return;
             }
             const auth = await currentSyncAuth();
@@ -478,6 +485,22 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             }
             await runSync(auth);
         })();
+    }
+
+    /**
+     * 取消同步（上游进度对话框上的 Abort → `col.abort_sync()`）。
+     * 集合同步是可中断的（`Abortable`），媒体同步在后台跑、用 `abortMediaSync` 收掉。
+     */
+    async function cancelSync(): Promise<void> {
+        syncCancelled = true;
+        try {
+            await abortSync(new Empty({}));
+            await abortMediaSync(new Empty({}));
+        } catch (problem) {
+            console.error("取消同步失败", problem);
+        }
+        syncState = "idle";
+        syncMessage = tr.syncMediaAborted();
     }
 
     /** 登录弹框（对照 `aqt/sync.py` 的 `SyncLoginDialog`：邮箱 + 密码 + 自定义服务器）。 */
@@ -522,6 +545,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     async function runSync(auth: SyncAuth): Promise<void> {
         syncState = "syncing";
         syncMessage = "";
+        syncCancelled = false;
         try {
             const status = await syncStatus(auth);
             if (status.required !== SyncStatusResponse_Required.NO_CHANGES) {
@@ -545,7 +569,18 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             }
             syncState = "idle";
             syncMessage = result.serverMessage || tr.syncMediaComplete();
+            // 集合同步完成后才轮到媒体（对照 `sync.py` 的 `sync()`）
+            if (await getProfileConfig("syncMedia")) {
+                await runMediaSync(auth);
+            }
         } catch (problem) {
+            if (syncCancelled) {
+                // 我们主动取消的：当作正常结束
+                syncCancelled = false;
+                syncState = "idle";
+                syncMessage = tr.syncMediaAborted();
+                return;
+            }
             // 同步失败时后端有时给不带消息的错误（例如同步协议层的问题），
             // 这时用上游那句"AnkiWeb 出了问题"兜底
             const text = String(problem).replace(/[\u200b-\u200d\ufeff]/g, "").trim();
@@ -555,8 +590,33 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         }
     }
 
-    /** 全量同步（上传 / 下载），对照 `sync.py` 的 `full_sync()`。 */
-    async function startFullSync(upload: boolean): Promise<void> {
+    /**
+     * 媒体同步（对照 `qt/aqt/sync.py` 的 `MediaSyncer`）：`syncMedia` 在后台跑，
+     * 页面轮询 `mediaSyncStatus` 直到不再 active，把「Checked / Added / Removed」显示出来。
+     */
+    async function runMediaSync(auth: SyncAuth): Promise<void> {
+        syncMessage = tr.syncMediaStarting();
+        await syncMedia(auth);
+        // 最多轮询 5 分钟，避免后端卡住时页面一直转；取消时立刻停
+        for (let attempt = 0; attempt < 600 && !syncCancelled; attempt++) {
+            const status = await mediaSyncStatus(new Empty({}));
+            if (!status.active) {
+                break;
+            }
+            const progress = status.progress;
+            if (progress) {
+                // 这三个字段是**后端本地化好的**文案（`rslib/src/progress.rs:260-269`
+                // 用 `sync-media-*-count` 渲染），页面直接显示
+                syncMessage = [progress.checked, progress.added, progress.removed]
+                    .filter((value) => value.length > 0)
+                    .join(" ");
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        syncMessage = tr.syncMediaComplete();
+    }
+
+    /** 全量同步（上传 / 下载），对照 `sync.py` 的 `full_sync()`。 */    async function startFullSync(upload: boolean): Promise<void> {
         const auth = await currentSyncAuth();
         if (!auth) {
             return;
