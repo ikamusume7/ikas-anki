@@ -399,31 +399,34 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 | 步骤 | 实现 |
 | --- | --- |
 | 未登录 → 登录框 | 邮箱 + 密码 + 「自定义同步服务器」（对照 `aqt/sync.py` 的 `SyncLoginDialog`）；`syncLogin` → `syncKey`/`syncUser` 写进 **profile 配置**（`prefs21.db`，键名与 `qt/aqt/profiles.py:660-725` 一致） |
-| 已登录 → 同步 | `syncStatus` → `syncCollection`（`syncMedia` 取自 profile 的 `syncMedia`，默认 true）；服务端要求完整同步时弹「上传 / 下载」二选一 → `fullUploadOrDownload` |
+| 已登录 → 同步 | `syncStatus` → `syncCollection`（`syncMedia` 取自 profile 的 `syncMedia`，默认 true）；服务端要求完整同步（`schema` 时间戳与本地不同，`rslib/src/sync/collection/meta.rs:68-74`）时弹「上传 / 下载」二选一 → `fullUploadOrDownload`（`/sync/upload` 或 `/sync/download`） |
 | 媒体同步 | 集合同步成功后（且 `syncMedia` 开着）`syncMedia` 在后台跑 + 轮询 `mediaSyncStatus`，把后端本地化好的「Checked / Added / Removed」显示出来（最多轮询 5 分钟） |
 | 取消 | 同步中再点一次「同步」→ `abortSync` + `abortMediaSync`（对照上游进度对话框的 Abort）；被取消的请求当作正常结束，显示「媒体同步已中止」 |
 | 自动同步（宿主侧） | `tauri/src/autosync.rs`：启动时整份同步一次（上游的 on-open；外壳没有优雅关闭钩子，所以没有 on-close）+ 之后每 5 分钟检查一次，距上次媒体同步超过 `autoSyncMediaMinutes`（默认 15）才做**媒体**同步。开关与凭据都读 profile 配置（`autoSync` / `syncKey` / `customSyncUrl` / `syncMedia`） |
 | 状态显示 | 按钮的 `data-sync-state`（off / idle / syncing / error）+ 列表下方的 `#sync-status` 文案（后端错误原文；个别情况下后端不带消息，页面上就只剩一个 `Error:` —— 已知小瑕疵） |
 | 复习界面的同步 | 顶部工具栏的「同步」链接（`reviewer-toolbar.js`）→ 宿主的 `sync` 命令（`pycmd.rs` → `autosync::sync_now`）：有凭据就跑一次集合 + 媒体同步、状态用 `window.__ankiSyncStatus()` 写进工具栏；没凭据就提示一句并跳到牌组列表页（登录框在那儿） |
 
-**验证**（`decks-check.mjs` 5i/5j）：检查脚本自己起一个**假同步服务器**（只实现
+**验证**（`decks-check.mjs` 5i/5j）：检查脚本自己起一个**假同步服务器**（实现
 `/sync/hostKey` 与 `/sync/meta`；同步协议的响应是 zstd 压的 JSON + `anki-original-size`
-头，`meta` 的 `ts` 必须是当前时间），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 →
-再点同步 → 同步中取消」，并另外验证**自动同步**（`verify-decks.ps1` 把
-`ANKI_SYNC_TICK_SECONDS` 设成 2 秒，脚本在 profile 里放一份凭据 + `autoSyncMediaMinutes=0`
-→ 断言几秒后宿主真的打到了 `/msync/begin`，日志里也有「自动同步: 开始媒体同步」）：
+头，`meta` 的 `ts` 必须是当前时间、`media_usn` 不能缺、`scm` 与本地不同就会走**完整同步**
+分支），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 → 完整同步二选一 → 点下载 →
+同步中取消」，并另外验证**自动同步**（`verify-decks.ps1` 把 `ANKI_SYNC_TICK_SECONDS`
+设成 2 秒，脚本在 profile 里放一份凭据 + `autoSyncMediaMinutes=0` → 断言几秒后宿主真的
+打到了 `/msync/begin`，日志里也有「自动同步: 开始媒体同步」）：
 
 ```
 PASS  登录请求打到了同步服务器 — /sync/hostKey / /sync/meta
 PASS  host key 存进了 profile 配置（syncKey） — "fake-host-key"
-PASS  同步状态请求打到了 /sync/meta
+PASS  需要完整同步时弹出上传/下载二选一 — 上传到 AnkiWeb
+PASS  点「下载」打到了 /sync/download
 PASS  同步中按钮进入 syncing 状态 / 取消后回到 idle 状态
 PASS  自动同步定时器发起了媒体同步（/msync/…） — /msync/begin ×4
 ```
 
-**差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口）、复习界面工具栏上的同步链接、
-进度条（只有文字状态）、关闭时同步（没有优雅关闭钩子）；媒体同步的**happy path**
-没有自动化覆盖（假服务器只实现到 `meta`，跑通整条集合/媒体协议太重）。
+**差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口与冲突文案）、进度条（只有文字
+状态）、关闭时同步（没有优雅关闭钩子）；媒体同步的 **happy path** 与
+`syncCollection` 的正常合并没有自动化覆盖（假服务器只实现到 `meta`，跑通整条集合/媒体
+协议太重）。
 
 ## 复习界面
 

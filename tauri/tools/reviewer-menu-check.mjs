@@ -352,11 +352,13 @@ try {
                     mod: 1,
                     scm: 1,
                     usn: 1,
-                    // `ts` 必须是当前时间，否则客户端报 ClockIncorrect（消息还是空的）
+                    // `ts` 必须是当前时间，否则客户端报 ClockIncorrect（消息还是空的）；
+                    // `media_usn` 没有 `#[serde(default)]`，缺了直接解析失败
                     ts: Math.floor(Date.now() / 1000),
                     msg: "",
                     cont: true,
                     hostNum: 1,
+                    media_usn: 1,
                 }),
             );
             response.writeHead(200, {

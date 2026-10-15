@@ -1093,9 +1093,12 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    而且这个错误的**消息是空的**，页面上只显示 `Error:`，很难查。照
    `rslib/src/sync/login.rs` 的测试 mock 写就不会错。
    假 `meta` 的 **`ts` 必须是当前时间**：客户端会跟本地时钟比，差 300 秒以上直接报
-   `ClockIncorrect`（`rslib/src/sync/collection/status.rs:56-59`，**消息同样是空的**）。
+   `ClockIncorrect`（`rslib/src/sync/collection/status.rs:56-59`，**消息同样是空的**）；
+   `media_usn` 在 `SyncMeta` 里**没有** `#[serde(default)]`，缺了直接解析失败（也是空消息）；
+   `scm` 与本地不同会走**完整同步**分支（弹「上传/下载」）—— 想测那条分支就这么造。
    另外状态检查有 300 秒缓存（`backend/sync.rs:325`），检查脚本里要挂住
-   `/sync/meta` **和** `/sync/start` 才能稳定停在"同步中"。
+   `/sync/meta` **和** `/sync/start`（或利用缓存直接挂住 `/sync/download`）才能稳定停在
+   "同步中"。
 2. **平台配置端点（`getProfileConfigJson` 等）回的是 `generic.Json` protobuf**，
    不是裸 JSON：响应体开头是 `0a 04`（字段 1 = bytes，长度 4）再跟 `null`。
    检查脚本里要 `GenericJson.fromBinary(bytes).json` 再 `TextDecoder` 解。

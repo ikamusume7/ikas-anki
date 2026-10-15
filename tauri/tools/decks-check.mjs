@@ -896,6 +896,7 @@ try {
         if (request.url === "/sync/meta") {
             send({
                 mod: 1,
+                // `scm` 与本地不同 → 客户端判定需要**完整同步**（弹「上传/下载」）
                 scm: 1,
                 usn: 1,
                 // `ts` 必须是**当前时间**：客户端跟本地时钟比，差 300 秒以上会直接
@@ -905,6 +906,8 @@ try {
                 msg: "fake sync server",
                 cont: true,
                 hostNum: 1,
+                // `SyncMeta` 里 `media_usn` 没有 `#[serde(default)]`，缺了会解析失败
+                media_usn: 1,
             });
             return;
         }
@@ -975,42 +978,51 @@ try {
         await page.locator("#sync").getAttribute("data-sync-state"),
     );
 
-    // 再点一次同步：会先去问同步状态（`/sync/meta`），随后要么提示需要完整同步
-    // （假服务器的 mod/scm 都很旧），要么直接报错 —— 两种都算"真的连上了"
-    syncPaths.length = 0;
-    await page.locator("#sync").click();
-    await page.waitForTimeout(4000);
+    // 假 meta 的 `scm`（schema 时间戳）与本地不同 → 客户端算出需要**完整同步**
+    // （`rslib/src/sync/collection/meta.rs:68-74`），页面弹出「上传 / 下载」二选一
     check(
         "同步状态请求打到了 /sync/meta",
         syncPaths.includes("/sync/meta"),
         syncPaths.join(" / ") || "（没有请求）",
     );
     check(
-        "页面给出了同步结果/提示",
+        "需要完整同步时弹出上传/下载二选一",
+        (await page.locator(".modal.show #sync-upload").count()) === 1 &&
+            (await page.locator(".modal.show #sync-download").count()) === 1,
+        await page.locator(".modal.show #sync-upload").innerText().catch(() => "（没有弹框）"),
+    );
+    // 点「下载」→ `fullUploadOrDownload(upload=false)` → 打到 `/sync/download`
+    // （假服务器没实现，会 500 → 页面报错，但请求确实发出去了）
+    syncPaths.length = 0;
+    await page.locator(".modal.show #sync-download").click();
+    await page.waitForTimeout(3000);
+    check(
+        "点「下载」打到了 /sync/download",
+        syncPaths.includes("/sync/download"),
+        syncPaths.join(" / ") || "（没有请求）",
+    );
+    check(
+        "完整同步失败时页面有提示",
         ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").length > 0,
         ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").slice(0, 60),
     );
-    if (await page.locator(".modal.show #sync-upload").count()) {
-        await page.locator(".modal.show .btn-close").click();
-        await page.waitForTimeout(300);
-    }
 
-    // 取消：让同步请求"挂住"，同步中的按钮再点一次 = 取消（`abortSync`/`abortMediaSync`）。
-    // 状态检查可能有 300 秒缓存（`backend/sync.rs:325`），所以 `/sync/meta` 与
-    // `/sync/start` 都挂住，保证这一轮一定停在"同步中"
-    hangingPaths.add("/sync/meta");
-    hangingPaths.add("/sync/start");
-    syncPaths.length = 0;
+    // 取消：先把「下载」挂住。同步状态有 300 秒缓存（`backend/sync.rs:325`），所以这一轮
+    // 一定会走状态缓存 → 弹框 → `/sync/download`，停在"同步中"；再点一次「同步」= 取消
+    // （`abortSync`/`abortMediaSync`）
+    hangingPaths.add("/sync/download");
     await page.locator("#sync").click();
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1500);
+    await page.locator(".modal.show #sync-download").click();
+    await page.waitForTimeout(2500);
     check(
         "同步中按钮进入 syncing 状态",
         (await page.locator("#sync[data-sync-state='syncing']").count()) === 1,
         await page.locator("#sync").getAttribute("data-sync-state"),
     );
     check(
-        "同步请求打到了同步服务器",
-        syncPaths.some((url) => url === "/sync/meta" || url === "/sync/start"),
+        "挂住的下载请求打到了 /sync/download",
+        syncPaths.includes("/sync/download"),
         syncPaths.join(" / ") || "（没有请求）",
     );
     await page.locator("#sync").click();
@@ -1025,8 +1037,7 @@ try {
         ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").length > 0,
         ((await page.locator("#sync-status").innerText().catch(() => "")) ?? "").slice(0, 40),
     );
-    hangingPaths.delete("/sync/meta");
-    hangingPaths.delete("/sync/start");
+    hangingPaths.delete("/sync/download");
 
     // 收尾：清掉同步凭据（把 fixture 留在未登录状态）
     await setProfile("syncKey", null);
