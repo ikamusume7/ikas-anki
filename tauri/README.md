@@ -714,13 +714,14 @@ Qt 的主窗口菜单栏是原生的、在所有状态下都在；本外壳把�
 | --- | --- | --- |
 | 文件 | 导入… / 导出…(Ctrl+E) / 创建备份 / 退出 | `import` / 导出对话框（范围=当前牌组）/ `backup` / `quit` 四条桥接命令（后两条是宿主侧：备份目录只有宿主知道） |
 | 编辑 | 撤销(Ctrl+Z) / 重做(Ctrl+Shift+Z) | `undo` / `redo` RPC + 刷新 |
-| 工具 | 学习牌组 / 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项(Ctrl+P) | 学习牌组 = 一个「筛选框 + 完整牌组名列表 + 添加 / 学习」弹框（上游 `aqt/studydeck.py`）：确定后设为当前牌组并进概览，`添加` 新建的牌组也直接进概览；三个 `check*` RPC 的结果弹框（`{@html}` 渲染后端给的报告）+ `notetypes` / `preferences` 桥接命令 |
+| 工具 | 学习牌组 / 创建筛选牌组(F) / 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项(Ctrl+P) | 学习牌组 = 一个「筛选框 + 完整牌组名列表 + 添加 / 学习」弹框（上游 `aqt/studydeck.py`）：确定后设为当前牌组并进概览，`添加` 新建的牌组也直接进概览；创建筛选牌组 = `aqt/filtered_deck.py` 的等价物（名字 / 搜索 / 顺序 / 限量 / 重排 / 即使为空也创建 → `addOrUpdateFilteredDeck`，顺序标签来自 `filteredDeckOrderLabels`）；三个 `check*` RPC 的结果弹框（`{@html}` 渲染后端给的报告）+ `notetypes` / `preferences` 桥接命令 |
 | 视图 | 全屏(F11) / 放大(Ctrl++) / 缩小(Ctrl+-) / 重置缩放(Ctrl+0) | `fullscreen` / `zoom:in|out|reset` 桥接命令 → 宿主 `set_fullscreen` / `set_zoom`（±0.1，钳在 0.3–3；Qt 也不持久化缩放） |
 | 帮助 | 用户手册 / 支持 Anki / 关于 | `helpPageLink(INDEX)` → `openLink`；捐赠链接 = `aqt.appDonate`；关于 = `about` 桥接命令返回 JSON（Anki 版本来自 `anki::version`，外壳版本是 `CARGO_PKG_VERSION`），页面渲染成弹框 |
 
 **差异**：菜单栏只在牌组列表页（复习界面是 legacy 页，那里仍是顶部工具栏，功能重合）；
-缺 Switch Profile、学习牌组、创建筛选牌组、检查更新、add-ons；「关于」比上游少了
-Python / Qt / Chromium 版本与贡献者名单。
+缺 Switch Profile、检查更新、add-ons；「关于」比上游少了 Python / Qt / Chromium 版本与
+贡献者名单；筛选牌组对话框没有第二个筛选条件、预览间隔（again/hard/good 秒数）、
+「搜索」按钮（浏览器的搜索编辑器）与 FSRS 专用排序（可提取性升/降序）。
 
 ### 与 Qt 的差异（有意为之）
 
@@ -754,8 +755,9 @@ Python / Qt / Chromium 版本与贡献者名单。
 **菜单栏**（五个菜单渲染；文件→创建备份真的产出新 `.colpkg`、文件→导出… 与 `Ctrl+E` 打开
 导出对话框且范围默认当前牌组、视图→三档缩放与 `F11`、工具→检查数据库/检查媒体/空卡片
 各自调 RPC 并弹出报告、**工具→学习牌组**筛选框按空格分词匹配 + 选中后进该牌组概览 +
-「添加」新建后也进概览、编辑→撤销发出 `undo`、文件→导入… 发出 `import`、
-帮助→关于显示版本；退出与两个帮助链接只断言存在）、
+「添加」新建后也进概览、**工具→创建筛选牌组**（快捷键 `F`）顺序下拉来自
+`filteredDeckOrderLabels`、构建后 `getDeck` 确认是筛选牌组且搜索条件落库、编辑→撤销发出
+`undo`、文件→导入… 发出 `import`、帮助→关于显示版本；退出与两个帮助链接只断言存在）、
 新建牌组与删除、底部按钮、工具栏 → 宿主断言牌组选项窗口、导入窗口、导出走了
 `ANKI_SAVE_PATH` 钩子、概览「学习」真的切到复习页，以及 `d` / `s` / `study` 三个桥接
 命令的来回切页（切到复习页后还会取队列）。筛选牌组的「重建 / 清空」与快捷键 `r`

@@ -39,6 +39,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         Deck,
         DeckId,
         DeckIds,
+        Deck_Filtered,
+        Deck_Filtered_SearchTerm,
+        Deck_Filtered_SearchTerm_Order,
         GetDeckNamesRequest,
         RenameDeckRequest,
     } from "@generated/anki/decks_pb";
@@ -49,15 +52,18 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     import { translate as translateRaw } from "@generated/ftl-helpers";
     import {
         addDeck,
+        addOrUpdateFilteredDeck,
         checkDatabase,
         checkMedia,
         congratsInfo,
         deckTree,
         emptyFilteredDeck,
+        filteredDeckOrderLabels,
         getCurrentDeck,
         getDeck,
         getDeckNames,
         getEmptyCards,
+        getOrCreateFilteredDeck,
         helpPageLink,
         openLink,
         rebuildFilteredDeck,
@@ -129,6 +135,19 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let studyMatching: string[] = [];
     /** 「学习牌组」里点了「添加」：新建完直接进那个牌组的概览（上游 `success` 回调） */
     let createThenStudy = false;
+    /** 工具 → 创建筛选牌组（`aqt/filtered_deck.py` 的 FilteredDeckConfigDialog） */
+    let filteredModal: Modal;
+    let filteredId = 0n;
+    let filteredConfig: Deck_Filtered | null = null;
+    let filteredName = "";
+    let filteredSearch = "";
+    let filteredLimit = 100;
+    let filteredOrder: Deck_Filtered_SearchTerm_Order =
+        Deck_Filtered_SearchTerm_Order.OLDEST_REVIEWED_FIRST;
+    let filteredOrderChoices: { order: Deck_Filtered_SearchTerm_Order; label: string }[] = [];
+    let filteredResched = false;
+    /** 「即使为空也创建」勾选（上游 `decks_create_even_if_empty`） */
+    let filteredAllowEmpty = false;
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -457,6 +476,79 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         askCreate();
     }
 
+    // 工具 → 创建筛选牌组 ######################################################
+
+    /**
+     * 工具 → 创建筛选牌组（`aqt/filtered_deck.py` 的 `FilteredDeckConfigDialog`）。
+     *
+     * 草稿来自 `getOrCreateFilteredDeck(DeckId(0))`（上游同样传 0 = 新建），确定后走
+     * `addOrUpdateFilteredDeck`，成功即进这个筛选牌组的概览。
+     *
+     * 与上游的差异：没有第二个筛选条件、没有预览间隔（again/hard/good 秒数）、
+     * 没有「搜索」按钮（那是浏览器的搜索编辑器）；FSRS 专用排序（可提取性升/降序）也不列。
+     */
+    async function askFilteredDeck(): Promise<void> {
+        busy = true;
+        try {
+            const draft = await getOrCreateFilteredDeck(new DeckId({ did: 0n }));
+            const term = draft.config?.searchTerms[0];
+            filteredId = draft.id;
+            filteredConfig = draft.config ?? null;
+            filteredName = draft.name;
+            filteredSearch = term?.search ?? "";
+            filteredLimit = term?.limit || 100;
+            filteredOrder = term?.order ?? Deck_Filtered_SearchTerm_Order.OLDEST_REVIEWED_FIRST;
+            filteredResched = draft.config?.reschedule ?? false;
+            filteredAllowEmpty = false;
+            // 顺序下拉：后端每个 order 一个本地化标签（`filteredDeckOrderLabels`），
+            // FSRS 专用的两个（`RETRIEVABILITY_*`）不上架
+            filteredOrderChoices = (await filteredDeckOrderLabels(new Empty({}))).vals
+                .map((label, order) => ({ order: order as Deck_Filtered_SearchTerm_Order, label }))
+                .filter(
+                    ({ order }) =>
+                        order !== Deck_Filtered_SearchTerm_Order.RETRIEVABILITY_ASCENDING &&
+                        order !== Deck_Filtered_SearchTerm_Order.RETRIEVABILITY_DESCENDING,
+                );
+            filteredModal.show();
+        } catch (problem) {
+            console.error("获取筛选牌组草稿失败", problem);
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 确定：`addOrUpdateFilteredDeck`（上游对话框的 OK/Build），成功即进它的概览。 */
+    async function buildFilteredDeck(): Promise<void> {
+        busy = true;
+        try {
+            // 草稿里的其它字段（预览间隔 / v1 的 delays）原样带上
+            const config = new Deck_Filtered(filteredConfig ?? {});
+            config.reschedule = filteredResched;
+            config.searchTerms = [
+                new Deck_Filtered_SearchTerm({
+                    search: filteredSearch,
+                    limit: Math.max(0, Math.floor(filteredLimit)),
+                    order: filteredOrder,
+                }),
+            ];
+            const changes = await addOrUpdateFilteredDeck({
+                id: filteredId,
+                name: filteredName.trim() || "Filtered Deck",
+                config,
+                // 上游的「即使为空也创建/更新」勾选（默认关：搜不到卡片后端会报错并回滚）
+                allowEmpty: filteredAllowEmpty,
+            });
+            filteredModal.hide();
+            await studyDeckById(changes.id);
+        } catch (problem) {
+            // 搜不到卡片时后端会报 `SearchReturnedNoCards`（除非勾了「即使为空」）
+            console.error("创建筛选牌组失败", problem);
+            exportStatus = String(problem);
+        } finally {
+            busy = false;
+        }
+    }
+
     /**
      * 帮助 → 关于（对照 `onAbout` → `aqt/about.py`）。
      *
@@ -573,6 +665,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                         label: tr.decksStudyDeck(),
                         action: "studyDeck",
                         run: askStudyDeck,
+                    },
+                    {
+                        label: translateRaw("qt-misc-create-filtered-deck"),
+                        action: "createFiltered",
+                        shortcut: "F",
+                        run: () => void askFilteredDeck(),
                     },
                     {
                         label: qtAccel("qt-accel-check-database"),
@@ -916,6 +1014,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         if (event.key === "F11") {
             event.preventDefault();
             bridgeCommand("fullscreen");
+            return;
+        }
+        // 工具 → 创建筛选牌组（`forms/main.ui` 的 `actionCreateFiltered`，快捷键 `F`）
+        if (event.key.toLowerCase() === "f" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            void askFilteredDeck();
             return;
         }
         if (event.ctrlKey || event.metaKey || event.altKey) {
@@ -1331,6 +1435,73 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             id="study-deck-study"
             disabled={!studyChoice}
             on:click={() => void studyChosenDeck()}>{tr.decksStudy()}</button
+        >
+    </div>
+</Modal>
+
+<!-- 工具 → 创建筛选牌组（`aqt/forms/filtered_deck.ui`；第二个筛选、预览间隔、
+     浏览器搜索编辑器与 FSRS 专用排序都没做，见 README 的差异表） -->
+<Modal bind:this={filteredModal} modalKey="filtered-deck" onOkClicked={() => void buildFilteredDeck()}>
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{translateRaw("qt-misc-create-filtered-deck")}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <label class="col-form-label" for="filtered-name">{tr.actionsName()}</label>
+        <input id="filtered-name" class="form-control" bind:value={filteredName} />
+        <label class="col-form-label" for="filtered-search">{tr.actionsFilter()}</label>
+        <input id="filtered-search" class="form-control" bind:value={filteredSearch} />
+        <label class="col-form-label" for="filtered-limit">{tr.decksLimitTo()}</label>
+        <input
+            id="filtered-limit"
+            class="form-control"
+            type="number"
+            min="0"
+            bind:value={filteredLimit}
+        />
+        <label class="col-form-label" for="filtered-order">{tr.decksCardsSelectedBy()}</label>
+        <select id="filtered-order" class="form-select" bind:value={filteredOrder}>
+            {#each filteredOrderChoices as choice (choice.order)}
+                <option value={choice.order}>{choice.label}</option>
+            {/each}
+        </select>
+        <div class="form-check">
+            <input
+                id="filtered-resched"
+                class="form-check-input"
+                type="checkbox"
+                bind:checked={filteredResched}
+            />
+            <label class="form-check-label" for="filtered-resched"
+                >{tr.decksRescheduleCardsBasedOnMyAnswers()}</label
+            >
+        </div>
+        <div class="form-check">
+            <input
+                id="filtered-allow-empty"
+                class="form-check-input"
+                type="checkbox"
+                bind:checked={filteredAllowEmpty}
+            />
+            <label class="form-check-label" for="filtered-allow-empty"
+                >{translateRaw("decks_create_even_if_empty")}</label
+            >
+        </div>
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" on:click={filteredModal.cancelHandler}>
+            {tr.actionsCancel()}
+        </button>
+        <button
+            type="button"
+            class="btn btn-primary"
+            id="filtered-build"
+            on:click={() => void buildFilteredDeck()}>{tr.decksBuild()}</button
         >
     </div>
 </Modal>

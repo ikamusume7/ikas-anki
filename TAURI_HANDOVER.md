@@ -1180,14 +1180,19 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   - **已完成**：**主窗口菜单栏**（1.2 的前半）—— 画在牌组列表页顶部，对照 `main.ui` 的
     五个菜单：文件（导入 / 导出 `Ctrl+E` / 创建备份 / 退出）、编辑（撤销 `Ctrl+Z` /
     重做 `Ctrl+Shift+Z`）、视图（全屏 `F11` / 放大 / 缩小 / 重置缩放 `Ctrl+0`）、
-    工具（**学习牌组** / 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项 `Ctrl+P`）、
+    工具（**学习牌组** / **创建筛选牌组** `F` / 检查数据库 / 检查媒体 / 空卡片 /
+    管理笔记类型 / 首选项 `Ctrl+P`）、
     帮助（用户手册 → `helpPageLink(INDEX)` + `openLink`；支持 Anki；关于 → 宿主
     `about` 命令给的版本 JSON）。三个 `check*` RPC 的结果用弹框渲染后端给的报告；
     「学习牌组」是 `aqt/studydeck.py` 的等价物（筛选框按空格分词 + **完整**牌组名列表 +
-    添加 / 学习，确定后设为当前牌组并进概览）；
+    添加 / 学习，确定后设为当前牌组并进概览）；「创建筛选牌组」是
+    `aqt/filtered_deck.py` 的等价物（名字 / 搜索 / 顺序 / 限量 / 重排 / 即使为空也创建 →
+    `addOrUpdateFilteredDeck`；搜不到卡片时后端会 `SearchReturnedNoCards`，除非勾了
+    「即使为空」）；
     「创建备份」「退出」「全屏」「缩放」「关于」走桥接命令，因为都要宿主侧能力
     （备份目录 / 退出 / 窗口状态 / 版本）。**差**：复习界面没有菜单栏（legacy 页只有
-    顶部工具栏）、Switch Profile / 创建筛选牌组 / 检查更新 / add-ons。
+    顶部工具栏）、Switch Profile / 检查更新 / add-ons；筛选牌组对话框缺第二个筛选条件 /
+    预览间隔 / 浏览器搜索编辑器 / FSRS 专用排序。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / **导出** / 删除）、底部

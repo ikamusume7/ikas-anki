@@ -19,7 +19,14 @@ const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
 const base = `http://127.0.0.1:${port}`;
 
 // 各检查脚本用的临时牌组名前缀：牌组列表（decks-check）、浏览器（browser-check）等
-const prefixes = ["TauriTemp", "TauriDecks", "TauriCreated", "TauriRenamed", "TauriImport"];
+const prefixes = [
+    "TauriTemp",
+    "TauriDecks",
+    "TauriCreated",
+    "TauriRenamed",
+    "TauriImport",
+    "TauriFiltered",
+];
 
 /**
  * 临时笔记的**内容**标记（搜索词，按 `searchNotes` 的语法）：
@@ -37,6 +44,7 @@ const noteMarkers = [
     "TauriProbe",
     "TauriBrowser",
     "TauriDecks 补的卡片",
+    "TauriFiltered",
 ];
 
 const noteIds = async () => {

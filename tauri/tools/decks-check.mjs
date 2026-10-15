@@ -755,6 +755,88 @@ try {
     }
     check("已清理「学习牌组 → 添加」建的牌组", !(await deckNames()).includes(studyCreatedName));
 
+    // 5g. 工具 → 创建筛选牌组（`qt/aqt/filtered_deck.py`）#######################
+    // 先给父牌组塞一张卡片，好让 `deck:<父牌组>` 这个搜索词能匹配到卡片
+    const filteredNote = await addNoteTo(parentId, `TauriFiltered${stamp}`);
+    const filteredName = `TauriFiltered${stamp}`;
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    // 工具菜单里两项都在（`main.ui`：actionStudyDeck / actionCreateFiltered）
+    await page.locator(".menubar [data-menu-title]").nth(3).click();
+    await page.waitForTimeout(300);
+    const toolsActions = await page.evaluate(() =>
+        [...document.querySelectorAll(".menu-popup [data-menu]")].map((el) => el.dataset.menu),
+    );
+    check(
+        "工具菜单有学习牌组与创建筛选牌组",
+        toolsActions.includes("studyDeck") && toolsActions.includes("createFiltered"),
+        toolsActions.join(" / "),
+    );
+    await page.keyboard.press("Escape");
+    // 快捷键 `F` 与菜单项（`main.ui` 的 `actionCreateFiltered`）都开同一个弹框
+    await page.keyboard.press("f");
+    await page.waitForSelector(".modal.show #filtered-name", { timeout: 10_000 });
+    check(
+        "快捷键 F 打开「创建筛选牌组」",
+        (await page.locator(".modal.show #filtered-name").inputValue()).length > 0,
+        await page.locator(".modal.show #filtered-name").inputValue(),
+    );
+    const orderLabels = await page.evaluate(() =>
+        [...document.querySelectorAll(".modal.show #filtered-order option")].map(
+            (option) => option.textContent,
+        ),
+    );
+    check(
+        "顺序下拉来自 filteredDeckOrderLabels（去掉两个 FSRS 专用项）",
+        orderLabels.length === 9 && orderLabels.every((label) => (label ?? "").length > 0),
+        `${orderLabels.length} 项`,
+    );
+    await page.locator(".modal.show #filtered-name").fill(filteredName);
+    await page.locator(".modal.show #filtered-search").fill(`deck:${parentName}`);
+    await page.locator(".modal.show #filtered-limit").fill("5");
+    await page.locator(".modal.show #filtered-order").selectOption("6"); // DUE
+    await page.locator(".modal.show #filtered-build").click();
+    await page.waitForTimeout(2500);
+    check(
+        "构建后进了筛选牌组的概览",
+        page.url().includes("?deck=") &&
+            ((await page.locator(".overview h3").textContent()) ?? "").includes(filteredName),
+        page.url(),
+    );
+    const filteredId = BigInt(
+        (await page.locator(".overview #deck-rebuild").count()) > 0 ? page.url().split("deck=")[1] : "0",
+    );
+    const filteredDeck = filteredId
+        ? await rpc("getDeck", new DeckId({ did: filteredId }).toBinary()).then((bytes) =>
+            Deck.fromBinary(bytes)
+        )
+        : null;
+    check(
+        "后端建出的是筛选牌组",
+        filteredDeck?.kind.case === "filtered",
+        filteredDeck?.kind.case ?? "（没建出来）",
+    );
+    const filteredCards = await searchNotes(`did:${filteredId}`);
+    check("筛选牌组里有匹配到的卡片", filteredCards.length > 0, `${filteredCards.length} 张`);
+    check(
+        "筛选牌组的搜索条件落库了",
+        filteredDeck?.kind.case === "filtered" &&
+            filteredDeck.kind.value.searchTerms[0]?.search === `deck:${parentName}`,
+        filteredDeck?.kind.case === "filtered"
+            ? (filteredDeck.kind.value.searchTerms[0]?.search ?? "（空）")
+            : "（没建出来）",
+    );
+
+    // 收尾：删掉筛选牌组与那张夹具卡片，并把页面带回牌组列表
+    await rpc("removeDecks", new DeckIds({ dids: [filteredId] }).toBinary());
+    await rpc(
+        "removeNotes",
+        new RemoveNotesRequest({ noteIds: [filteredNote], cardIds: [] }).toBinary(),
+    );
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    check("已清理筛选牌组与夹具卡片", !(await deckNames()).includes(filteredName));
+
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
     await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });
