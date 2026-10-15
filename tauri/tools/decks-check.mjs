@@ -690,6 +690,71 @@ try {
     );
     check("文件菜单有退出", fileActions.includes("quit"), fileActions.join(" / "));
 
+    // 5f. 工具 → 学习牌组（`aqt/studydeck.py`：筛选框 + 名字列表 + 添加 / 学习）####
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    await clickMenu(3, "studyDeck");
+    await page.waitForSelector(".modal.show #study-deck-list", { timeout: 5000 });
+    // 等列表渲染出条目（`{#each}` 与响应式重算是异步的）
+    await page.waitForSelector("#study-deck-list [data-deck-name]", { timeout: 5000 });
+    const listedNames = await page.evaluate(() =>
+        [...document.querySelectorAll("#study-deck-list [data-deck-name]")].map((el) =>
+            el.dataset.deckName
+        ),
+    );
+    check("学习牌组列出所有牌组", listedNames.includes(parentName), `${listedNames.length} 个`);
+
+    // 筛选框：空格分开的词都要命中（上游 `StudyDeck._matches`）
+    await page.locator(".modal.show #study-deck-filter").fill(`tauri ${stamp}`);
+    await page.waitForTimeout(300);
+    const afterFilter = await page.evaluate(() =>
+        [...document.querySelectorAll("#study-deck-list [data-deck-name]")].map((el) =>
+            el.dataset.deckName
+        ),
+    );
+    check(
+        "筛选框按空格分词匹配",
+        afterFilter.includes(parentName),
+        afterFilter.join(" / ") || "（空）",
+    );
+
+    // 选中子牌组 → 学习：设为当前牌组并进概览（上游 `set_current_deck` → 概览）
+    await page.locator(".modal.show #study-deck-filter").fill("child");
+    await page.waitForTimeout(300);
+    await page.locator(`.modal.show #study-deck-list [data-deck-name="${childName}"]`).click();
+    await page.locator(".modal.show #study-deck-study").click();
+    await page.waitForTimeout(1500);
+    check("学习牌组 → 学习：进了该牌组的概览", page.url().includes(`deck=${childId}`), page.url());
+    check(
+        "概览显示的是选中的牌组",
+        ((await page.locator(".overview h3").textContent()) ?? "").includes("Child"),
+        (await page.locator(".overview h3").textContent()) ?? "",
+    );
+
+    // 「添加」：新建后直接进那个牌组的概览（上游 `onAddDeck` 的 success 回调）
+    const studyCreatedName = `TauriStudy${stamp}`;
+    await clickMenu(3, "studyDeck");
+    await page.locator(".modal.show #study-deck-add").click();
+    await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });
+    await page.locator(".modal.show #deck-name").fill(studyCreatedName);
+    await page.locator(".modal.show .modal-footer .btn-primary").click();
+    await page.waitForTimeout(2500);
+    const studyCreatedTitle = (await page.locator(".overview h3").textContent()) ?? "";
+    check(
+        "学习牌组 → 添加：新建后直接进概览",
+        page.url().includes("?deck=") && studyCreatedTitle.includes(studyCreatedName),
+        studyCreatedTitle.trim() || page.url(),
+    );
+
+    // 收尾：删掉新建的牌组，并把页面带回牌组列表（第 6 节从这里继续）
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    const studyRow = (await deckRows()).find((row) => row.text.includes(studyCreatedName));
+    if (studyRow?.id) {
+        await rpc("removeDecks", new DeckIds({ dids: [BigInt(studyRow.id)] }).toBinary());
+    }
+    check("已清理「学习牌组 → 添加」建的牌组", !(await deckNames()).includes(studyCreatedName));
+
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
     await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });

@@ -1033,6 +1033,19 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
    与 `tauri/src/bridge.rs` 一致：`bridgeCommand(arg, callback)` 把响应
    （JSON，解析不了给原文）交给回调。
 
+### 5.40 Svelte 的响应式依赖是**静态**分析的：`$:` 里别把变量藏在函数里
+
+`$: x = f()` 的依赖只看**语句里直接出现的变量**，函数体里读了什么它不管。写
+
+```ts
+$: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyFilter));
+```
+
+时依赖只剩 `studyFilter` —— `nodes`（或任何 store / 变量）填好后这条语句**不会重跑**，
+表现是「刚打开弹框时列表是空的，动一下筛选框才出来」。要么在 `$:` 里直接引用变量
+（`[...nodes.values()].map(...)`），要么把 `nodes` 也写进语句里。检查脚本里遇到
+「先空后有的列表」，也要等条目出现（`waitForSelector("[data-...]")`）而不是只等容器。
+
 ---
 
 ## 6. 剩余工作
@@ -1167,12 +1180,14 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
   - **已完成**：**主窗口菜单栏**（1.2 的前半）—— 画在牌组列表页顶部，对照 `main.ui` 的
     五个菜单：文件（导入 / 导出 `Ctrl+E` / 创建备份 / 退出）、编辑（撤销 `Ctrl+Z` /
     重做 `Ctrl+Shift+Z`）、视图（全屏 `F11` / 放大 / 缩小 / 重置缩放 `Ctrl+0`）、
-    工具（检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项 `Ctrl+P`）、
+    工具（**学习牌组** / 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项 `Ctrl+P`）、
     帮助（用户手册 → `helpPageLink(INDEX)` + `openLink`；支持 Anki；关于 → 宿主
     `about` 命令给的版本 JSON）。三个 `check*` RPC 的结果用弹框渲染后端给的报告；
+    「学习牌组」是 `aqt/studydeck.py` 的等价物（筛选框按空格分词 + **完整**牌组名列表 +
+    添加 / 学习，确定后设为当前牌组并进概览）；
     「创建备份」「退出」「全屏」「缩放」「关于」走桥接命令，因为都要宿主侧能力
     （备份目录 / 退出 / 窗口状态 / 版本）。**差**：复习界面没有菜单栏（legacy 页只有
-    顶部工具栏）、Switch Profile / 学习牌组 / 创建筛选牌组 / 检查更新 / add-ons。
+    顶部工具栏）、Switch Profile / 创建筛选牌组 / 检查更新 / add-ons。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / **导出** / 删除）、底部

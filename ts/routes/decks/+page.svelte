@@ -39,6 +39,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         Deck,
         DeckId,
         DeckIds,
+        GetDeckNamesRequest,
         RenameDeckRequest,
     } from "@generated/anki/decks_pb";
     import { Empty } from "@generated/anki/generic_pb";
@@ -55,6 +56,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         emptyFilteredDeck,
         getCurrentDeck,
         getDeck,
+        getDeckNames,
         getEmptyCards,
         helpPageLink,
         openLink,
@@ -118,6 +120,15 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let reportModal: Modal;
     let reportTitle = "";
     let reportBody = "";
+    /** 工具 → 学习牌组（`aqt/studydeck.py` 的 StudyDeck 对话框） */
+    let studyModal: Modal;
+    let studyFilter = "";
+    let studyChoice = "";
+    /** 候选牌组：**完整名字**（树节点的 `name` 只是叶子名）+ id */
+    let studyEntries: { id: bigint; name: string }[] = [];
+    let studyMatching: string[] = [];
+    /** 「学习牌组」里点了「添加」：新建完直接进那个牌组的概览（上游 `success` 回调） */
+    let createThenStudy = false;
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -138,6 +149,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     $: textPrompt = textMode === "create" ? tr.decksNewDeckName() : tr.actionsRename();
     /** 当前概览的牌组是不是筛选牌组（决定显示「重建/清空」还是「自定义学习」） */
     $: overviewFiltered = overviewDeck?.kind.case === "filtered";
+    // 「学习牌组」列表：随着候选列表更新与筛选框输入重算。
+    // 注意这里**直接**引用 `studyEntries` —— Svelte 的响应式依赖是静态分析的，
+    // 挪进函数里的话依赖会只剩 `studyFilter`（表现为：刚打开弹框时列表是空的）
+    $: studyMatching = studyEntries
+        .map((entry) => entry.name)
+        .filter((name) => matchesStudyFilter(name, studyFilter));
 
     /** 取整棵树（`now` 必填：后端按它算「今天」的到期数）。 */
     async function loadTree(): Promise<void> {
@@ -391,6 +408,55 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         bridgeCommand(`zoom:${mode}`);
     }
 
+    // 工具 → 学习牌组 ##########################################################
+
+    /**
+     * 上游 `StudyDeck._matches`：筛选词按空格拆开，**每个词**都要出现在名字里（都转小写）。
+     */
+    function matchesStudyFilter(name: string, filter: string): boolean {
+        const haystack = name.toLowerCase();
+        return filter
+            .toLowerCase()
+            .split(" ")
+            .filter((word) => word.length > 0)
+            .every((word) => haystack.includes(word));
+    }
+
+    /** 工具 → 学习牌组：列出现有牌组（含筛选牌组），选中后设为当前牌组并进概览。 */
+    async function askStudyDeck(): Promise<void> {
+        studyFilter = "";
+        // 上游 `all_names_and_ids(include_filtered=True, skip_empty_default=True)`：
+        // 树节点的 `name` 只是**叶子名**，所以单独取一次完整名字（筛选牌组也在内）
+        studyEntries = (
+            await getDeckNames(new GetDeckNamesRequest({ skipEmptyDefault: true }))
+        ).entries.map((entry) => ({ id: entry.id, name: entry.name }));
+        studyChoice = studyEntries.find((entry) => entry.id === currentDeckId)?.name ?? "";
+        studyModal.show();
+    }
+
+    /** 上游 `callback`：`decks.id(name)` → `set_current_deck` → `moveToState("overview")`。 */
+    async function studyChosenDeck(): Promise<void> {
+        const entry = studyEntries.find((it) => it.name === studyChoice);
+        if (!entry) {
+            return;
+        }
+        studyModal.hide();
+        await studyDeckById(entry.id);
+    }
+
+    /** 设为当前牌组并进概览（整页导航，与 `openDeck` 同一招）。 */
+    async function studyDeckById(deckId: bigint): Promise<void> {
+        await setCurrentDeck(new DeckId({ did: deckId }));
+        window.location.href = `/decks/?deck=${deckId}`;
+    }
+
+    /** 「学习牌组」里的「添加」（`Ctrl+N`）：新建的牌组直接进概览。 */
+    function askCreateThenStudy(): void {
+        studyModal.hide();
+        createThenStudy = true;
+        askCreate();
+    }
+
     /**
      * 帮助 → 关于（对照 `onAbout` → `aqt/about.py`）。
      *
@@ -503,6 +569,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             {
                 label: qtAccel("qt-accel-tools"),
                 items: [
+                    {
+                        label: tr.decksStudyDeck(),
+                        action: "studyDeck",
+                        run: askStudyDeck,
+                    },
                     {
                         label: qtAccel("qt-accel-check-database"),
                         action: "checkDatabase",
@@ -714,7 +785,16 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         try {
             if (textMode === "create") {
                 // `Deck.kind` 是必填的 oneof，缺了后端会报 "missing kind"
-                await addDeck(new Deck({ name, kind: { case: "normal", value: {} } }));
+                const changes = await addDeck(new Deck({
+                    name,
+                    kind: { case: "normal", value: {} },
+                }));
+                // 「学习牌组 → 添加」：新建完直接进它的概览（上游 `StudyDeck.onAddDeck` 的 success）
+                if (createThenStudy) {
+                    createThenStudy = false;
+                    await studyDeckById(changes.id);
+                    return;
+                }
             } else if (target) {
                 await renameDeck(new RenameDeckRequest({ deckId: target.deckId, newName: name }));
             }
@@ -1214,6 +1294,47 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 <!-- 齿轮 → 导出（与浏览器那边共用同一个对话框与 `exporting.ts`） -->
 <ExportDialog bind:this={exportDialog} onExport={(choice) => void runDeckExport(choice)} />
 
+<!-- 工具 → 学习牌组（`aqt/forms/studydeck.ui`：筛选框 + 名字列表 + 添加 / 学习） -->
+<Modal bind:this={studyModal} modalKey="study-deck" onOkClicked={() => void studyChosenDeck()}>
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{tr.decksStudyDeck()}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <label class="col-form-label" for="study-deck-filter">{tr.decksFilter()}</label>
+        <input id="study-deck-filter" class="form-control" bind:value={studyFilter} />
+        <div class="study-deck-list" id="study-deck-list">
+            {#each studyMatching as name (name)}
+                <button
+                    type="button"
+                    class="study-deck-entry"
+                    class:selected={name === studyChoice}
+                    data-deck-name={name}
+                    on:click={() => (studyChoice = name)}
+                    on:dblclick={() => void studyChosenDeck()}>{name}</button
+                >
+            {/each}
+        </div>
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="study-deck-add" on:click={askCreateThenStudy}
+            >{tr.actionsAdd()}</button
+        >
+        <button
+            type="button"
+            class="btn btn-primary"
+            id="study-deck-study"
+            disabled={!studyChoice}
+            on:click={() => void studyChosenDeck()}>{tr.decksStudy()}</button
+        >
+    </div>
+</Modal>
+
 <!-- 工具菜单的报告弹框（检查数据库 / 检查媒体 / 空卡片） -->
 <Modal bind:this={reportModal} modalKey="deck-report" dialogClass="modal-lg">
     <div slot="header" class="modal-header">
@@ -1544,6 +1665,31 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     .shortcut {
         color: var(--fg-faint, #777);
+    }
+
+    /* 「学习牌组」的名字列表（对照 `studydeck.ui` 的 `QListWidget`） */
+    .study-deck-list {
+        max-height: 18rem;
+        margin-top: 0.5rem;
+        overflow-y: auto;
+        border: 1px solid var(--border, #ccc);
+        border-radius: 4px;
+    }
+
+    .study-deck-entry {
+        display: block;
+        width: 100%;
+        padding: 0.2rem 0.5rem;
+        border: none;
+        background: none;
+        color: var(--fg);
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .study-deck-entry:hover,
+    .study-deck-entry.selected {
+        background: var(--canvas-inset, #e6e6e6);
     }
 
     .description {
