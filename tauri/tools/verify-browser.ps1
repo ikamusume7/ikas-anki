@@ -105,6 +105,8 @@ function Send-Bridge {
 $browseTitle = if ($Lang -like "zh*") { "浏览" } else { "Browse" }
 $previewTitle = if ($Lang -like "zh*") { "预览" } else { "Preview" }
 $cardInfoTitle = if ($Lang -like "zh*") { "卡片信息" } else { "Card Info" }
+# 「管理笔记类型」窗口的标题取 `notetypes-note-types`（zh-CN 下是「笔记模板」）
+$notetypesTitle = if ($Lang -like "zh*") { "笔记模板" } else { "Note Types" }
 
 Write-Host "启动 $Exe（端口 $Port，集合 $Collection）…"
 $proc = Start-Process -FilePath $exePath -WorkingDirectory $root `
@@ -123,6 +125,11 @@ try {
             throw "补卡片后复习界面仍未渲染（详见 $logPath）"
         }
     }
+
+    # 上一次跑崩了会留下临时牌组/临时笔记（其中预览翻页用的那张双卡片笔记是**故意**
+    # 留到宿主断言之后的），开跑前先收一遍，检查才有确定的起点
+    Write-Host "清理上次可能残留的临时牌组与笔记…"
+    node tauri/tools/cleanup-test-decks.mjs | Out-Null
 
     Write-Host "发送 `browse` 桥接命令（等价于复习界面的 `b` 快捷键）…"
     $status = Send-Bridge -Window "main" -Command "browse"
@@ -198,6 +205,23 @@ try {
     } else {
         Write-Host "更改笔记类型：开窗 → 页面保存 → 宿主关窗" -ForegroundColor Green
     }
+
+    # 管理笔记类型（菜单「更多」→ `pycmd("notetypes")` → 宿主开新写的 `notetypes/` 页面）。
+    # Qt 的入口在浏览器侧栏 Note Types 节点的右键菜单里（`tree.py:924-928`），
+    # 本外壳的侧栏节点没有右键菜单，所以放在「更多」菜单（差异见 tauri/README.md）
+    if (-not (Wait-LogPattern "打开窗口: notetypes ->" 20)) {
+        Write-Host "菜单点「管理笔记类型」没有开窗" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "管理笔记类型窗口已打开" -ForegroundColor Green
+        Start-Sleep -Seconds 2
+        & (Join-Path $PSScriptRoot "capture-window.ps1") `
+            -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "notetypes.png") `
+            -WaitSeconds 20 -TitleLike $notetypesTitle
+    }
+    # 页面本身：列表 / 添加（原厂 + 克隆）/ 重命名 / 删除 / 字段…卡片… 两个端点
+    node tauri/tools/notetypes-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
 
     # 导出（`saveFileDialog` 端点 + 导出 RPC）：产物在 out/browser-check/*.apkg
     if (-not (Wait-LogPattern "ANKI_SAVE_PATH 生效，跳过保存对话框" 20)) {

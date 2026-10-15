@@ -37,9 +37,12 @@
   - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通；
     概览里还能开**自定义学习**（`C` → 新写的 `ts/routes/custom-study/`）。
   - 编辑器的两个对话框（「字段…」/「卡片…」，都是新写的页面）：`ts/routes/fields/`、
-    `ts/routes/cards/`。
+    `ts/routes/cards/`；**「管理笔记类型」对话框也已完成**（新写的
+    `ts/routes/notetypes/`：列表 + 添加/重命名/删除/克隆 + 对指定笔记类型的
+    「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为本外壳还没有
+    菜单栏，见 PARITY 1.2）。
   - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、导出 CSV/纯文本、
-    查找重复、管理笔记类型、启动行为（检查/备份）、Android
+    查找重复、启动行为（检查/备份）、Android
 - **M4 未开始**：打包与 Android
 
 **当前可直接验证**（六个一键脚本，详见 §2.4）：
@@ -50,7 +53,7 @@
 | `tauri/tools/verify-m2.ps1` | 平台能力：剪贴板文件列表 / TTS 合成 / 录音闭环 + 多窗口命令归属 |
 | `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **拖入文件**（合成 drop → 媒体落库）→ **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
-| `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带 |
+| `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 管理笔记类型窗口（列表 / 增删改 / 克隆 / 两个对话框端点）→ 关闭连带 |
 | `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → **导入端到端**（造 `.apkg` 夹具 → 页面导入 → RPC 复查）→ `d`/`s`/`study` 切页 |
 
 ---
@@ -136,10 +139,11 @@ pwsh -File tauri/tools/verify-reviewer.ps1   # 复习界面 + 布局断言
 pwsh -File tauri/tools/verify-m2.ps1         # 平台能力 + 多窗口命令归属
 pwsh -File tauri/tools/verify-editor.ps1     # 编辑器窗口 + 改字段保存
 pwsh -File tauri/tools/verify-addcards.ps1   # 添加卡片窗口 + 添加落库 + 关闭契约
-pwsh -File tauri/tools/verify-browser.ps1    # 浏览器窗口 + 表格 + 编辑器联动
+pwsh -File tauri/tools/verify-browser.ps1    # 浏览器窗口 + 表格 + 编辑器联动 + 管理笔记类型
+pwsh -File tauri/tools/verify-decks.ps1      # 牌组列表（启动默认页）+ 概览 + 导入 + 自定义学习
 ```
 
-五条都会自己启动外壳、用隔离集合、跑断言、结束进程。三个前置：
+六条都会自己启动外壳、用隔离集合、跑断言、结束进程。三个前置：
 
 - **浏览器页面是 SvelteKit 产物**：改了 `ts/routes/browser/` 必须重跑
   `corepack yarn build`（§2.1 第 3 步），否则外壳发出去的是旧页面；
@@ -398,7 +402,7 @@ tauri/tools/           验证脚本：verify-reviewer.ps1（复习界面）、ve
                        -TitleLike 选择）、visual-check.mjs / m2-check.mjs /
                        editor-check.mjs / fields-check.mjs / cards-check.mjs /
                        drop-check.mjs / addcards-check.mjs / browser-check.mjs /
-                       decks-check.mjs / cleanup-test-decks.mjs /
+                       notetypes-check.mjs / decks-check.mjs / cleanup-test-decks.mjs /
                        custom-study-check.mjs / occlusion-check.mjs、seed-card.mjs、
                        set-tts-template.mjs、check-prefs21.mjs
 
@@ -407,6 +411,17 @@ ts/routes/decks/      新写的牌组列表页面（主窗口默认页）：+pag
 ts/routes/cards/      新写的「卡片…」对话框（编辑器工具栏，上游是 Qt 的 clayout.py）：
                       +page.svelte（三块编辑区 + 卡片类型增删改重排 + 选项菜单 +
                       RenderUncommittedCard 预览）
+ts/routes/notetypes/   新写的「管理笔记类型」对话框（上游 Qt 的 Models 对话框
+                      `qt/aqt/models.py`）：+page.svelte（列表「名字 [N 条笔记]」+
+                      添加（6 种原厂类型 / 克隆现有类型，两步走）/ 重命名 / 删除（两种
+                      确认文案）/ 「字段…」「卡片…」两个按钮）。宿主侧：窗口标签
+                      `notetypes` 已在 `windows.rs` 登记、`main_window.rs::open_notetypes`
+                      会开 `notetypes/`（尺寸 560×640，标题 `notetypes-note-types`）、
+                      `pycmd("notetypes")` 入口（因没有菜单栏，暂时挂在浏览器「更多」菜单，
+                      见 PARITY 1.2）、`server/api.rs` 的 `openFieldsDialogForNotetype` /
+                      `openCardsDialogForNotetype` 两条端点（对指定 `NotetypeId` 开
+                      `fields/?notetype=` / `cards/?notetype=&ord=0`）。
+                      验证：`tauri/tools/notetypes-check.mjs`（由 `verify-browser.ps1` 调用）。
 ts/routes/browser/    新写的浏览器页面：+page.svelte（搜索/排序/多选/动作表/快捷键）、
                        Toolbar.svelte、Sidebar.svelte、ResultRow.svelte（逐行取数）、
                        ContextMenu.svelte（行右键菜单，`data-action` 供验证脚本点击）、
@@ -909,6 +924,17 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
 要真机手工确认，自动化里只断言宿主日志（`verify-editor.ps1` 里的两条
 「已关闭 Tauri 的文件拖放拦截」）。
 
+### 5.34 写「管理笔记类型」页面时留下的两条
+
+1. **往数组里 `push` 不是赋值**：添加弹框的选项要先在本地数组里拼好、最后一次性
+   `addChoices = choices`，否则弹框里始终是空的（§5.25 / §5.31 的同一家族：Svelte
+   只认赋值，看不见函数体里的改动）。写新页面时先想"这个变量出现在响应式语句里了吗"。
+2. **新建笔记类型时 `id` 必须显式置 0**：`addOrUpdateNotetype` 靠 `nt.id == 0` 判定
+   「新增」（`rslib/src/notetype/service.rs:64-77`），而 `getStockNotetypeLegacy` 的
+   原厂 JSON 里**根本没有 `id` 这个字段** —— 删掉它、或给 `null`，分别报
+   `missing field id` 与 `StringOrInt`（`NotetypeSchema11.id` 是必填数字）。克隆现有
+   类型时同理：`getNotetypeLegacy` 带的是**旧 id**，不置 0 就变成"改那个类型"。
+
 ---
 
 ## 6. 剩余工作
@@ -1073,9 +1099,52 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
     宿主注入 `assets/reviewer-toolbar.js`；差同步链接与 add-ons 托盘，见 §5.29 与
     `tauri/README.md` 的「顶部工具栏」）。顺带核对：**Qt v3 主窗口并没有状态栏**
     （`forms/main.ui` 里没有 QStatusBar），`tauri/PARITY.md` 的 1.3 已按"已对齐"处理。
+  - **已完成**：**「管理笔记类型」对话框**（上游 Qt 的 `Models` 对话框，
+    `qt/aqt/models.py:39`）—— 新写的 `ts/routes/notetypes/+page.svelte`：
+    - 列表：`getNotetypeNamesAndCounts` → 每行「名字 [N 条笔记]」（`models.py:157-158`，
+      文案 `browsing-note-count`）；选中行，双击 / `F2` 改名、`Delete` 删除。
+    - 「添加」两步走（`models.py:166-187` + `AddModel`）：先选 6 种原厂类型
+      （`notetypes-add`）或克隆现有类型（`notetypes-clone`），再问名字（`actions-name`）；
+      原厂 / 克隆的 JSON 分别取自 `getStockNotetypeLegacy` / `getNotetypeLegacy`，落库走
+      `addOrUpdateNotetype`（`id=0` 即新增，与 Qt 的 `add_notetype_legacy` 同一条路）。
+    - 「重命名」→ `getNotetype` + `updateNotetype`；「删除」的守卫与两种确认文案照抄
+      `models.py:189-198`：只剩一个类型时只提示 `notetypes-please-add-another-note-type-first`，
+      有笔记在用 → 「连同卡片一起删」（`notetypes-delete-this-note-type-and-all`），
+      否则 → 「删掉这个没人用的类型」（`notetypes-delete-this-unused-note-type`）。
+    - 「字段…」「卡片…」不自己实现，走宿主端点 `openFieldsDialogForNotetype` /
+      `openCardsDialogForNotetype`（`server/api.rs`）：请求体是
+      `anki.notetypes.NotetypeId{ntid}`，分别开 `fields/?notetype=<id>` /
+      `cards/?notetype=<id>&ord=0`（复用已完成的字段/卡片对话框）。
+    - 宿主侧：窗口标签 `windows::NOTETYPES`（`windows.rs`）、`main_window::open_notetypes`
+      开 `notetypes/`（尺寸 560×640，标题 `notetypes-note-types`）、`pycmd("notetypes")` →
+      `open_notetypes`（`server/pycmd.rs`）。因本外壳还没有菜单栏（PARITY 1.2），**入口挂在
+      浏览器窗口的「更多」菜单**：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()` →
+      `bridgeCommand("notetypes")`，菜单项 `data-action="manageNotetypes"`（文案
+      `browsing-manage-note-types`）；对照 `main.py:1357` 与
+      `browser/sidebar/tree.py:924-928` 的两个上游入口。页面已加进 `server/assets.rs` 的
+      `SVELTEKIT_ROUTES` 与 `UNTRUSTED_SVELTEKIT_ROUTES`（笔记类型名是用户内容，多一份
+      script hash 校验），`onMount` 里 i18n 模块按 §5.22 / §5.26 加载全。
+    - 验证：`tauri/tools/notetypes-check.mjs`（由 `verify-browser.ps1` 串起来：菜单点
+      `manageNotetypes` → 断言 `打开窗口: notetypes ->` → 截真实窗口 `notetypes.png` →
+      跑检查）。检查项：列表渲染与「名字 [笔记数]」/ 两步添加（原厂 + 克隆，RPC 复查
+      字段数）/ 重命名 / 删除确认文案 / 两条宿主端点 / 收尾把临时类型删干净，另截页面
+      `notetypes-page.png`。**2026-10-15 实测全绿**（`verify-browser.ps1` 退出码 0，
+      `svelte-check` 0 error / 0 warning）。
+    - **差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块，
+      本页面的两个按钮已覆盖）；入口还不在菜单栏与侧栏右键菜单上（等 PARITY 1.2）。
   - 下一步：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
-    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、管理笔记类型。
+    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）。
     这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
+
+  > **git 状态（本条目相关）**：本条目的改动已随本次提交入库
+  > （`feat(tauri): manage note types dialog`）—— 宿主侧
+  > `tauri/src/main_window.rs` / `server/api.rs` / `server/assets.rs` / `server/pycmd.rs` /
+  > `windows.rs`、浏览器菜单入口 `ts/routes/browser/+page.svelte`、页面
+  > `ts/routes/notetypes/`、新增 `tauri/tools/notetypes-check.mjs`、修改
+  > `verify-browser.ps1` / `browser-check.mjs` / `cleanup-test-decks.mjs`。
+  > 复核方式（改了宿主要重编、改了页面要重建产物）：`cd tauri; cargo build` →
+  > `corepack yarn build`（页面要在 `out/sveltekit`）→
+  > `pwsh -File tauri/tools/verify-browser.ps1`。
 - **M4**：Windows 打包（**废弃整套 Briefcase 流程**，改 `tauri build`；
   签名对象从 `Anki.exe` 换成 Tauri 产物）+ Android（`tauri android init/build`，
   需处理 `INTERNET` 权限、cleartext、`getFilesDir()`、NDK 交叉编译）。
@@ -1179,6 +1248,7 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
 | 浏览器窗口 | `tauri/src/browser.rs`、`ts/routes/browser/`（新写）、`qt/aqt/browser/browser.py` + `table/model.py` + `sidebar/tree.py` + `find_and_replace.py`（对照用）、`qt/aqt/forms/browser.ui`（动作表与快捷键） |
 | 导出（apkg / colpkg） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框与导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py`（对照用） |
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
+| 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
 | 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
 | 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |
@@ -1189,8 +1259,9 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
 
 ## 9. 下一步建议
 
-M1 / M2 已收尾（32 个平台端点全部有实现），M3 的三个窗口都能用了
-（「编辑当前卡片」「添加卡片」「浏览器」，都有一键脚本）。建议：
+M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用了
+（「编辑当前卡片」「添加卡片」「浏览器」「牌组列表」，以及「字段…」「卡片…」
+「管理笔记类型」三个对话框，都有一键脚本）。建议：
 
 1. **先跑六个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
    断言）、`verify-m2.ps1`（平台能力 + 多窗口命令归属，录音那项需要有麦克风）、
@@ -1201,12 +1272,14 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的三个窗口都
    既有页面接入、字段/卡片对话框、浏览器余项、系统集成、打包与 Android），每项带
    上游参考与验收方式；**补完一项就更新那份清单**。当前进度：复习界面的「更多」菜单
    与顶部工具栏、3.1-3.6「既有页面接入」（牌组选项 / 统计 / 设置 / 导入 / 图像遮挡 /
-   自定义学习）、
-   1.1 牌组列表、1.2 的两条工具栏都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理）。
-   下一步按清单走：**4.2「卡片…」对话框**（模板/样式/预览，上游约 980 行，最大的一块）、
-   1.x 的收尾（牌组描述/拖拽排序、启动行为）、以及浏览器余项（CSV 导出、查找重复、
-   管理笔记类型）。「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），
-   目前 `platform/mod.rs` 里仍是"忽略"分支。
+   自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
+   5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
+   4.3 编辑器「更多」菜单上游并不存在）。
+   下一步按清单走：**浏览器余项 —— 导出 CSV / 纯文本格式（要先选列，是另一套对话框）
+   与查找重复**（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）；两者都只是
+   "缺界面 / 缺 UI 入口"，没有架构上的障碍。
+   「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），上游约 980 行，
+   是模板/样式/预览最大的一块（§6.4 已作为「已完成」登记）。
    `y`（同步）与 `Ctrl+E`（导出）要等 6.x 的同步与主窗口菜单栏。
    做之前先读
    `tauri/README.md` 的「编辑器」「浏览器」「复习界面」「牌组列表」：宿主契约都不复杂，

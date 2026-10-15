@@ -11,6 +11,7 @@
 //! 与 `_check_dynamic_request_permissions`。
 
 use anki_proto::notetypes::ChangeNotetypeRequest;
+use anki_proto::notetypes::NotetypeId;
 use axum::body::Bytes;
 use axum::extract::Path;
 use axum::extract::State;
@@ -79,6 +80,34 @@ pub async fn handle_rpc(
             Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
             Err(error) => {
                 tracing::warn!("打开卡片对话框失败: {error:#}");
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response()
+            }
+        };
+    }
+
+    // 「管理笔记类型」窗口的两个按钮：对**指定的**笔记类型开「字段…」「卡片…」窗口。
+    //
+    // 上游 Qt 是 `models.py:238/243` 的 `onFields` / `onCards`（直接 `FieldDialog(self, m)` /
+    // `CardLayout(self, m)`），页面这边没有窗口能力，所以照 `openFieldsDialog` /
+    // `openCardsDialog` 的样子各开一条端点，只是这次把笔记类型 id 放在请求体里
+    // （`anki.notetypes.NotetypeId`）。
+    if method == "openFieldsDialogForNotetype" || method == "openCardsDialogForNotetype" {
+        let notetype_id = match NotetypeId::decode(body.as_ref()) {
+            Ok(input) => input.ntid,
+            Err(error) => {
+                return (StatusCode::BAD_REQUEST, format!("{method} 解析失败: {error}"))
+                    .into_response()
+            }
+        };
+        let opened = if method == "openFieldsDialogForNotetype" {
+            crate::main_window::open_fields_for_notetype(&state, notetype_id).await
+        } else {
+            crate::main_window::open_cards_for_notetype(&state, notetype_id).await
+        };
+        return match opened {
+            Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
+            Err(error) => {
+                tracing::warn!("{method} 失败: {error:#}");
                 (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}")).into_response()
             }
         };

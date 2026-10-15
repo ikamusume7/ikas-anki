@@ -335,6 +335,15 @@ async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Op
             editor::on_ready(state, window).await;
             None
         }
+        // 「管理笔记类型」窗口（Qt 的 `Models` 对话框）。上游的入口是主窗口菜单
+        // （`main.py:1357`）与浏览器侧栏 Note Types 的右键菜单（`tree.py:924-928`）；
+        // 本外壳还没有菜单栏（PARITY 1.2），所以挂在浏览器的「更多」菜单里
+        "notetypes" => {
+            if let Err(error) = main_window::open_notetypes(state) {
+                tracing::warn!("打开「管理笔记类型」窗口失败: {error:#}");
+            }
+            None
+        }
         // 浏览器页面就绪：**由宿主决定首屏搜索**（页面自己不知道要搜什么）。
         // 把搜索词放在响应里，而不是"就绪后宿主再注入"，是为了躲开时序问题：
         // 窗口刚创建时 eval 有可能落空，而页面报到一定会到。

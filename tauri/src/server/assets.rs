@@ -47,7 +47,9 @@ const SVELTEKIT_ROUTES: &[&str] = &[
     "fields",
     // 卡片模板对话框（上游是 Qt 对话框）
     "cards",
-    ];
+    // 「管理笔记类型」对话框（上游是 Qt 的 Models 对话框）
+    "notetypes",
+];
 
 /// 展示用户内容的路由，需要更严格的 CSP（对照 mediasrv 的
 /// `is_untrusted_sveltekit_route`）。
@@ -66,6 +68,8 @@ const UNTRUSTED_SVELTEKIT_ROUTES: &[&str] = &[
     "fields",
     // 模板与样式也是用户内容（模板里可以放任意 HTML/JS）
     "cards",
+    // 笔记类型的名字是用户内容
+    "notetypes",
 ];
 
 /// 对照 mediasrv 的 `TRUSTED_PAGE_CSP`。

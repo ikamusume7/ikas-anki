@@ -1199,6 +1199,17 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         bridgeCommand(`addCopy:${noteId}:${deckId}`);
     }
 
+    /**
+     * 「管理笔记类型」（Qt 在浏览器侧栏 Note Types 节点的右键菜单里：
+     * `browser/sidebar/tree.py:924-928` 的 `browsing-manage-note-types` → `Models(...)`）。
+     *
+     * 本外壳的侧栏节点没有右键菜单，入口放在这里的「更多」菜单（主窗口菜单栏还没做，
+     * 见 PARITY 1.2）；窗口与页面由宿主开（`pycmd("notetypes")`）。
+     */
+    function manageNotetypes(): void {
+        bridgeCommand("notetypes");
+    }
+
     /** 卡片信息窗口（`browser.py:799-803` → `aqt/card_info.py:62`）。 */
     async function showCardInfo(): Promise<void> {
         const cardId = await currentCardId();
@@ -1377,6 +1388,11 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
                         action: "changeNotetype",
                         disabled: !hasSelection,
                         run: () => void openChangeNotetype(),
+                    },
+                    {
+                        label: tr.browsingManageNoteTypes(),
+                        action: "manageNotetypes",
+                        run: manageNotetypes,
                     },
                     {
                         label: tr.browsingToggleMark(),

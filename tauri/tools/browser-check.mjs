@@ -43,7 +43,11 @@ import {
     NoteId,
     RemoveNotesRequest,
 } from "../../out/ts/lib/generated/anki/notes_pb.js";
-import { NotetypeNames } from "../../out/ts/lib/generated/anki/notetypes_pb.js";
+import {
+    Notetype,
+    NotetypeId,
+    NotetypeNames,
+} from "../../out/ts/lib/generated/anki/notetypes_pb.js";
 import {
     BuryOrSuspendCardsRequest,
     BuryOrSuspendCardsRequest_Mode,
@@ -867,7 +871,51 @@ try {
         `高亮 ${(await selectedIndexes()).length} / 状态栏计数 ${await selectionCount()}`,
     );
 
-    // 选中笔记（菜单）→ 换成 `nid:` 搜索并全选
+    // 选中笔记（菜单）→ 换成 `nid:` 搜索并全选。
+    //
+    // 这一步之后的「预览」会由 `verify-browser.ps1` 断言 `previewNext` / `previewPrev` ——
+    // 那需要**同一张 note 有 ≥2 张卡片**（预览会话来自选中的卡片）。集合里恰好有没有
+    // 双卡片笔记是不确定的（以前是靠"攒下来的老集合"里正好有翻转卡片类型），所以这里
+    // 显式挑一个「模板数 ≥ 2」的笔记类型造一张测试笔记，再从它进入预览
+    const previewMarker = `TauriPrev${Date.now() % 100_000}`;
+    let multiCardNotetype;
+    const allNotetypes = NotetypeNames.fromBinary(
+        await rpc("getNotetypeNames", new Empty({}).toBinary()),
+    ).entries;
+    for (const entry of allNotetypes) {
+        const candidate = Notetype.fromBinary(
+            await rpc("getNotetype", new NotetypeId({ ntid: entry.id }).toBinary()),
+        );
+        if (candidate.templates.length >= 2) {
+            multiCardNotetype = candidate;
+            break;
+        }
+    }
+    check(
+        "集合里有模板数 ≥ 2 的笔记类型（预览翻页要用）",
+        !!multiCardNotetype,
+        multiCardNotetype?.name ?? "(没有)",
+    );
+    const previewNote = multiCardNotetype
+        ? AddNoteResponse.fromBinary(
+              await rpc(
+                  "addNote",
+                  new AddNoteRequest({
+                      note: new Note({
+                          notetypeId: multiCardNotetype.id,
+                          fields: multiCardNotetype.fields.map((_, index) =>
+                              index === 0 ? previewMarker : "预览用",
+                          ),
+                      }),
+                      deckId: defaultDeck,
+                  }).toBinary(),
+              ),
+          ).noteId
+        : 0n;
+    await page.locator(".search").fill(previewMarker);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(1500);
+
     await page.locator("tbody tr").nth(0).click();
     await page.waitForTimeout(300);
     await page.locator("tbody tr").nth(0).click({ button: "right" });
@@ -953,6 +1001,19 @@ try {
         (await page.evaluate(() => window.__bridgeCalls ?? [])).some((call) =>
             call.startsWith("changeNoteType:"),
         ),
+    );
+
+    // 8.6 管理笔记类型 #####################################################
+    // Qt 在浏览器侧栏 Note Types 节点的右键菜单里（`tree.py:924-928`），本外壳的侧栏
+    // 没有右键菜单，入口挪到了「更多」菜单；窗口与页面由宿主开（`pycmd("notetypes")`），
+    // 页面本身由 `notetypes-check.mjs` 验
+    await page.locator("tbody tr").nth(0).click({ button: "right" });
+    await page.waitForSelector(".context-menu", { timeout: 5000 });
+    await page.locator('[data-action="manageNotetypes"]').click();
+    await page.waitForTimeout(1200);
+    check(
+        "菜单 → 管理笔记类型发出 notetypes",
+        (await page.evaluate(() => window.__bridgeCalls ?? [])).includes("notetypes"),
     );
 
     // 窗口里"选好映射后保存"由一个独立页面驱动（与其它检查一样：同一个后端、
@@ -1075,7 +1136,9 @@ try {
     }
 
     // 9. 双击开编辑器 + 预览 ##############################################
-    await page.locator(".search").fill(hostSearch);
+    // 预览会话来自这一屏选中的卡片，宿主侧还要翻页（`previewNext`），所以搜到刚造的那张
+    // **双卡片**笔记上 —— 用 `hostSearch` 的话第一行多半是单卡笔记，翻页断言会失败
+    await page.locator(".search").fill(previewMarker);
     await page.keyboard.press("Enter");
     await page.waitForTimeout(1500);
     await rows.nth(0).dblclick();
@@ -1114,6 +1177,10 @@ try {
         new SearchNode({ filter: { case: "nids", value: { ids: [BigInt(card.noteId)] } } }).toBinary(),
     );
     console.log(`已通过 searchInBrowser 请求搜索 nid:${card.noteId}`);
+
+    // 预览用的那张双卡片笔记**不在这里删**：宿主侧的 `previewNext` / `previewPrev`
+    // 断言（`verify-browser.ps1`）在本脚本退出之后才跑，还要靠它的两张卡片。
+    // 它由下一次运行开头的 `cleanup-test-decks.mjs` 收拾（连同失败时残留的牌组）。
 
     // 注意字段名是 `dids`（`DeckIds { repeated int64 dids = 1 }`），不是 `deck_ids`
     await rpc("removeDecks", new DeckIds({ dids: [tempDeckId] }).toBinary());

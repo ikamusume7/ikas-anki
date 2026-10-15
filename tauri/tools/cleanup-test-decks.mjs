@@ -1,4 +1,6 @@
-// 清掉检查脚本留下的临时牌组（正常结束时会自己删，这个只处理**中途失败**留下的）。
+// 清掉检查脚本留下的临时牌组与临时笔记（正常结束时会自己删，这个处理**中途失败**
+// 留下的，以及少数"故意留到宿主断言之后"的，例如 `browser-check.mjs` 给预览翻页
+// 造的那张双卡片笔记）。
 //
 // 用法（外壳需已启动，端口/密钥同其它脚本）：
 //   $env:ANKI_API_PORT="40031"; $env:ANKI_API_KEY="test-key-123"
@@ -9,13 +11,50 @@ import {
     DeckNames,
     GetDeckNamesRequest,
 } from "../../out/ts/lib/generated/anki/decks_pb.js";
+import { RemoveNotesRequest } from "../../out/ts/lib/generated/anki/notes_pb.js";
+import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40001";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
 const base = `http://127.0.0.1:${port}`;
 
-// 各检查脚本用的临时牌组名前缀：牌组列表（decks-check）、浏览器（browser-check）
+// 各检查脚本用的临时牌组名前缀：牌组列表（decks-check）、浏览器（browser-check）等
 const prefixes = ["TauriTemp", "TauriDecks", "TauriCreated", "TauriRenamed", "TauriImport"];
+
+/**
+ * 临时笔记的**内容**标记（搜索词，按 `searchNotes` 的语法）：
+ *
+ * 各脚本都往测试集合里写临时笔记，正常路径会自己删；失败时（或像预览翻页那样要留到
+ * 宿主断言之后）就留下来了。这里按内容一次收掉。
+ * 注意不要用泛化的 `Tauri` —— 验证种子卡片里也有这个词（`TauriReversed 正面`）。
+ */
+const noteMarkers = [
+    "TauriPrev",
+    "TauriDel",
+    "TauriFr",
+    "TauriNt",
+    "TauriExp",
+    "TauriProbe",
+    "TauriBrowser",
+    "TauriDecks 补的卡片",
+];
+
+const noteIds = async () => {
+    const ids = [];
+    for (const marker of noteMarkers) {
+        const found = SearchResponse.fromBinary(
+            await rpc("searchNotes", new SearchRequest({ search: marker }).toBinary()),
+        ).ids;
+        ids.push(...found);
+    }
+    return [...new Set(ids.map(String))].map(BigInt);
+};
+
+const stray = await noteIds();
+if (stray.length > 0) {
+    await rpc("removeNotes", new RemoveNotesRequest({ noteIds: stray }).toBinary());
+    console.log(`清理了 ${stray.length} 张临时笔记`);
+}
 
 async function rpc(method, body) {
     const response = await fetch(`${base}/_anki/${method}`, {

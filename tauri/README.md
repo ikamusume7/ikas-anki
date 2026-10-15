@@ -888,6 +888,39 @@ PASS  无输入时页面报告可直接关闭 — closeAddCards(val=false)
 保存 → 用 RPC 复查模板与卡片类型都落库 → 用原始字节还原，并截图
 `out/editor-check/cards.png` 与真实窗口 `cards-window.png`。
 
+### 「管理笔记类型」对话框
+
+上游 Qt 的 `Models` 对话框（`qt/aqt/models.py:39`）有两个入口：主窗口菜单
+「管理笔记类型」（`main.py:1357` → `Models(mw, mw, fromMain=True)`）与浏览器侧栏
+Note Types 节点的右键菜单（`browser/sidebar/tree.py:924-928`）。本外壳还没有菜单栏
+（PARITY 1.2），所以入口**暂时挂在浏览器窗口的「更多」菜单**里：
+`ts/routes/browser/+page.svelte` 的 `manageNotetypes()` → `bridgeCommand("notetypes")`，
+菜单项 `data-action="manageNotetypes"`（文案 `browsing-manage-note-types`）。
+
+窗口由宿主开：`windows.rs` 的标签 `NOTETYPES`、`main_window.rs::open_notetypes`
+（尺寸 560×640，标题取 `notetypes-note-types`），`server/pycmd.rs` 里
+`"notetypes"` → `open_notetypes`。页面是新写的 `ts/routes/notetypes/`：
+
+| 项 | 上游 | 本外壳 |
+| --- | --- | --- |
+| 列表 | `models.py:157-158`：每行「名字 [笔记数]」，数据来自 `getNotetypeNamesAndCounts` | 同左（文案 `browsing-note-count`）；双击 / `F2` 重命名、`Delete` 删除 |
+| 添加 | 两步（`models.py:166-187` + `AddModel`）：先选原厂类型或克隆现有类型，再问名字 | 同左（6 种原厂类型 + 每个现有类型一条克隆项；落库走 `addOrUpdateNotetype`，`id=0` 即新增，与 Qt 的 `add_notetype_legacy` 同一条路） |
+| 重命名 | `actions-new-name`（预填当前名字）→ `update_notetype_legacy` | `getNotetype` + `updateNotetype` |
+| 删除 | `models.py:189-198`：只剩一个类型时只提示；有笔记在用 → 「连同卡片一起删」，否则 → 「删掉这个没人用的类型」 | 同左（`confirm()` 的文案就是那两个 ftl key） |
+| 「字段…」「卡片…」 | 只在 `fromMain=True` 时给这两个按钮，各自开 `Fields` / `Layout` | 两个按钮都给，走宿主端点 `openFieldsDialogForNotetype` / `openCardsDialogForNotetype`（请求体 `NotetypeId{ntid}`）→ `fields/?notetype=<id>` / `cards/?notetype=<id>&ord=0`（复用上面两个对话框） |
+
+差异：Qt 的「选项」按钮开的是老的 `ModelAdvanced`（内容就是字段/卡片两块），本外壳的
+两个按钮已覆盖，没有照搬；入口位置见上（等主窗口菜单栏）。
+
+> 原厂类型的 JSON 走 `getStockNotetypeLegacy`、克隆走 `getNotetypeLegacy`，新建时把
+> `id` 置 0 —— `NotetypeSchema11.id` 是必填数字，既不能删也不能给 `null`（原厂 JSON
+> 里干脆没有这个字段，两种错法分别报 `missing field id` 与 `StringOrInt`）。
+
+验证：`tauri/tools/notetypes-check.mjs`（由 `verify-browser.ps1` 调用）—— 列表渲染
+（数量与「名字 [笔记数]」）→ 两步添加原厂类型（RPC 复查 2 字段 / 1 模板）→ 克隆现有
+类型 → 重命名 → 「字段…」「卡片…」两条端点 → 删除的确认文案是「没人用的类型」→
+收尾把本次建的临时类型删干净；另截真实窗口 `notetypes.png` 与页面 `notetypes-page.png`。
+
 ### 拖入文件（HTML5 drop）
 
 编辑器工具栏与字段都在页面上，拖入文件也一样：**上游 TS 早就实现了整套逻辑**
@@ -1180,9 +1213,10 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 列清单 / 加标签 / 改牌组 / 删除 + 撤销 / **行右键菜单的 38 项动作**：标记 / 旗标 / 暂停 /
 埋藏 / 重置 / 到期日 / 重排 / 立即评分 / 清除未使用标签 / 选中笔记 / 卡片信息 / 复制笔记 /
 查找替换，以及 Home·Ctrl+N·End 跳转与反选全选）→ 驱动预览窗口翻面与前后卡片并截图 →
-验 `searchInBrowser` 与 `browserSearch` 的复用路径 → 关闭浏览器断言编辑区、预览与
-卡片信息窗口连带关掉。产物里有 `browser.png` / `preview.png` / `card-info.png` 三张
-真实渲染截图。
+开「管理笔记类型」窗口 + 跑 `notetypes-check.mjs`（列表 / 两步添加 / 重命名 / 删除 /
+两条对话框端点）→ 验 `searchInBrowser` 与 `browserSearch` 的复用路径 → 关闭浏览器断言
+编辑区、预览与卡片信息窗口连带关掉。产物里有 `browser.png` / `preview.png` /
+`card-info.png` / `notetypes.png`（真实窗口）与 `notetypes-page.png`（页面）截图。
 
 ```
 PASS  侧栏已渲染牌组 — 当前牌组 / 全部集合 / Default 2 + 0 + 0 / Basic / …
@@ -1213,6 +1247,11 @@ PASS  菜单 → 选中笔记（换成 nid: 搜索）
 PASS  查找替换发出 findAndReplace / 查找替换真的改了字段
 PASS  菜单 → 更改笔记类型发出 changeNoteType / 页面已渲染 / 真的改了笔记类型
       （宿主补 note_ids → 后端执行 → 关窗；见 verify 脚本的「开窗 → 页面保存 → 宿主关窗」）
+PASS  菜单 → 管理笔记类型发出 notetypes（窗口已打开）
+PASS  列表渲染出全部笔记类型 / 每项是「名字 [笔记数]」
+PASS  添加（原厂 Basic → RPC 复查 2 字段 / 1 模板）/ 克隆现有类型 / 重命名生效
+PASS  「字段…」打了 openFieldsDialogForNotetype / 「卡片…」打了 openCardsDialogForNotetype
+PASS  删除确认框问的是「没人用的类型」/ 已清理临时笔记类型
 PASS  导出对话框默认 apkg + 选中的笔记 / 文案已本地化 / 切到 colpkg 后只剩「含媒体 / 旧版支持」
 PASS  导出 apkg 产出了合法文件 — 集合-2026-10-13@15-48-12.apkg 56633 字节 PK
       （verify 脚本：导出 apkg → 集合-….apkg（55 KB））
@@ -1258,8 +1297,9 @@ browserSearch：图表 → 浏览器搜索
 | `import-check.mjs` | `verify-decks.ps1` 调用的导入检查：造 `.apkg` 夹具 → 删掉临时牌组/卡片 → 页面导入 → RPC 复查牌组与卡片进库 → `importDone` → 收尾 |
 | `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
 | `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
-| `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → `searchInBrowser` 复用路径 → 关闭连带） |
+| `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → 管理笔记类型窗口 → `searchInBrowser` 复用路径 → 关闭连带） |
 | `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行，并观察页面发往宿主的桥接命令 |
+| `notetypes-check.mjs` | `verify-browser.ps1` 调用的「管理笔记类型」检查：列表渲染 / 两步添加（原厂 + 克隆，RPC 复查字段数）/ 重命名 / 删除确认文案 / 「字段…」「卡片…」两条端点，收尾把临时类型删干净 |
 | `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单/新建删除 → `d`/`s`/`study` 切页） |
 | `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入，并用 RPC 复查当前牌组/牌组是否真的建删 |
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
@@ -1312,10 +1352,11 @@ browserSearch：图表 → 浏览器搜索
     暂停 / 埋藏 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改牌组 / 删除 + 撤销重做、
     复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）都在，见「浏览器」。
     **剩下的**：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
-    查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）、
-    管理笔记类型（对照 `browser.py:301-401` 的完整动作表）。
+    查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）。
   - ~~`more` 命令~~ —— **已实现**（复习界面）：见「复习界面」的「更多」菜单；编辑器里的 `more` 仍未做。
   - ~~卡片布局~~ —— **已实现**：编辑器工具栏的「卡片…」（`openCardsDialog`），见「编辑器」。
+  - ~~管理笔记类型~~ —— **已实现**：新写的 `ts/routes/notetypes/`（列表 + 添加/重命名/删除/克隆
+    + 「字段…」「卡片…」两个按钮），入口在浏览器窗口的「更多」菜单，见「管理笔记类型」对话框。
   - 音频的 `current_caller` 区分（editor / reviewer 的打断语义），属 M5 的音频质量项。
 - **M2 已完成**：mediasrv 的 32 个平台端点全部有实现，详见上文各节。
   唯一没验证的是 **Android 上的录音**：这里统一用 `cpal`（Android 走 oboe），

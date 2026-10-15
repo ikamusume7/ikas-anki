@@ -135,18 +135,21 @@ pub async fn open_fields_for_current(state: &AppState) -> Result<()> {
         tracing::warn!("没有正在编辑的笔记类型，忽略「字段…」请求");
         return Ok(());
     };
+    open_fields_for_notetype(state, notetype_id).await
+}
+
+/// 对着**指定的**笔记类型开「字段…」窗口。
+///
+/// 「管理笔记类型」窗口的「字段…」按钮走这条路（Qt 那边是
+/// `models.py:238` 的 `onFields` → `FieldDialog(self, m)`）。
+pub async fn open_fields_for_notetype(state: &AppState, notetype_id: i64) -> Result<()> {
     let notetype = load_notetype(state, notetype_id).await?;
     tracing::info!("打开字段对话框: notetype={notetype_id}");
     windows::open(
         state,
         &WindowSpec::new(windows::FIELDS, &format!("fields/?notetype={notetype_id}"))
             // 对照 `fields.py:50` 的 `tr.fields_fields_for(val=notetype name)`
-            .title(
-                state
-                    .backend
-                    .i18n()
-                    .fields_fields_for(&notetype.name),
-            )
+            .title(state.backend.i18n().fields_fields_for(&notetype.name))
             .size(640.0, 720.0),
     )
 }
@@ -203,17 +206,56 @@ pub async fn open_cards_for_current(state: &AppState) -> Result<()> {
     if let Some(note_id) = note_id {
         route.push_str(&format!("&note={note_id}"));
     }
-    tracing::info!("打开卡片对话框: notetype={notetype_id} ord={ord} note={note_id:?}");
+    open_cards(state, notetype_id, &notetype.name, &route)
+}
+
+/// 对着**指定的**笔记类型开「卡片…」窗口（没有 note：页面自己造一张空笔记，ord=0）。
+///
+/// 「管理笔记类型」窗口的「卡片…」按钮走这条路（Qt 是 `models.py:243` 的 `onCards`）。
+pub async fn open_cards_for_notetype(state: &AppState, notetype_id: i64) -> Result<()> {
+    let notetype = load_notetype(state, notetype_id).await?;
+    open_cards(
+        state,
+        notetype_id,
+        &notetype.name,
+        &format!("cards/?notetype={notetype_id}&ord=0"),
+    )
+}
+
+fn open_cards(
+    state: &AppState,
+    notetype_id: i64,
+    notetype_name: &str,
+    route: &str,
+) -> Result<()> {
+    tracing::info!("打开卡片对话框: notetype={notetype_id} route={route}");
     windows::open(
         state,
-        &WindowSpec::new(windows::CARDS, &route)
+        &WindowSpec::new(windows::CARDS, route)
             .title(
                 state
                     .backend
                     .i18n()
-                    .card_templates_card_types_for(&notetype.name),
+                    .card_templates_card_types_for(notetype_name),
             )
             .size(1000.0, 720.0),
+    )
+}
+
+/// 打开「管理笔记类型」窗口（Qt 的 `Models` 对话框，`qt/aqt/models.py:39`）。
+///
+/// 上游有两个入口：主窗口菜单「管理笔记类型」（`main.py:1357` → `Models(mw, mw,
+/// fromMain=True)`）与浏览器侧栏 Note Types 的右键菜单（`browser/sidebar/tree.py:924-928`）。
+/// 本外壳还没有菜单栏（PARITY 1.2），入口因此挂在**浏览器窗口**的「更多」菜单里 ——
+/// 差异记在 `tauri/README.md` 的「管理笔记类型」。
+pub fn open_notetypes(state: &AppState) -> Result<()> {
+    tracing::info!("打开「管理笔记类型」窗口");
+    windows::open(
+        state,
+        &WindowSpec::new(windows::NOTETYPES, "notetypes/")
+            // 对照 `models.ui:17` 的 windowTitle＝`notetypes-note-types`
+            .title(state.backend.i18n().notetypes_note_types())
+            .size(560.0, 640.0),
     )
 }
 
