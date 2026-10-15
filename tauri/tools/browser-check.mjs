@@ -267,6 +267,19 @@ try {
     });
     await page.waitForSelector(".sidebar", { timeout: 20_000 });
 
+    // 上一次跑崩了可能把「笔记模式」留在开着的状态（配置落在集合里，不是进程状态），
+    // 后面的断言都建立在卡片模式上 —— 先归位，并让收尾也还原成卡片模式（残留状态
+    // 不该被当成"用户的配置"再写回去；`previewNeighbor` 也只在卡片模式下列卡片 id）
+    if ((await configValue("browserTableShowNotesMode")) === true) {
+        await page.locator("#browse-toggle-notes-mode").click();
+        await page.waitForTimeout(1500);
+        check(
+            "启动时把残留的笔记模式归位",
+            (await configValue("browserTableShowNotesMode")) === false,
+        );
+        original.notesMode = false;
+    }
+
     // 虚拟列表（`VirtualTable.svelte`）会在首尾插「撑高度」的空 `<tr>`：它只有一个
     // 没有 `title` 的 `<td>`。所有「行」相关的断言都要排除它们，否则会多算一行。
     const readTable = () =>
@@ -1237,6 +1250,120 @@ try {
         );
         check("已清理导出的测试 note", (await searchNotes(expMarker)).length === 0);
     }
+
+    // 8.8 查找重复（`find_duplicates.py` + `forms/finddupes.ui`）###############
+    // 造两条**同一个字段值**的笔记（值用唯一 marker，保证只有这一组），然后：
+    // 开对话框 → 选字段 → 可选筛选器填 marker → 搜索 → 报告里只有一组、计数 2 →
+    // 点那一组 → 浏览器切笔记模式并换成 `nid:…` 搜索 → 再开一次点「Tag Duplicates」
+    // → 用 RPC 复查两条笔记真的多了同一个标签 → 删掉这两条。
+    const dupeMarker = `TauriDup${Date.now() % 100_000}`;
+    const dupeNotes = [];
+    for (let index = 0; index < 2; index++) {
+        dupeNotes.push(
+            AddNoteResponse.fromBinary(
+                await rpc(
+                    "addNote",
+                    new AddNoteRequest({
+                        note: { notetypeId: notetype.id, fields: [dupeMarker, `back${index}`] },
+                        deckId: defaultDeck,
+                    }).toBinary(),
+                ),
+            ).noteId,
+        );
+    }
+    const dupeField = Notetype.fromBinary(
+        await rpc("getNotetype", new NotetypeId({ ntid: notetype.id }).toBinary()),
+    ).fields[0].name;
+
+    const openFindDuplicates = async () => {
+        await page.locator("tbody tr").nth(0).click({ button: "right" });
+        await page.waitForSelector(".context-menu", { timeout: 5000 });
+        await page.locator('[data-action="findDuplicates"]').click();
+        await page.waitForSelector(".modal.show #find-dupes-search", { timeout: 5000 });
+    };
+    const runFindDuplicates = async () => {
+        await page.locator("#find-dupes-field").selectOption({ label: dupeField });
+        await page.locator("#find-dupes-filter").fill(dupeMarker);
+        await page.locator("#find-dupes-search").click();
+        await page.waitForSelector("#find-dupes-report button.group", { timeout: 20_000 });
+    };
+
+    // 先把搜索换成这两条新笔记，免得右键点到上一节的旧行
+    await page.locator(".search").fill(dupeMarker);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(1500);
+    await openFindDuplicates();
+    const dupeFieldOptions = await page.locator("#find-dupes-field option").allInnerTexts();
+    check(
+        "「查找重复」列出了笔记类型里的字段",
+        dupeFieldOptions.includes(dupeField),
+        dupeFieldOptions.slice(0, 4).join(" / "),
+    );
+    await runFindDuplicates();
+    const dupeGroupTexts = await page.locator("#find-dupes-report button.group").allInnerTexts();
+    check(
+        "重复报告只有造出来的那一组（计数 2）",
+        dupeGroupTexts.length === 1 &&
+            dupeGroupTexts[0].includes(dupeMarker) &&
+            /(^|\D)2(\D|$)/.test(dupeGroupTexts[0]),
+        dupeGroupTexts.join(" / "),
+    );
+    const dupeSummary = (await page.locator("#find-dupes-summary").innerText()).trim();
+    check("报告首行给了「组数 / 笔记数」", dupeSummary.length > 0, dupeSummary);
+
+    await page.locator("#find-dupes-report button.group").first().click();
+    await page.waitForTimeout(2000);
+    const dupeJumpSearch = await page.locator(".search").inputValue();
+    check(
+        "点一组 → 浏览器换成 nid: 搜索",
+        dupeJumpSearch.startsWith("nid:") &&
+            dupeNotes.every((nid) => dupeJumpSearch.includes(nid.toString())),
+        dupeJumpSearch,
+    );
+    check(
+        "点一组 → 切到笔记模式",
+        (await configValue("browserTableShowNotesMode")) === true,
+    );
+
+    const tagsBefore = Note.fromBinary(
+        await rpc("getNote", new NoteId({ nid: dupeNotes[0] }).toBinary()),
+    ).tags;
+    await openFindDuplicates();
+    await runFindDuplicates();
+    await page.locator("#find-dupes-tag").click();
+    await page.waitForTimeout(1500);
+    const tagsAfter = await Promise.all(
+        dupeNotes.map(async (nid) =>
+            Note.fromBinary(await rpc("getNote", new NoteId({ nid }).toBinary())).tags,
+        ),
+    );
+    check(
+        "「Tag Duplicates」给组里的笔记都打了新标签",
+        tagsAfter.every((tags) => tags.length === tagsBefore.length + 1) &&
+            tagsAfter[0].some(
+                (tag) => tagsAfter[1].includes(tag) && !tagsBefore.includes(tag),
+            ),
+        tagsAfter.map((tags) => tags.join(",")).join(" | "),
+    );
+
+    await rpc(
+        "removeNotes",
+        new RemoveNotesRequest({ noteIds: dupeNotes, cardIds: [] }).toBinary(),
+    );
+    check("已清理查找重复的测试笔记", (await searchNotes(dupeMarker)).length === 0);
+    // 对话框打完标签**不会**自己关（与上游一致），收尾先关掉它 —— 否则它盖住工具栏，
+    // 下面的「切回卡片模式」点不到
+    await page.locator(".modal.show .btn-close").click();
+    await page.waitForTimeout(600);
+    // 切回卡片模式：下一节的双击断言是 `editCard:`（笔记模式下会发 `editNote:`）
+    if (await configValue("browserTableShowNotesMode")) {
+        await page.locator("#browse-toggle-notes-mode").click();
+        await page.waitForTimeout(1200);
+    }
+    check(
+        "查找重复之后回到卡片模式",
+        (await configValue("browserTableShowNotesMode")) === false,
+    );
 
     // 9. 双击开编辑器 + 预览 ##############################################
     // 预览会话来自这一屏选中的卡片，宿主侧还要翻页（`previewNext`），所以搜到刚造的那张

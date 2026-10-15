@@ -28,7 +28,7 @@
     图表 `browserSearch`、`searchInBrowser` 端点；功能含搜索/排序/多选、笔记模式、
     列清单 / 列宽 / 列顺序、**完整的动作表**（加/移除标签、清除未使用标签、标记、旗标、
     暂停、埋藏、重置、设置到期日、重新定位、立即评分、改牌组、删除、复制笔记、
-    卡片信息、更改笔记类型、查找替换、跳转、反选/全选/选中笔记）、撤销重做、
+    卡片信息、更改笔记类型、查找替换、**查找重复**、跳转、反选/全选/选中笔记）、撤销重做、
     **导出（apkg / colpkg / 笔记纯文本 / 卡片纯文本）**，以及**预览与卡片信息两个独立窗口**。
   - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
     牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/删除）、
@@ -42,7 +42,7 @@
     「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为本外壳还没有
     菜单栏，见 PARITY 1.2）。
   - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、
-    查找重复、启动行为（检查/备份）、Android
+    启动行为（检查/备份）、Android
 - **M4 未开始**：打包与 Android
 
 **当前可直接验证**（六个一键脚本，详见 §2.4）：
@@ -429,6 +429,9 @@ ts/routes/browser/    新写的浏览器页面：+page.svelte（搜索/排序/�
                        Toolbar.svelte、Sidebar.svelte、ResultRow.svelte（逐行取数）、
                        ContextMenu.svelte（行右键菜单，`data-action` 供验证脚本点击）、
                        FormModal.svelte（到期日/重排/重置/查找替换共用的表单弹框）、
+                       ExportDialog.svelte（导出对话框：四种格式与勾选项）、
+                       FindDuplicatesModal.svelte（查找重复：字段 + 筛选器 + 分组报告 +
+                       Tag Duplicates）、
                        menu.ts（菜单与表单的类型）、DeckPickerModal.svelte、
                        TagsModal.svelte（加/移除标签）
 ```
@@ -954,6 +957,24 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 `import type`（`@typescript-eslint/consistent-type-imports`，`--fix` 能自动修）、
 **嵌套三元**（`no-nested-ternary`，只能改写成分支或抽出小函数）。
 
+### 5.36 `bind:this` 只能调 `export function`；点了没反应先看 `pageerror`
+
+「查找重复」里点某一组要 `findDuplicates.hide()`，而 `FindDuplicatesModal.svelte`
+只导出了 `show()` —— 运行期抛 `TypeError: …hide is not a function`。因为它写在
+`void jump(group)` 这种丢弃 promise 的位置，**页面上一片安静**：模态框不关、搜索也不换，
+现象就是"点了没反应"。两条经验：
+
+- 这类"点了没反应"优先打开 `page.on("pageerror", …)` 抓错误（本次用一个小探针一眼看到
+  `hide is not a function`）；Playwright 报的「元素被 X 挡住」有时是红鲱鱼。
+- 交互写完要在检查脚本里断言**点完之后确实发生了预期变化**（本次是 8.8 节的
+  「点一组 → 浏览器换成 nid: 搜索」抓出来的）。
+
+顺带一条：检查脚本要能**自愈残留配置**。上一次跑崩可能把 `browserTableShowNotesMode`
+留在开启状态（它落在集合里，不是进程状态），而宿主侧的 `previewNeighbor` 只在卡片模式
+下列卡片 id —— 于是 `previewNext` 会拿笔记 id 去开预览，日志里是
+`打开预览窗口失败: no such card`。`browser-check.mjs` 因此开跑先归位，并把要还原的
+初值也改成归位后的值（否则收尾又把它写回 true）。
+
 ---
 
 ## 6. 剩余工作
@@ -1059,6 +1080,15 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
     并关窗（见 §3.7）。
   - **已完成**：列清单 / 列宽 / **列顺序拖动**（拖列头写回 `activeCols`；列宽按卡片/笔记
     分开存），以及行高亮「只改选中集合也要刷新」的修复（Svelte 响应式坑，见 §5.25）。
+  - **已完成**：**查找重复**（上游 `browser/find_duplicates.py` 的 `FindDuplicatesDialog`）
+    —— 新写的 `ts/routes/browser/FindDuplicatesModal.svelte`（浏览器「更多」菜单入口）：
+    「搜索位置」字段下拉 + 「可选筛选器」+ 「搜索」+ 分组报告 + 「Tag Duplicates」，
+    判重复刻 `col.find_dupes()`（`collection.py:744-778`：字段非空搜索 → 逐条取字段值 →
+    `stripHtml(PRESERVE_MEDIA_FILENAMES)` → 按值分组，顺序按"第二次出现"）；点一组让浏览器
+    换 `nid:…` 搜索并切笔记模式（对照 `search_for()` + `onNote()`）。
+    验证：`browser-check.mjs` 第 8.8 节（造两条同值笔记 → 搜索 → 点组 → 打标签 → 清理）。
+    **差**：Qt 是独立非模态对话框、搜索框带历史、后端没有批量取字段的接口（逐条 `getNote`，
+    大集合慢）。
   - **已完成**：**导出**（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本）——
     对话框与导出 RPC 都在页面里，宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）；
     验证脚本会真的导出 `.apkg`（检查是合法 zip）与两份 `.txt`（按
@@ -1155,8 +1185,8 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
       `svelte-check` 0 error / 0 warning）。
     - **差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块，
       本页面的两个按钮已覆盖）；入口还不在菜单栏与侧栏右键菜单上（等 PARITY 1.2）。
-  - 下一步：查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、
-    主窗口菜单栏与同步。
+  - 下一步：1.x 的收尾（牌组描述 / 拖拽排序、启动行为）、5.5–5.9 那几条浏览器小差异，
+    以及主窗口菜单栏与同步。
     这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
 
   > **git 状态（本条目相关）**：本条目的改动已随本次提交入库
@@ -1193,7 +1223,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 - **浏览器页面是新写的**：上游的浏览器是原生 Qt 界面，没有可复用的 Web 页面，
   因此 `ts/routes/browser/` 属于本工程新增（其余窗口都是复用 `ts/routes/` 里的既有页面）。
   功能面已基本对齐（搜索 / 排序 / 多选 / 笔记模式 / 列清单·列宽·列顺序 / 完整动作表 /
-  导出四种格式），仍缺查找重复；逐项差异见 `tauri/README.md` 的「浏览器」。
+  导出四种格式 / 查找重复 / 管理笔记类型）；逐项差异见 `tauri/README.md` 的「浏览器」。
 
 ### 7.2 曾经的妥协与解决情况（不是遗漏，已在文档标注）
 
@@ -1230,9 +1260,10 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
   标记、旗标（含清除）、暂停/埋藏（含恢复）、重置、设置到期日、重新定位、立即评分、
   清除未使用标签、选中笔记、查找替换（真的改了字段）、卡片信息、复制笔记、
   更改笔记类型（真的改了类型）、导出四种格式（apkg 真的是 zip；两种纯文本真的产出
-  制表符 CSV 并按文件头与内容断言）、列顺序拖动与两套列宽，
+  制表符 CSV 并按文件头与内容断言）、查找重复（造两条同值笔记 → 判出一组 → 点组跳转 →
+  一键打标签，并按 RPC 复查）、列顺序拖动与两套列宽，
   以及 Home/Ctrl+N/End 跳转与反选/全选。**没验证**：导出到 profile 目录的拦截
-  （上游有提示，本方案没做）、查找重复（未实现）。
+  （上游有提示，本方案没做）。
   「放弃输入」确认框里"选放弃 ⇒ 关窗"那一半也只能人工点一次（原生模态框）。
 - **预览的「仅背面」只验证了开关与配置落库**：断言了 `previewBothSides` 打开后切到
   答案面、关闭后回到问题面，但没有断言「问题与答案同时显示」的排版细节。
@@ -1274,6 +1305,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 | 导出（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框、格式与勾选项、导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py` + `forms/exporting.ui`（对照用）、`rslib/src/import_export/text/csv/export.rs`（纯文本格式） |
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
+| 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
 | 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
 | 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |
@@ -1300,10 +1332,10 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
    5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
    4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**5.1「查找重复」**（上游是原生对话框 + 卡片渲染，
-   `find_duplicates.py` 114 行；先 grep 上游确认这个版本的界面形态，别再照清单臆测）、
-   以及 1.x 的收尾（牌组描述 / 拖拽排序、启动行为）；都只是"缺界面 / 缺 UI 入口"，
-   没有架构上的障碍。
+   下一步按清单走：**1.x 的收尾**（牌组描述 / 拖拽排序、启动行为）、**5.5–5.9 的几条
+   浏览器小差异**（侧栏分区、加标签补全、列设置存储、导出到 profile 目录的拦截），
+   以及 **6.x 的系统集成**（同步 / 备份 / addon —— 硬骨头）。
+   浏览器的三块大功能（管理笔记类型 / CSV·纯文本导出 / 查找重复）已经全部补完。
    「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），上游约 980 行，
    是模板/样式/预览最大的一块（§6.4 已作为「已完成」登记）。
    `y`（同步）与 `Ctrl+E`（导出）要等 6.x 的同步与主窗口菜单栏。

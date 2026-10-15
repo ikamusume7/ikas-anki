@@ -1065,6 +1065,7 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 | **复制笔记**（Ctrl+Alt+E：开「添加卡片」并载入该笔记） | `browser.py:828-834` |
 | **更改笔记类型**（菜单：开 `change-notetype/<id>` 窗口，页面里映射字段后保存） | `browser.py:1241-1252`、`aqt/changenotetype.py` |
 | **导出**（Ctrl+Shift+E：牌组包 / 整个集合 / 笔记纯文本 / 卡片纯文本，问宿主要保存路径后调导出 RPC） | `browser.py:377`、`qt/aqt/import_export/exporting.py` |
+| **查找重复**（菜单：「搜索位置」字段 + 可选筛选器 → 搜索 → 分组报告；点一组跳到那些笔记、可一键打标签） | `browser/find_duplicates.py`、`forms/finddupes.ui`、`collection.py:744-778` 的 `find_dupes()` |
 | **查找替换**（Ctrl+Alt+F，`FindAndReplace`） | `aqt/browser/find_and_replace.py` |
 | **改牌组**（Ctrl+D，`setDeck`） | `browser.py:918-949` |
 | **删除**（Ctrl+Del / Delete，`removeNotes`，删的是**笔记**） | `browser.py:895-906` |
@@ -1195,6 +1196,39 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
   文件名也取牌组名）；不做"导出到 profile 目录就拒绝"的拦截（PARITY 5.9）；保存路径走
   宿主的 `saveFileDialog`，建议文件名固定 `集合-<时间戳>.<ext>`。
 
+### 查找重复
+
+对照 `qt/aqt/browser/find_duplicates.py` 的 `FindDuplicatesDialog` + `forms/finddupes.ui`
+（入口是浏览器 Edit 菜单里的 `qt-accel-find-duplicates`，`browser.py:354`）。这里是浏览器
+页面里的一个模态框（`FindDuplicatesModal.svelte`），内容与上游一一对应：
+
+| 项 | 上游 | 本外壳 |
+| --- | --- | --- |
+| 「搜索位置」 | 所有笔记类型的字段名并集，大小写不同只留第一次出现的写法，按小写排序（`find.py:60-67` + `find_duplicates.py:45-47`） | 同左（每次打开都重新取，笔记类型刚改过也准） |
+| 「可选筛选器」 | 可编辑下拉 + 历史记录（`findDupesFind`） | 普通输入框（**差**：没有历史） |
+| 判重 | `col.find_dupes(field, search)`（`collection.py:744-778`） | 同左算法，见下 |
+| 报告 | `browsing-found-as-across-bs(part=browsing-group, whole=browsing-note-count)` + 每组一条链接「N 条笔记: 值」 | 同左（每组一个按钮，点击行为一样） |
+| 点一组 | `search_for(link)` + `onNote()`：浏览器换 `nid:…` 搜索并切到笔记模式 | 同左（页面直接换搜索 + 切笔记模式） |
+| Tag Duplicates | 给所有组里的笔记加 `browsing-duplicate` 标签（`add_tags_to_notes`） | 同左（`addNoteTags`，请求里的 `tags` 是**一个空格分隔的字符串**，不是数组） |
+
+`find_dupes()` 的复刻（三步，全部用现有 RPC）：
+
+1. 搜出「该字段非空」的笔记 —— 用 `buildSearchString` 的 `field_name` 节点（等价于
+   `字段:_*`），可选筛选器与它 AND（`buildSearchString` 的 `group` 节点）；
+2. 逐条 `getNote` 取字段值（按字段名在该笔记类型里的下标），再过一遍
+   `stripHtml(mode=PRESERVE_MEDIA_FILENAMES)` —— 与上游 `strip_html_media` 是同一个后端方法；
+3. 空值不算重复；同一个值出现 ≥2 次就是一组，**组的顺序按"第二次出现"排**（照上游的
+   append 时机）。
+
+差异：Qt 是挂在浏览器上的**独立非模态对话框**（报告画在 QWebView 里），这里是页面内的
+模态框；上游的搜索框带历史记录；**后端没有批量取字段的 RPC**，所以是逐条 `getNote`
+（大集合会慢，上游直接读 SQL）。
+
+验证：`browser-check.mjs` 第 8.8 节 —— 造两条同值笔记 → 开框选字段/筛选器 → 搜索 →
+断言只有一组且计数 2、报告首行有「组数 / 笔记数」→ 点那一组 → 断言浏览器换成
+`nid:…` 且切到笔记模式 → 再开一次点「Tag Duplicates」→ RPC 复查两条笔记都多了同一个
+标签 → 删掉这两条笔记并切回卡片模式。
+
 ### 预览窗口
 
 对照 `qt/aqt/browser/previewer.py`：独立顶层窗口，内容走 reviewer 的渲染路径
@@ -1230,6 +1264,7 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 | 卡片信息窗口 | `CardInfoDialog`（单例，Qt 对话框） | 独立窗口，**复用已有的 `card-info/<cid>` 路由**；同窗口再看另一张卡时整页导航过去 |
 | 更改笔记类型 | 保存前 `confirm_schema_modification()`（牵涉 schema 时再确认一次） | 跳过这一步（本外壳没有这条确认链路）；其余一致：宿主补 `note_ids`、成功即关窗 |
 | 导出 | 五种格式（牌组包 / 整个集合 / 笔记纯文本 / 卡片 CSV / 带列的笔记 CSV）+ 逐个牌组导出；原生保存对话框；导出到 profile 目录时会拒绝 | 四种格式都在（apkg / colpkg / 笔记纯文本 / 卡片纯文本）；范围只有「选中的笔记 / 全部集合」（没有牌组下拉）；纯文本的列由勾选项决定，没有独立的"选列"对话框；保存路径问宿主的 `saveFileDialog`（默认文件名 `集合-<时间戳>.<ext>`）；不做"导出到 profile 目录"的拦截。详见「导出（四种格式）」 |
+| 查找重复 | 挂在浏览器上的独立非模态 `QDialog`，报告画在 QWebView 里；搜索框带历史 | 页面内的模态框，结果是一个列表；搜索框没历史；逐条 `getNote` 取字段值（后端没有批量接口），大集合会慢 |
 | 列清单 | 「视图」菜单里逐项勾选 | 表头右键弹层（同一份 `activeCols`，落库时机一致） |
 | 列宽 / 列顺序 | `saveHeader` 存 PM profile 的**二进制表头状态**（列宽 + 视图顺序） | profile 配置 `tauriBrowserColumnWidths`（JSON，`{cards, notes}` 各存列 key → px）；顺序直接落在 `activeCols` 里 |
 | 侧栏 | 7 个分区 + 折叠状态 + 修饰键组合搜索 | 「当前牌组 / 全部集合 / 牌组树（带计数）/ 笔记模板」，点击即替换搜索词 |
@@ -1245,11 +1280,16 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 首屏搜索出结果 → 截真实窗口 → Playwright 走完整条链路（侧栏 / 排序 / 多选 / 笔记模式 /
 列清单 / 加标签 / 改牌组 / 删除 + 撤销 / **行右键菜单的 38 项动作**：标记 / 旗标 / 暂停 /
 埋藏 / 重置 / 到期日 / 重排 / 立即评分 / 清除未使用标签 / 选中笔记 / 卡片信息 / 复制笔记 /
-查找替换，以及 Home·Ctrl+N·End 跳转与反选全选）→ 驱动预览窗口翻面与前后卡片并截图 →
+查找替换，以及 Home·Ctrl+N·End 跳转与反选全选）→ 四种格式的导出（apkg / colpkg / 两种
+纯文本）→ 查找重复（判重 / 点组跳转 / 一键打标签）→ 驱动预览窗口翻面与前后卡片并截图 →
 开「管理笔记类型」窗口 + 跑 `notetypes-check.mjs`（列表 / 两步添加 / 重命名 / 删除 /
 两条对话框端点）→ 验 `searchInBrowser` 与 `browserSearch` 的复用路径 → 关闭浏览器断言
 编辑区、预览与卡片信息窗口连带关掉。产物里有 `browser.png` / `preview.png` /
 `card-info.png` / `notetypes.png`（真实窗口）与 `notetypes-page.png`（页面）截图。
+
+> 检查脚本开跑时会先把「笔记模式」这类**残留配置**归位（上一次跑崩了会把
+> `browserTableShowNotesMode` 留在开启状态，后面的断言与宿主侧的 `previewNeighbor`
+> 都建立在卡片模式上）—— 排查预览翻页失败时先看这一条。
 
 ```
 PASS  侧栏已渲染牌组 — 当前牌组 / 全部集合 / Default 2 + 0 + 0 / Basic / …
@@ -1292,6 +1332,11 @@ PASS  笔记纯文本导出产出了制表符 CSV — 集合-2026-10-15@12-13-27
 PASS  切到「卡片纯文本」后只剩范围 + HTML
 PASS  卡片纯文本导出产出了制表符 CSV — 集合-2026-10-15@12-13-31.txt
 PASS  已清理导出的文本文件
+PASS  「查找重复」列出了笔记类型里的字段 / 重复报告只有造出来的那一组（计数 2）
+PASS  报告首行给了「组数 / 笔记数」— 在 2 条笔记 中找到 1 种组合。
+PASS  点一组 → 浏览器换成 nid: 搜索 / 点一组 → 切到笔记模式
+PASS  「Tag Duplicates」给组里的笔记都打了新标签 — 复制 | 复制
+PASS  已清理查找重复的测试笔记 / 查找重复之后回到卡片模式
 PASS  导出 apkg 产出了合法文件 — 集合-2026-10-13@15-48-12.apkg 56633 字节 PK
       （verify 脚本：导出 apkg → 集合-….apkg（55 KB））
 PASS  双击行发出了 editCard — editCard:1791798151921
@@ -1337,7 +1382,7 @@ browserSearch：图表 → 浏览器搜索
 | `verify-addcards.ps1` | 一键：验证「添加卡片」窗口（`add` 开窗 → 截图 → 默认值 / 添加落库 / 两条关闭契约） |
 | `addcards-check.mjs` | 上面那个脚本调用的检查：Playwright 填字段 + 点「添加」，拦请求验内容、用 `searchNotes` 验落库并清理 |
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → 管理笔记类型窗口 → `searchInBrowser` 复用路径 → 关闭连带） |
-| `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行，并观察页面发往宿主的桥接命令 |
+| `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行、导出四种格式（含读回产出的 CSV）、查找重复（判重 / 跳转 / 打标签），并观察页面发往宿主的桥接命令 |
 | `notetypes-check.mjs` | `verify-browser.ps1` 调用的「管理笔记类型」检查：列表渲染 / 两步添加（原厂 + 克隆，RPC 复查字段数）/ 重命名 / 删除确认文案 / 「字段…」「卡片…」两条端点，收尾把临时类型删干净 |
 | `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单/新建删除 → `d`/`s`/`study` 切页） |
 | `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入，并用 RPC 复查当前牌组/牌组是否真的建删 |
@@ -1389,12 +1434,15 @@ browserSearch：图表 → 浏览器搜索
     图表 `browserSearch:<query>` 与 `searchInBrowser` 端点三个入口都通了；搜索、排序、
     多选、笔记模式、列清单 / 列宽 / 列顺序拖动、加标签 / 移除标签 / 清除未使用标签 / 标记 / 旗标 /
     暂停 / 埋藏 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改牌组 / 删除 + 撤销重做、
-    复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）、导出（四种格式）都在，见「浏览器」。
-    **剩下的**：查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）。
+    复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）、导出（四种格式）、查找重复都在，
+    见「浏览器」。**剩下的**只是 PARITY 里那些小差异（侧栏分区、加标签补全、列设置存储、
+    导出到 profile 目录的拦截），没有"整块没做"的功能了。
   - ~~`more` 命令~~ —— **已实现**（复习界面）：见「复习界面」的「更多」菜单；编辑器里的 `more` 仍未做。
   - ~~卡片布局~~ —— **已实现**：编辑器工具栏的「卡片…」（`openCardsDialog`），见「编辑器」。
   - ~~导出 CSV / 纯文本~~ —— **已实现**：`ExportDialog.svelte` 的「笔记纯文本 / 卡片纯文本」
     （`.txt`，后端 `exportNoteCsv` / `exportCardCsv`），见「导出（四种格式）」。
+  - ~~查找重复~~ —— **已实现**：浏览器「更多」菜单 → `FindDuplicatesModal.svelte`
+    （`find_dupes()` 的三步复刻：字段非空搜索 → 逐条取字段值 → 分组），见「查找重复」。
   - ~~管理笔记类型~~ —— **已实现**：新写的 `ts/routes/notetypes/`（列表 + 添加/重命名/删除/克隆
     + 「字段…」「卡片…」两个按钮），入口在浏览器窗口的「更多」菜单，见「管理笔记类型」对话框。
   - 音频的 `current_caller` 区分（editor / reviewer 的打断语义），属 M5 的音频质量项。

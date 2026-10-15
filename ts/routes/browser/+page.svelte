@@ -90,6 +90,7 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     import ContextMenu from "./ContextMenu.svelte";
     import DeckPickerModal from "./DeckPickerModal.svelte";
     import ExportDialog from "./ExportDialog.svelte";
+    import FindDuplicatesModal from "./FindDuplicatesModal.svelte";
     import FormModal from "./FormModal.svelte";
     import type { ExportChoice, FormValues, MenuSection } from "./menu";
     import ResultRow from "./ResultRow.svelte";
@@ -178,6 +179,7 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     let tagsModal: TagsModal;
     let formModal: FormModal;
     let exportDialog: ExportDialog;
+    let findDuplicates: FindDuplicatesModal;
     /** 导出对话框打开时选中的笔记（点了「导出」之后要用） */
     let exportNoteIds: number[] = [];
     /** 通用表单弹框是哪个动作打开的（决定 `onFormOk` 怎么分发） */
@@ -632,6 +634,20 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         await loadColumns();
         await loadSort();
         await loadSearch(search);
+    }
+
+    /**
+     * 「查找重复」里点某一组：切成笔记模式并照这些 nid 重新搜索。
+     *
+     * 对照 `find_duplicates.py:133-135` 的 `search_for(link)` + `onNote()` —— 前者换搜索词，
+     * 后者把浏览器切到笔记模式（`browser/table/table.py:196-206`）。
+     */
+    async function jumpToDuplicateGroup(next: string): Promise<void> {
+        findDuplicates.hide();
+        if (!notesMode) {
+            await toggleNotesMode();
+        }
+        await loadSearch(next);
     }
 
     /**
@@ -1563,6 +1579,11 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
                         run: () => void toggleNotesMode(),
                     },
                     {
+                        label: qtAccel("qt-accel-find-duplicates"),
+                        action: "findDuplicates",
+                        run: () => void findDuplicates.show(),
+                    },
+                    {
                         label: tr.browsingFindAndReplace(),
                         action: "findReplace",
                         shortcut: "Ctrl+Alt+F",
@@ -1985,6 +2006,10 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
 />
 <FormModal bind:this={formModal} {confirmLabel} onOk={onFormOk} />
 <ExportDialog bind:this={exportDialog} onExport={(choice) => void runExport(choice)} />
+<FindDuplicatesModal
+    bind:this={findDuplicates}
+    onJump={(next) => void jumpToDuplicateGroup(next)}
+/>
 
 {#if actionMenu}
     <ContextMenu
