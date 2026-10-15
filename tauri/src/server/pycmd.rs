@@ -220,6 +220,12 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             }
             None
         }
+        // 复习界面工具栏的「同步」（`toolbar.py:410-419`）：宿主机跑一次同步；
+        // 牌组列表页那份按钮是页面自己实现的（它还要弹登录框）
+        "sync" => {
+            crate::autosync::sync_now(state).await;
+            None
+        }
         // 主窗口菜单「文件 → 创建备份」（`main.py:1575-1586`：立刻、强制、等它写完）与
         // 「文件 → 退出」（`main.py:1439`）。备份目录在宿主侧（`<profile>/backups`），
         // 所以由宿主执行，页面只发命令。

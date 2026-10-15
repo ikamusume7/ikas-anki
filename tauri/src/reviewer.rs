@@ -565,6 +565,14 @@ fn toolbar_payload(tr: &I18n) -> serde_json::Value {
                 "label": tr.translate("qt-misc-stats", None),
                 "tip": tr.actions_shortcut_key("T"),
             },
+            // 同步（`toolbar.py:410-419`）：点了发 `sync` 给宿主，宿主跑完用
+            // `window.__ankiSyncStatus()` 把状态写回工具栏
+            {
+                "id": "sync",
+                "cmd": "sync",
+                "label": tr.translate("qt-misc-sync", None),
+                "tip": tr.actions_shortcut_key("Y"),
+            },
         ]
     })
 }

@@ -18,9 +18,12 @@
 //   node tauri/tools/reviewer-menu-check.mjs
 
 import fs from "node:fs";
+import http from "node:http";
+import zlib from "node:zlib";
 
 import { chromium } from "playwright";
 
+import { SetSettingJsonRequest } from "../../out/ts/lib/generated/anki/frontend_pb.js";
 import { Card, CardId, SetFlagRequest } from "../../out/ts/lib/generated/anki/cards_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
 import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
@@ -68,6 +71,17 @@ async function bridge(command, window = "main") {
         body: command,
     });
     return response.status;
+}
+
+/** 改 profile 配置（同步凭据就住在那儿，与桌面版同一批键）。 */
+async function setProfile(key, value) {
+    await rpc(
+        "setProfileConfigJson",
+        new SetSettingJsonRequest({
+            key,
+            valueJson: new TextEncoder().encode(JSON.stringify(value)),
+        }).toBinary(),
+    );
 }
 
 /** 直接改旗标（测试前把状态归零用）。 */
@@ -203,6 +217,7 @@ try {
             { id: "add", cmd: "add", label: "添加", tip: "快捷键：A" },
             { id: "browse", cmd: "browse", label: "浏览", tip: "快捷键：B" },
             { id: "stats", cmd: "stats", label: "统计", tip: "快捷键：T" },
+            { id: "sync", cmd: "sync", label: "同步", tip: "快捷键：Y" },
         ],
     };
     check(
@@ -211,9 +226,13 @@ try {
     );
     const items = await toolbarPage.locator("#top-toolbar .hitem").allInnerTexts();
     check(
-        "工具栏四个链接（牌组/添加/浏览/统计）",
-        items.join("|") === "牌组|添加|浏览|统计",
+        "工具栏五个链接（牌组/添加/浏览/统计/同步）",
+        items.join("|") === "牌组|添加|浏览|统计|同步",
         items.join("|"),
+    );
+    check(
+        "同步链接带 Y 快捷键提示",
+        (await toolbarPage.locator("#top-toolbar #sync").getAttribute("title")) === "快捷键：Y",
     );
     check(
         "每个链接带快捷键提示",
@@ -259,6 +278,13 @@ try {
     check(
         "重复注入不会叠加",
         (await toolbarPage.locator("#top-toolbar .header").count()) === 1,
+    );
+    // 同步状态：宿主跑完会用 `window.__ankiSyncStatus()` 往工具栏写一行
+    await toolbarPage.evaluate(() => window.__ankiSyncStatus("正在同步…"));
+    check(
+        "同步状态能写进工具栏",
+        (await toolbarPage.locator("#top-toolbar #sync-status").innerText()) === "正在同步…",
+        await toolbarPage.locator("#top-toolbar #sync-status").innerText(),
     );
     await toolbarPage.close();
 } finally {
@@ -314,6 +340,50 @@ try {
     );
     await bridge("undo");
     check("撤销后到期日还原", (await readCard()).due === dueBefore);
+
+    // 复习界面工具栏的「同步」：宿主的 `sync` 命令 → 真的连同步服务器
+    // （假服务器只实现 `/sync/meta`，与 decks-check 5i 同一套路）
+    const syncPaths = [];
+    const fakeSync = http.createServer((request, response) => {
+        syncPaths.push(request.url ?? "");
+        if (request.url === "/sync/meta") {
+            const raw = Buffer.from(
+                JSON.stringify({
+                    mod: 1,
+                    scm: 1,
+                    usn: 1,
+                    // `ts` 必须是当前时间，否则客户端报 ClockIncorrect（消息还是空的）
+                    ts: Math.floor(Date.now() / 1000),
+                    msg: "",
+                    cont: true,
+                    hostNum: 1,
+                }),
+            );
+            response.writeHead(200, {
+                "Content-Type": "application/octet-stream",
+                "anki-original-size": String(raw.length),
+            });
+            response.end(zlib.zstdCompressSync(raw));
+            return;
+        }
+        response.writeHead(500, { "Content-Type": "text/plain" });
+        response.end("fake sync server");
+    });
+    await new Promise((resolve) => fakeSync.listen(0, "127.0.0.1", resolve));
+    const syncEndpoint = `http://127.0.0.1:${fakeSync.address().port}/`;
+    await setProfile("syncKey", "fake-host-key");
+    await setProfile("customSyncUrl", syncEndpoint);
+    syncPaths.length = 0;
+    await bridge("sync");
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    check(
+        "工具栏「同步」→ 宿主连上了同步服务器",
+        syncPaths.includes("/sync/meta"),
+        syncPaths.join(" / ") || "（没有请求）",
+    );
+    await setProfile("syncKey", null);
+    await setProfile("customSyncUrl", null);
+    await new Promise((resolve) => fakeSync.close(resolve));
 } catch (error) {
     check("宿主动作检查", false, String(error));
 }

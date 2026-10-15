@@ -129,6 +129,15 @@ try {
     node tauri/tools/reviewer-menu-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
+    # 工具栏「同步」（`sync` 桥接命令）走了宿主那条路：凭证与假服务器由
+    # reviewer-menu-check.mjs 准备
+    if ((Read-Log $logPath) -match "复习界面工具栏: 同步") {
+        Write-Host "工具栏「同步」走了宿主的 sync 命令" -ForegroundColor Green
+    } else {
+        Write-Host "没有看到工具栏同步的宿主日志（见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    }
+
     # 让真实窗口弹出菜单并截图（菜单是页面里的浮层，窗口截图就能看到）
     Send-Bridge "more"
     Start-Sleep -Milliseconds 900

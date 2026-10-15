@@ -1195,12 +1195,16 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `qt/aqt/profiles.py:660-725`）→ `syncStatus` → `syncCollection` →（`syncMedia` 开着时）
   `syncMedia` + 轮询 `mediaSyncStatus` 显示后端本地化好的进度；需要完整同步时给
   「上传 / 下载」二选一（`fullUploadOrDownload`）；同步中再点一次 = 取消
-  （`abortSync`/`abortMediaSync`）。宿主侧还有 `tauri/src/autosync.rs`：**启动时**整份同步
+  （`abortSync`/`abortMediaSync`）。**复习界面工具栏的同步链接也有了**：宿主注入的
+  `assets/reviewer-toolbar.js` 多了一个 `sync` 链接，点了发宿主的 `sync` 命令
+  （`autosync::sync_now`），跑完用 `window.__ankiSyncStatus()` 把状态写回工具栏；
+  没登录就提示一句并跳到牌组列表页（登录框在那儿）。
+  宿主侧还有 `tauri/src/autosync.rs`：**启动时**整份同步
   一次（上游 on-open；没有 on-close，因为外壳没有优雅关闭钩子）+ 之后每 5 分钟检查
-  `autoSyncMediaMinutes`（默认 15）做媒体同步。验证见 `decks-check.mjs` 5i/5j
-  （自带**假同步服务器** + `ANKI_SYNC_TICK_SECONDS`）。
-  **差**：冲突的完整处理（只有上传/下载入口）、复习界面工具栏上的同步链接、进度条、
-  关闭时同步；媒体同步的 happy path 没有自动化覆盖。
+  `autoSyncMediaMinutes`（默认 15）做媒体同步。验证见 `decks-check.mjs` 5i/5j 与
+  `reviewer-menu-check.mjs`（自带**假同步服务器** + `ANKI_SYNC_TICK_SECONDS`）。
+  **差**：冲突的完整处理（只有上传/下载入口）、进度条、关闭时同步；
+  媒体同步的 happy path 没有自动化覆盖。
 - **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
   （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
   `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；

@@ -79,6 +79,36 @@ pub fn spawn(state: AppState) {
         .expect("启动自动同步线程失败");
 }
 
+/// 复习界面工具栏的「同步」（`toolbar.py:410-419` 的同步链接）调这个：
+/// 有凭据就跑一次"集合 + 媒体"同步，没凭据就去牌组列表页（那边的同步按钮会弹登录框）。
+pub async fn sync_now(state: &AppState) {
+    let Some(auth) = sync_auth(state) else {
+        tracing::info!("复习界面工具栏: 同步 —— 还没登录，去牌组列表页");
+        push_status(state, "还没登录：请在牌组列表页点「同步」登录");
+        if let Err(error) = crate::main_window::show_decks(state) {
+            tracing::warn!("跳转到牌组列表失败: {error:#}");
+        }
+        return;
+    };
+    tracing::info!("复习界面工具栏: 同步");
+    push_status(state, "正在同步…");
+    sync_collection_and_media(state, &auth).await;
+    if sync_media_enabled(state) {
+        sync_media(state, &auth).await;
+    }
+    push_status(state, "同步结束");
+}
+
+/// 把一行状态推给复习界面的工具栏（`assets/reviewer-toolbar.js` 的
+/// `window.__ankiSyncStatus`）。
+fn push_status(state: &AppState, text: &str) {
+    let script = format!(
+        "if (window.__ankiSyncStatus) window.__ankiSyncStatus({});",
+        serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string())
+    );
+    crate::windows::eval(state, crate::windows::MAIN, &script);
+}
+
 /// profile 里的同步凭据（没登录返回 `None`）。
 fn sync_auth(state: &AppState) -> Option<SyncAuth> {
     let prefs = prefs21(state)?;
@@ -116,8 +146,7 @@ fn prefs21(state: &AppState) -> Option<Prefs21> {
 }
 
 /// 启动时那一次：`syncStatus` → `syncCollection`（+ 媒体）。
-async fn sync_collection_and_media(state: &AppState, auth: &SyncAuth) {
-    match state
+async fn sync_collection_and_media(state: &AppState, auth: &SyncAuth) {    match state
         .backend
         .call("syncStatus", auth.encode_to_vec())
         .await

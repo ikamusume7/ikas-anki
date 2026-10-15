@@ -404,6 +404,7 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 | 取消 | 同步中再点一次「同步」→ `abortSync` + `abortMediaSync`（对照上游进度对话框的 Abort）；被取消的请求当作正常结束，显示「媒体同步已中止」 |
 | 自动同步（宿主侧） | `tauri/src/autosync.rs`：启动时整份同步一次（上游的 on-open；外壳没有优雅关闭钩子，所以没有 on-close）+ 之后每 5 分钟检查一次，距上次媒体同步超过 `autoSyncMediaMinutes`（默认 15）才做**媒体**同步。开关与凭据都读 profile 配置（`autoSync` / `syncKey` / `customSyncUrl` / `syncMedia`） |
 | 状态显示 | 按钮的 `data-sync-state`（off / idle / syncing / error）+ 列表下方的 `#sync-status` 文案（后端错误原文；个别情况下后端不带消息，页面上就只剩一个 `Error:` —— 已知小瑕疵） |
+| 复习界面的同步 | 顶部工具栏的「同步」链接（`reviewer-toolbar.js`）→ 宿主的 `sync` 命令（`pycmd.rs` → `autosync::sync_now`）：有凭据就跑一次集合 + 媒体同步、状态用 `window.__ankiSyncStatus()` 写进工具栏；没凭据就提示一句并跳到牌组列表页（登录框在那儿） |
 
 **验证**（`decks-check.mjs` 5i/5j）：检查脚本自己起一个**假同步服务器**（只实现
 `/sync/hostKey` 与 `/sync/meta`；同步协议的响应是 zstd 压的 JSON + `anki-original-size`
@@ -804,7 +805,7 @@ Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第
 | 默认牌组删除保护 | 默认牌组也能删（删了会重建） | **默认牌组的「删除」被禁用** |
 | 菜单栏 | 原生 `QMenuBar`，所有状态都在（File/Edit/Tools/Help） | 画在牌组列表页顶部（见上面「菜单栏」一节）：文件/编辑/工具/帮助，能实现的项都接了；复习界面没有它（那里只有顶部工具栏） |
 | 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮只在牌组列表页 |
-| 同步按钮 | 有（带同步状态/旋转图标，`toolbar.py:410-419`） | 有了：工具栏最右的「同步」（`Y` 键）——未登录时弹登录框，已登录时跑同步；`data-sync-state` 有 off/idle/syncing/error 四态，见「同步」 |
+| 同步链接 | 有（带状态/旋转图标，`toolbar.py:410-419`） | 有了，两处都有：牌组列表工具栏最右的「同步」（`Y` 键，页面实现，未登录时弹登录框）与**复习界面顶部工具栏的同步链接**（宿主 `sync` 命令，状态用 `window.__ankiSyncStatus()` 写回工具栏）；见「同步」 |
 | 「今日学习」一行 | `statistics-studied-today` | 同一个 key（内容是后端算好的，按 HTML 渲染） |
 
 ### 已验证

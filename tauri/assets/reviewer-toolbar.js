@@ -11,8 +11,8 @@
 // （同 `reviewer-menu.js`，见 TAURI_HANDOVER.md §5.27），避免"测的不是跑的那份"。
 //
 // 与 Qt 的差异：
-// - **没有同步链接**（`toolbar.py:410-418` 的 sync + 状态色 + 旋转图标）—— 本外壳
-//   没有同步功能，见 `tauri/PARITY.md` 6.1；
+// - **同步链接有了**（`toolbar.py:410-419`）：点了发 `sync` 给宿主，宿主跑完用
+//   `window.__ankiSyncStatus()` 把状态写进工具栏；Qt 那边的状态色与旋转图标这里只有文字；
 // - 左右两个托盘（add-ons 挂载点）没做；
 // - Qt 的工具栏只在鼠标靠近顶部时隐藏（全屏时用 `hide_if_allowed`），这里常驻。
 
@@ -50,6 +50,13 @@ const TOOLBAR_CSS = `
 
 #top-toolbar .hitem:hover {
     text-decoration: underline;
+}
+
+/* 同步状态（宿主用 window.__ankiSyncStatus() 往这里写） */
+#top-toolbar #sync-status {
+    margin-left: 1.25rem;
+    color: var(--fg-faint, #666);
+    font-size: 0.85rem;
 }
 `;
 
@@ -91,6 +98,14 @@ window.installToolbar = function (data) {
     }
     header.appendChild(center);
     host.appendChild(header);
+
+    // 同步状态行（宿主 `sync` 命令跑完会调 `window.__ankiSyncStatus(text)`）
+    const status = document.createElement("span");
+    status.id = "sync-status";
+    center.appendChild(status);
+    window.__ankiSyncStatus = (text) => {
+        status.textContent = text || "";
+    };
 
     // 与底部栏同一套办法（`reviewer.rs::sync_bottom_bar_height`）：卡片区靠
     // `body { padding-top: var(--top-bar-height) }` 让开，不写死高度
