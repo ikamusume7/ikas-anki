@@ -935,6 +935,22 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
    `missing field id` 与 `StringOrInt`（`NotetypeSchema11.id` 是必填数字）。克隆现有
    类型时同理：`getNotetypeLegacy` 带的是**旧 id**，不置 0 就变成"改那个类型"。
 
+### 5.35 新写的页面必须过 `eslint --max-warnings=0`（`check:eslint` 覆盖 `ts/**`）
+
+`build/configure/src/web.rs:365` 的 eslint 目标扫的是 `ts` 与 `qt/aqt/data/web/js`，
+而 ninja 传的是 `--max-warnings=0`（`build/ninja_gen/src/node.rs:298`）——**warning 也算
+失败**。所以 `ts/routes/` 下的新页面只要留一个没用的 import，`just lint`（`check:eslint`）
+就红；本工程的页面曾经带着 3 个 error + 7 个 warning 进了提交（browser / cards / fields
+三个页面 + 新写的 notetypes），已修。改完页面跑一遍单文件版最快：
+
+```powershell
+node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetypes/+page.svelte
+```
+
+踩到的三条：**没用到的 import**（`no-unused-vars`）、**只当类型用的 import** 必须写成
+`import type`（`@typescript-eslint/consistent-type-imports`，`--fix` 能自动修）、
+**嵌套三元**（`no-nested-ternary`，只能改写成分支或抽出小函数）。
+
 ---
 
 ## 6. 剩余工作
@@ -1141,7 +1157,9 @@ Tauri 的窗口**默认会顶掉 WebView2 自己的拖放处理器**（为的是
   > `tauri/src/main_window.rs` / `server/api.rs` / `server/assets.rs` / `server/pycmd.rs` /
   > `windows.rs`、浏览器菜单入口 `ts/routes/browser/+page.svelte`、页面
   > `ts/routes/notetypes/`、新增 `tauri/tools/notetypes-check.mjs`、修改
-  > `verify-browser.ps1` / `browser-check.mjs` / `cleanup-test-decks.mjs`。
+  > `verify-browser.ps1` / `browser-check.mjs` / `cleanup-test-decks.mjs`）。
+  > 随后又有一个收尾提交 `fix(tauri): clean up eslint findings in the new pages`
+  > （把新页面积下的 3 error + 7 warning 清掉，见 §5.35），两个提交都在本地、未 push。
   > 复核方式（改了宿主要重编、改了页面要重建产物）：`cd tauri; cargo build` →
   > `corepack yarn build`（页面要在 `out/sveltekit`）→
   > `pwsh -File tauri/tools/verify-browser.ps1`。

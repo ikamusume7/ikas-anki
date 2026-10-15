@@ -30,7 +30,7 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     import { openFilePickerRequest } from "@generated/anki/frontend_pb";
     import { Empty, String as GenericString } from "@generated/anki/generic_pb";
     import { postProto } from "@generated/post";
-    import type { BrowserRow, BrowserColumns, BrowserColumns_Column } from "@generated/anki/search_pb";
+    import type { BrowserRow, BrowserColumns_Column } from "@generated/anki/search_pb";
     import {
         BrowserColumns_Sorting,
         BrowserRow_Color,
@@ -258,7 +258,8 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         const column = await getColConfig(notesMode ? "noteSortType" : "sortType");
         // 笔记模式的 `noteSortType` 在 schema 里没有默认值，Qt 会退回 `noteCrt`
         // （`browser/table/model.py:285-288`）
-        sortColumn = typeof column === "string" && column ? column : notesMode ? "noteCrt" : "noteFld";
+        const defaultColumn = notesMode ? "noteCrt" : "noteFld";
+        sortColumn = typeof column === "string" && column ? column : defaultColumn;
         const backwards = await getColConfig(
             notesMode ? "browserNoteSortBackwards" : "sortBackwards",
         );
@@ -1280,12 +1281,14 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
             return;
         }
         const index = current === null ? -1 : cards.indexOf(current);
-        const target =
-            offset === "first"
-                ? 0
-                : offset === "last"
-                  ? cards.length - 1
-                  : Math.min(Math.max(index + offset, 0), cards.length - 1);
+        let target: number;
+        if (offset === "first") {
+            target = 0;
+        } else if (offset === "last") {
+            target = cards.length - 1;
+        } else {
+            target = Math.min(Math.max(index + offset, 0), cards.length - 1);
+        }
         selectRow(cards[target]);
         // 选中行可能在可视区外 —— 虚拟列表用 `.outer` 做滚动容器
         const scroller = document.querySelector<HTMLElement>(".results .outer");

@@ -36,16 +36,19 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
         modal.show();
     }
 
+    /** 一项输入 → 交回给调用方的载荷（三个键都填齐，调用方按字段顺序取用）。 */
+    function payloadFor(field: FormField): FormValues[number] {
+        if (field.kind === "check") {
+            return { check: field.value, number: 0, text: "" };
+        }
+        if (field.kind === "number") {
+            return { number: field.value, check: false, text: "" };
+        }
+        return { text: field.value, check: false, number: 0 };
+    }
+
     function onOkClicked(): void {
-        onOk(
-            fields.map((field) =>
-                field.kind === "check"
-                    ? { check: field.value as boolean, number: 0, text: "" }
-                    : field.kind === "number"
-                      ? { number: field.value as number, check: false, text: "" }
-                      : { text: field.value as string, check: false, number: 0 },
-            ),
-        );
+        onOk(fields.map(payloadFor));
     }
 </script>
 

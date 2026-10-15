@@ -43,7 +43,7 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
         updateNotetype,
     } from "@generated/backend";
     import * as tr from "@generated/ftl";
-    import { Empty, Json as GenericJson } from "@generated/anki/generic_pb";
+    import { Empty } from "@generated/anki/generic_pb";
     import {
         NotetypeId,
         StockNotetype,

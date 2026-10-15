@@ -12,7 +12,8 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 不需要二次转换；颜色/字体来自 `BrowserRow.color` 与 `font_name`/`font_size`。
 -->
 <script lang="ts">
-    import { BrowserRow, BrowserRow_Color } from "@generated/anki/search_pb";
+    import type { BrowserRow } from "@generated/anki/search_pb";
+    import { BrowserRow_Color } from "@generated/anki/search_pb";
     import { browserRowForId } from "@generated/backend";
 
     /** 卡片模式是 cid、笔记模式是 nid（后端按 `browserTableShowNotesMode` 判定） */

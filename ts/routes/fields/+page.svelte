@@ -23,8 +23,8 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 <script lang="ts">
     // 字段的 `ord` 是 `anki.generic.UInt32`（不是普通 number），所以要从 generic_pb 取
     import { UInt32 } from "@generated/anki/generic_pb";
+    import type { Notetype } from "@generated/anki/notetypes_pb";
     import {
-        Notetype,
         Notetype_Config,
         Notetype_Field,
         Notetype_Field_Config,

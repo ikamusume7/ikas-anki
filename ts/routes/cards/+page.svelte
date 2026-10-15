@@ -44,8 +44,8 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
     import type { RenderCardResponse, RenderedTemplateNode } from "@generated/anki/card_rendering_pb";
     import { UInt32 } from "@generated/anki/generic_pb";
     import { Note } from "@generated/anki/notes_pb";
+    import type { Notetype } from "@generated/anki/notetypes_pb";
     import {
-        Notetype,
         Notetype_Config,
         Notetype_Config_Kind,
         Notetype_Template,
