@@ -9,6 +9,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autosync;
 mod backend;
 mod backup;
 mod bridge;
@@ -97,6 +98,9 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
         // 自动备份（PARITY 1.5 / 6.2）：启动时尝试一次 + 之后每 5 分钟一次。
         // 是否真的落盘由后端按 `BackupLimits` 判断，见 `crate::backup`。
         backup::spawn(state.clone());
+        // 自动同步（PARITY 6.1）：启动时一次 + 之后每 5 分钟检查媒体同步，
+        // 开关与间隔都在 profile 配置里，见 `crate::autosync`。
+        autosync::spawn(state.clone());
     }
 
     // 起始页面可通过 ANKI_START_PAGE 指定（editor / graphs / deck-options ...）。

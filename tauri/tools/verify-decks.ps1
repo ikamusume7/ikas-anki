@@ -67,6 +67,8 @@ $env:ANKI_BACKUP_NOW = "1"
 # 「文件 → 还原备份」：原生文件对话框与确认框都没法自动点，钩子设成 `newest`
 # （= 备份目录里最新的 backup-*.colpkg，也就是 5e 里点「创建备份」生成的那份）
 $env:ANKI_RESTORE_PATH = "newest"
+# 自动同步（PARITY 6.1）：定时器间隔缩到 2 秒，好让脚本在几秒内看到一次自动媒体同步
+$env:ANKI_SYNC_TICK_SECONDS = "2"
 $backupDir = Join-Path $root "out/tauri-test/backups"
 if (Test-Path $backupDir) {
     Get-ChildItem (Join-Path $backupDir "backup-*.colpkg") -ErrorAction SilentlyContinue |
@@ -204,6 +206,14 @@ try {
         Write-Host "还原备份走了宿主流程（关集合 → 导入 → 重开）" -ForegroundColor Green
     } else {
         Write-Host "没有看到还原备份的宿主日志（见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    }
+
+    # 自动同步（PARITY 6.1）：宿主定时器真的发起了媒体同步
+    if ((Read-Log $logPath) -match "自动同步: 开始媒体同步") {
+        Write-Host "自动同步定时器生效（日志里有「开始媒体同步」）" -ForegroundColor Green
+    } else {
+        Write-Host "没有看到自动同步的宿主日志（见 $logPath）" -ForegroundColor Red
         $passed = $false
     }
 

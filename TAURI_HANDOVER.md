@@ -143,6 +143,7 @@ cargo build
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见 `tauri/README.md` 的「自动备份」 |
 | `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
 | `ANKI_PICK_COLOUR` | 空 | 测试钩子：原生取色器不弹对话框、直接当用户选了这个 `#rrggbb`（见 `tauri/README.md` 的「原生取色器」） |
+| `ANKI_SYNC_TICK_SECONDS` | 300 | 自动同步定时器的间隔（秒）。测试里设成 2，配合 profile 的 `autoSyncMediaMinutes=0` 就能在几秒内看到一次自动媒体同步 |
 
 ### 2.4 冒烟测试（已脚本化）
 
@@ -1167,15 +1168,18 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `closeEditCurrent` 见 §6.4，`searchInBrowser` 把 `SearchNode` 翻成搜索词再开/复用
   浏览器窗口（§3.7，实现在 `server/api.rs`），`openFieldsDialog` / `openCardsDialog`
   各自开着新写的 `ts/routes/fields/` 与 `ts/routes/cards/`（见 §6.4）。
-- **同步**（6.1）—— **登录 / 同步入口 / 状态 / 媒体同步 / 取消已做**：工具栏最右的
+- **同步**（6.1）—— **登录 / 同步入口 / 状态 / 媒体同步 / 取消 / 自动同步已做**：工具栏最右的
   「同步」（`Y` 键）→ 未登录弹「邮箱 + 密码 + 自定义服务器」→ `syncLogin` →
   `syncKey`/`syncUser` 写进 **profile 配置**（`prefs21.db`，与桌面版同一批键，见
   `qt/aqt/profiles.py:660-725`）→ `syncStatus` → `syncCollection` →（`syncMedia` 开着时）
   `syncMedia` + 轮询 `mediaSyncStatus` 显示后端本地化好的进度；需要完整同步时给
   「上传 / 下载」二选一（`fullUploadOrDownload`）；同步中再点一次 = 取消
-  （`abortSync`/`abortMediaSync`）。验证见 `decks-check.mjs` 5i（自带**假同步服务器**）。
-  **差**：自动同步定时器、冲突的完整处理、复习界面工具栏上的同步链接、进度条；
-  媒体同步的 happy path 没有自动化覆盖，后端不带消息的失败在页面上只显示 `Error:`。
+  （`abortSync`/`abortMediaSync`）。宿主侧还有 `tauri/src/autosync.rs`：**启动时**整份同步
+  一次（上游 on-open；没有 on-close，因为外壳没有优雅关闭钩子）+ 之后每 5 分钟检查
+  `autoSyncMediaMinutes`（默认 15）做媒体同步。验证见 `decks-check.mjs` 5i/5j
+  （自带**假同步服务器** + `ANKI_SYNC_TICK_SECONDS`）。
+  **差**：冲突的完整处理（只有上传/下载入口）、复习界面工具栏上的同步链接、进度条、
+  关闭时同步；媒体同步的 happy path 没有自动化覆盖。
 - **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
   （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
   `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；

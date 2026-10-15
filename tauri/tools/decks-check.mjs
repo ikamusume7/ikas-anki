@@ -1027,16 +1027,34 @@ try {
     hangingPaths.delete("/sync/meta");
     hangingPaths.delete("/sync/start");
 
-    // 收尾：清掉同步凭据（把 fixture 留在未登录状态），关掉假服务器
+    // 收尾：清掉同步凭据（把 fixture 留在未登录状态）
     await setProfile("syncKey", null);
     await setProfile("customSyncUrl", null);
-    await new Promise((resolve) => fakeSync.close(resolve));
     await page.goto(`${base}/decks/`, { waitUntil: "load" });
     await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
     check(
         "已清掉同步凭据（回到未登录）",
         (await page.locator("#sync[data-sync-state='off']").count()) === 1,
     );
+
+    // 5j. 自动同步（PARITY 6.1）##################################################
+    // 宿主侧的定时器（verify-decks 把 `ANKI_SYNC_TICK_SECONDS` 设成 2 秒）：
+    // profile 里放一份凭据 + `autoSyncMediaMinutes=0` → 下一个 tick 就会做一次**媒体**同步
+    await setProfile("syncKey", "fake-host-key");
+    await setProfile("customSyncUrl", syncEndpoint);
+    await setProfile("autoSyncMediaMinutes", 0);
+    syncPaths.length = 0;
+    await page.waitForTimeout(8000);
+    check(
+        "自动同步定时器发起了媒体同步（/msync/…）",
+        syncPaths.some((url) => url.startsWith("/msync/")),
+        syncPaths.join(" / ") || "（没有请求）",
+    );
+    // 还原：间隔回默认、凭据清掉，假服务器收摊
+    await setProfile("autoSyncMediaMinutes", null);
+    await setProfile("syncKey", null);
+    await setProfile("customSyncUrl", null);
+    await new Promise((resolve) => fakeSync.close(resolve));
 
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
