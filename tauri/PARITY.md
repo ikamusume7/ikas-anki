@@ -19,7 +19,7 @@
 | 1.2 | ⚠️ | 菜单栏 + 工具栏 | **工具栏两页都有了**（牌组/添加/浏览/统计 + 快捷键提示；复习界面由宿主注入 `assets/reviewer-toolbar.js`）。**差**：同步链接（含状态色/旋转图标）、add-ons 托盘、自动隐藏；菜单栏（File/Edit/Tools/Help）完全没有 | `qt/aqt/toolbar.py:353-418`、`qt/aqt/main.py:1425-1470` |
 | 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，也没有 `showMessage` 调用 —— 同步状态在工具栏的同步链接上、计数在复习界面底部栏上（两者我们都已复刻，同步除外）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui`、`qt/aqt/toolbar.py:421-430` |
 | 1.4 | ⚠️ | 主窗口快捷键 | 已接 `u`/`a`/`b`/`t`/`d`/`s`/`Ctrl+P`（复习界面与牌组列表都可用）；**差** `y`（同步）、`Ctrl+E`（导出）、`Ctrl+:`（调试控制台） | `qt/aqt/main.py:1189-1198` |
-| 1.5 | ❌ | 启动行为 | Anki 会跑「检查数据库/媒体」、备份、打开上次的牌组；外壳直接进复习 | `qt/aqt/main.py:setupProfile`、`_backup` |
+| 1.5 | ⚠️ | 启动行为 | **自动备份已做**（PARITY 6.2）：启动时尝试一次 + 之后每 5 分钟一次，都是 `force=False`、由后端按 `BackupLimits` 节流（启动那一次是替代 Qt 的"关闭时备份"，因为外壳没有优雅关闭的保证）；**打开上次的牌组**本来就一致（主窗口启动在牌组列表、当前牌组高亮）。**差**：「检查数据库 / 检查媒体」没有入口（见 6.3）、还原备份（6.2） | `qt/aqt/main.py:setupProfile`、`_backup` |
 | 1.6 | ⚠️ | 每日学习流程 | 复习完的「Congratulations」页面由复习页面自己渲染（`congratsInfo` 已接入）；但"明天再来"的等待时间/提前学习按钮要与 Qt 对齐核对 | `qt/aqt/reviewer.py:930-992` |
 
 验收：启动外壳 → 截图与真 Anki 打开时的首屏逐项对比；快捷键表逐条按一遍。
@@ -85,7 +85,7 @@
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
 | 6.1 | ❌ | **同步** | 没有同步入口/状态/冲突处理 | `qt/aqt/sync.py`、`rslib/src/sync` |
-| 6.2 | ❌ | 备份与恢复 | 没有自动备份、没有"打开备份文件夹/恢复" | `qt/aqt/main.py:_backup`、`qt/aqt/profiles.py` |
+| 6.2 | ⚠️ | 备份与恢复 | **自动备份已做**（`tauri/src/backup.rs`：启动时 + 每 5 分钟，`force=False`，目录与文件名与桌面版一致 `<profile>/backups/backup-*.colpkg`，份数由后端瘦身）。**差**：还原备份（Tools → Open Backup，`main.py:441-477`）、打开备份文件夹、手动「创建备份」入口（要等主窗口菜单栏，见 1.2） | `qt/aqt/main.py:_backup`、`qt/aqt/profiles.py` |
 | 6.3 | ❌ | 检查数据库 / 检查媒体 / 空卡片 | `CheckDatabase` 等 RPC 已有，没有入口 | Anki 主窗口 Tools 菜单 |
 | 6.4 | ❌ | 录音格式 | 直接给 WAV；Anki 用外部 `lame` 转 MP3（装了的话） | `qt/aqt/sound.py` 的 `encode_audio` |
 | 6.5 | ❌ | 原生取色器 | `saveCustomColours`（编辑器自定义颜色）没有 | `qt/aqt/mediasrv.py` 的取色器端点 |

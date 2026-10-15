@@ -20,6 +20,8 @@
 - **M2 完成**：mediasrv 的 32 个平台端点全部有实现 —— 剪贴板（含 `text/uri-list`）、
   文件选择、图片、原生对话框、profile / meta 配置（直接读写桌面版 `prefs21.db`）、
   音频播放与**录音**、**TTS**、**窗口管理（多窗口模型）**、复习状态同步
+- **桌面集成**：**自动备份**（启动时 + 每 5 分钟，与桌面版同一份 `BackupLimits` 节流，
+  见 `tauri/src/backup.rs` 与 `tauri/README.md` 的「自动备份」）
 - **M3 进行中**：编辑器、浏览器、牌组列表、自定义学习都已可用。
   - 编辑器：「编辑当前卡片」（`mode=current`）、**「添加卡片」（`mode=add`，含「丢弃输入」
     确认）**、浏览器里的编辑区（`mode=browser`）、以及**图像遮挡**（内嵌在编辑器页面里的
@@ -134,6 +136,7 @@ cargo build
 | `ANKI_START_PAGE` | `graphs` | `reviewer` 走 legacy 复习页；其余是 SvelteKit 路由 |
 | `ANKI_API_KEY` | 随机 | 固定 API 密钥 |
 | `ANKI_LANG` | `en-US` | 界面语言，`zh_CN` / `zh-CN` 均可 |
+| `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见 `tauri/README.md` 的「自动备份」 |
 
 ### 2.4 冒烟测试（已脚本化）
 
@@ -994,6 +997,23 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
    在它那里是**笔记内容**标记、不是牌组前缀 —— 所以探针用完要自己删（或别建牌组）。
    现在那个检查优先挑 `totalInDeck > 0` 的牌组，少一个"空牌组就挂"的坑。
 
+### 5.38 `bootstrap` 里没有 Tokio 运行时（`tokio::spawn` 会 panic）
+
+`main.rs::bootstrap` 跑在 Tauri 的 `setup` 回调里，**不在**任何 Tokio 运行时上下文里：
+直接 `tokio::spawn(...)` 会 panic —— `there is no reactor running, must be called from the
+context of a Tokio 1.x runtime`。后台服务（`server::spawn`）一直是自己起线程 + 自建
+runtime + `block_on`，新增后台任务（自动备份，`crate::backup`）也照这个形状写：
+
+```rust
+std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    runtime.block_on(async move { /* … */ });
+})
+```
+
+（异步上下文里调 rslib 仍然是 `AppBackend::call`，它内部用 `spawn_blocking`；
+`run_service_method` 是阻塞调用，别直接 `block_on` 在 tokio 工作线程上。）
+
 ---
 
 ## 6. 剩余工作
@@ -1063,6 +1083,14 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。**拖入文件**（HTML5 drop）不走剪贴板，见 §6.4 的 4.4。
+- **自动备份**（1.5 与 6.2 的一半）—— **已实现**：`tauri/src/backup.rs`，启动时 +
+  每 5 分钟各 `createBackup(force=False)`，是否落盘交给后端的 `BackupLimits`
+  （默认 30 分钟 + 集合自上次备份后有改动）；目录 `<profile>/backups`、文件名
+  `backup-<日期>-<时间>.colpkg` 都与桌面版一致。**与 Qt 的差异**：Qt 是"关闭时 + 每 5
+  分钟"，外壳换成"启动时 + 每 5 分钟"（外壳没有优雅关闭的保证）。验证：
+  `verify-decks.ps1` 用测试钩子 `ANKI_BACKUP_NOW=1` 断言产物存在、>1KB 且是合法 zip。
+  **差**：还原备份（Tools → Open Backup）、打开备份文件夹、手动「创建备份」入口
+  （要等主窗口菜单栏）。
 - ~~`getConfigJson` / `setConfigJson`~~ —— 这两个由 rslib 的 `ConfigService` 直接
   服务，实测可用（`getAllConfig` → 200），从来不是缺口。
 
@@ -1335,6 +1363,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
+| 自动备份 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`）、`tauri/src/main.rs`（`backup::spawn`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` 断言 |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
 | 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
 | 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |
@@ -1361,7 +1390,9 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
    5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
    4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**1.x 的收尾**（牌组拖拽排序、启动行为：检查/备份/打开上次的牌组）、**5.5–5.9 的几条
+   下一步按清单走：**1.5 剩下的两条**（「检查数据库 / 检查媒体 / 空卡片」入口 ——
+   6.3 说 RPC 都有，缺的是主窗口菜单栏 1.2；以及 6.2 的"还原备份 / 打开备份文件夹"）、
+   **1.x 的收尾**（启动行为其余部分）、**5.5–5.9 的几条
    浏览器小差异**（侧栏分区、加标签补全、列设置存储、导出到 profile 目录的拦截），
    以及 **6.x 的系统集成**（同步 / 备份 / addon —— 硬骨头）。
    浏览器的三块大功能（管理笔记类型 / CSV·纯文本导出 / 查找重复）已经全部补完。

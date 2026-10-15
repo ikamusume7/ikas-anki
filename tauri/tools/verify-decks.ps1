@@ -60,6 +60,16 @@ Get-ChildItem (Join-Path $root "$OutDir/*") -File -Include "*.apkg", "*.colpkg",
     -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
+# 自动备份（PARITY 1.5 / 6.2）：`ANKI_BACKUP_NOW` 是测试钩子，强制启动时备份一次 ——
+# 默认要等 30 分钟的间隔，脚本等不起。备份目录与桌面版一致：`<profile>/backups`
+# （这里就是 out/tauri-test/backups）。
+$env:ANKI_BACKUP_NOW = "1"
+$backupDir = Join-Path $root "out/tauri-test/backups"
+if (Test-Path $backupDir) {
+    Get-ChildItem (Join-Path $backupDir "backup-*.colpkg") -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 # 「导入文件」按钮与 Qt 一样先弹**原生文件对话框**（`importing.py:153-163`），自动化里没法
 # 点它，所以用 `ANKI_OPEN_PATH` 顶掉（与 verify-editor 给遮挡夹具用的是同一套办法）。
 # 这个变量宿主在启动时就固定了，因此必须在 Start-Process 之前设好；指向的 .apkg 由下面的
@@ -123,6 +133,31 @@ try {
         throw "牌组列表页面没有报到（详见 $logPath）"
     }
     Write-Host "牌组列表已渲染" -ForegroundColor Green
+
+    # 启动时的自动备份（`crate::backup`）：钩子强制一次，产物应是合法的 colpkg（zip）
+    if (-not (Wait-LogPattern "已创建备份" 30)) {
+        Write-Host "启动时没有创建备份（详见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    } else {
+        $backup = Get-ChildItem (Join-Path $backupDir "backup-*.colpkg") -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $backup) {
+            Write-Host "备份日志有了，但产物目录里没有 backup-*.colpkg" -ForegroundColor Red
+            $passed = $false
+        } elseif ($backup.Length -lt 1kb) {
+            Write-Host "备份文件太小：$($backup.Length) 字节" -ForegroundColor Red
+            $passed = $false
+        } else {
+            $magic = [System.Text.Encoding]::ASCII.GetString(
+                [System.IO.File]::ReadAllBytes($backup.FullName)[0..1])
+            if ($magic -ne "PK") {
+                Write-Host "备份文件不是 zip/colpkg（magic=$magic）" -ForegroundColor Red
+                $passed = $false
+            } else {
+                Write-Host "启动时已创建备份: $($backup.Name)（$([int]($backup.Length / 1kb)) KB）" -ForegroundColor Green
+            }
+        }
+    }
 
     Start-Sleep -Seconds 2
     & (Join-Path $PSScriptRoot "capture-window.ps1") `

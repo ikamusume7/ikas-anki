@@ -62,6 +62,7 @@ tauri/
 | `ANKI_OPEN_PATH` | 空 | 测试钩子：设了它，「打开文件」对话框（`openFilePicker`）直接返回这个路径。原生对话框没法自动点，图像遮挡的「选图片」靠它跑端到端（`occlusion-check.mjs`） |
 | `ANKI_API_KEY` | 随机生成 | 固定本机 API 密钥，仅用于调试与 e2e |
 | `ANKI_LANG` | `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式） |
+| `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见「自动备份」 |
 
 ## 构建步骤
 
@@ -341,6 +342,24 @@ py tauri/tools/make-prefs21-fixture.py show out/prefs21.db tauri-test
 
 > 早期版本把配置存在 profile 目录下的 `tauri-*.json` 里，与桌面版互不相通；
 > 该实现已移除。
+
+## 自动备份
+
+对照 `qt/aqt/main.py` 的备份逻辑（PARITY 1.5 / 6.2），实现只有 `tauri/src/backup.rs`
+一个文件：
+
+| Qt | 本外壳 |
+| --- | --- |
+| **关闭时** `col.create_backup(force=False)`（`main.py:726-733`），退出前 `await_backup_completion()`（`main.py:608`） | 外壳没有"优雅关闭"的保证（验证脚本是 `Stop-Process -Force`，真实使用也可能被强杀），改成**启动时先尝试一次** —— 上一次会话的改动因此能被保住 |
+| **每 5 分钟**一次（`main.py:1543-1549` 的定时器） | 同左（`backup::spawn` 起一个后台线程，5 分钟一轮） |
+| 是否真的落盘交给后端（`BackupLimits`：默认 **30 分钟**间隔 + 集合自上次备份后有改动，`rslib/src/collection/backup.rs:28-48`） | 同左（两个触发点都是 `force=False`，所以实际频率与 Qt 一致） |
+| 备份目录 `<profile>/backups`，文件名 `backup-<日期>-<时间>.colpkg`，份数由 `BackupLimits` 自动瘦身 | 同左（目录、文件名、瘦身都由后端负责） |
+| 还原：Tools → Open Backup（`main.py:441-477`） | **没做**（见 PARITY 6.2） |
+
+测试钩子：`ANKI_BACKUP_NOW=1` 在启动时**强制**备份一次并等它写完（默认间隔 30 分钟，
+脚本等不起）；`verify-decks.ps1` 用它断言 `out/tauri-test/backups/backup-*.colpkg`
+存在、>1KB 且是合法 zip（`PK`）。平时不设这个变量时，日志里是
+`备份检查: 现在还不需要备份` —— 说明后端的节流生效。
 
 ## 复习界面
 
@@ -706,6 +725,7 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 ### 已验证
 
 `tauri/tools/verify-decks.ps1`（+ `decks-check.mjs`）：以 `ANKI_START_PAGE=decks` 启动
+→ 断言**启动时创建了备份**（`ANKI_BACKUP_NOW=1` 钩子，产物是合法 zip，见「自动备份」）
 → 截首屏真实窗口（`out/decks-check/decks.png`）→ Playwright 走一遍：表头与三列计数、
 当前牌组高亮、折叠/展开（写回 `studyCollapsed`）、点牌组进概览（URL + 当前牌组 +
 「学习」按钮）、概览「学习」发出 `study`、齿轮菜单（`opts:<did>` / 重命名 /
@@ -1411,7 +1431,7 @@ browserSearch：图表 → 浏览器搜索
 | `verify-browser.ps1` | 一键：验证浏览器窗口（`browse` 开窗 → 截图 → 侧栏/表格/双击开编辑器 → 管理笔记类型窗口 → `searchInBrowser` 复用路径 → 关闭连带） |
 | `browser-check.mjs` | 上面那个脚本调用的检查：Playwright 点侧栏、双击表格行、导出四种格式（含读回产出的 CSV）、查找重复（判重 / 跳转 / 打标签），并观察页面发往宿主的桥接命令 |
 | `notetypes-check.mjs` | `verify-browser.ps1` 调用的「管理笔记类型」检查：列表渲染 / 两步添加（原厂 + 克隆，RPC 复查字段数）/ 重命名 / 删除确认文案 / 「字段…」「卡片…」两条端点，收尾把临时类型删干净 |
-| `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → 截图 → 折叠/概览/齿轮菜单（含**导出**）/新建删除 → `d`/`s`/`study` 切页） |
+| `verify-decks.ps1` | 一键：验证牌组列表（`ANKI_START_PAGE=decks` 启动 → **自动备份产物** → 截图 → 折叠/概览/齿轮菜单（含**导出**）/拖拽/新建删除 → `d`/`s`/`study` 切页） |
 | `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入、导出笔记纯文本并读回文件断言牌组范围，并用 RPC 复查当前牌组/牌组是否真的建删 |
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
 | `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
