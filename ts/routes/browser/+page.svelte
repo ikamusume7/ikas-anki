@@ -29,6 +29,8 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     import type { DeckTreeNode } from "@generated/anki/decks_pb";
     import { openFilePickerRequest } from "@generated/anki/frontend_pb";
     import { Empty, String as GenericString } from "@generated/anki/generic_pb";
+    import { ExportLimit } from "@generated/anki/import_export_pb";
+    import { NoteIds } from "@generated/anki/notes_pb";
     import { postProto } from "@generated/post";
     import type { BrowserRow, BrowserColumns_Column } from "@generated/anki/search_pb";
     import {
@@ -55,7 +57,9 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
         clearUnusedTags,
         deckTree,
         exportAnkiPackage,
+        exportCardCsv,
         exportCollectionPackage,
+        exportNoteCsv,
         findAndReplace,
         getCard,
         getNote,
@@ -1112,54 +1116,113 @@ Qt 的浏览器是**原生 Qt 界面**（`qt/aqt/browser/`：搜索框、笔记�
     }
 
     /**
+     * 格式 → 扩展名 / 保存框上的筛选名（对照各 `Exporter` 的 `extension` + `name()`，
+     * `exporting.py:232-365`）。
+     *
+     * 必须是函数：`tr.*` 要等 `onMount` 里 `setupI18n` 之后才有内容，写成顶层常量会在
+     * 组件初始化时就把 `missing key: …` 定下来（§5.22 / §5.26）。
+     */
+    function exportFormatOf(format: ExportChoice["format"]): {
+        extension: string;
+        label: string;
+    } {
+        switch (format) {
+            case "apkg":
+                return { extension: "apkg", label: tr.exportingAnkiDeckPackage() };
+            case "colpkg":
+                return { extension: "colpkg", label: tr.exportingAnkiCollectionPackage() };
+            case "notes-txt":
+                return { extension: "txt", label: tr.exportingNotesInPlainText() };
+            case "cards-txt":
+                return { extension: "txt", label: tr.exportingCardsInPlainText() };
+        }
+    }
+
+    /**
+     * 范围 → `ExportLimit`。
+     *
+     * 注意 `ExportLimit` 里还有一个同名的 `limit` oneof，构造时要嵌一层 —— 少嵌一层
+     * 不会报错，而是**静默导出整个集合**（见 TAURI_HANDOVER §5.33）。这里用生成的类
+     * 显式构造，让类型检查帮忙挡住这种写法。
+     */
+    function limitFor(scope: ExportChoice["scope"], noteIds: number[]): ExportLimit {
+        return new ExportLimit({
+            limit:
+                scope === "selection"
+                    ? { case: "noteIds", value: new NoteIds({ noteIds: noteIds.map(BigInt) }) }
+                    : { case: "wholeCollection", value: new Empty({}) },
+        });
+    }
+
+    /**
      * 按对话框的选择真的导出。
      *
-     * 对照 `exporting.py:142-160` 的 `options()`：给 `nids` 时 `limit` 是这些笔记，
-     * 否则是整份集合；勾选项一一对应请求里的字段。
+     * 对照 `exporting.py:142-160` 的 `options()` 与四个 `Exporter.export()`：给 `nids`
+     * 时 `limit` 是这些笔记，否则是整份集合；勾选项一一对应请求里的字段。
      */
     async function runExport(choice: ExportChoice): Promise<void> {
         const noteIds = exportNoteIds;
         if (noteIds.length === 0) {
             return;
         }
-        const isColpkg = choice.format === "colpkg";
-        const extension = isColpkg ? "colpkg" : "apkg";
-        const filterLabel = isColpkg
-            ? tr.exportingAnkiCollectionPackage()
-            : tr.exportingAnkiDeckPackage();
-        const path = await askSavePath(extension, filterLabel);
+        const { extension, label } = exportFormatOf(choice.format);
+        const path = await askSavePath(extension, label);
         if (!path) {
             return; // 用户取消
         }
         busy = true;
         try {
-            if (isColpkg) {
-                await exportCollectionPackage({
-                    outPath: path,
-                    includeMedia: choice.includeMedia,
-                    legacy: choice.legacy,
-                });
-                // 对照 `exporting.py:248`：`exporting_collection_exported()`
-                flash(tr.exportingCollectionExported());
-            } else {
-                const exported = await exportAnkiPackage({
-                    outPath: path,
-                    options: {
-                        withScheduling: choice.includeScheduling,
-                        withDeckConfigs: choice.includeDeckConfigs,
-                        withMedia: choice.includeMedia,
+            switch (choice.format) {
+                case "colpkg":
+                    // colpkg 没有 `limit`（整个集合），见 `ColpkgExporter.export()`
+                    await exportCollectionPackage({
+                        outPath: path,
+                        includeMedia: choice.includeMedia,
                         legacy: choice.legacy,
-                    },
-                    // `limit` 是 `ExportLimit` 里的 oneof（同名），所以嵌一层
-                    limit: {
-                        limit:
-                            choice.scope === "selection"
-                                ? { case: "noteIds", value: { noteIds: noteIds.map(BigInt) } }
-                                : { case: "wholeCollection", value: new Empty({}) },
-                    },
-                });
-                // 对照 `exporting.py:286`：`exporting_note_exported(count=…)`
-                flash(tr.exportingNoteExported({ count: exported.val }));
+                    });
+                    // 对照 `exporting.py:248`：`exporting_collection_exported()`
+                    flash(tr.exportingCollectionExported());
+                    break;
+                case "apkg": {
+                    const exported = await exportAnkiPackage({
+                        outPath: path,
+                        options: {
+                            withScheduling: choice.includeScheduling,
+                            withDeckConfigs: choice.includeDeckConfigs,
+                            withMedia: choice.includeMedia,
+                            legacy: choice.legacy,
+                        },
+                        limit: limitFor(choice.scope, noteIds),
+                    });
+                    // 对照 `exporting.py:286`：`exporting_note_exported(count=…)`
+                    flash(tr.exportingNoteExported({ count: exported.val }));
+                    break;
+                }
+                case "notes-txt": {
+                    // `NoteCsvExporter.export()`（`exporting.py:317-337`）
+                    const exported = await exportNoteCsv({
+                        outPath: path,
+                        withHtml: choice.includeHtml,
+                        withTags: choice.includeTags,
+                        withDeck: choice.includeDeck,
+                        withNotetype: choice.includeNotetype,
+                        withGuid: choice.includeGuid,
+                        limit: limitFor(choice.scope, noteIds),
+                    });
+                    flash(tr.exportingNoteExported({ count: exported.val }));
+                    break;
+                }
+                case "cards-txt": {
+                    // `CardCsvExporter.export()`（`exporting.py:349-365`）
+                    const exported = await exportCardCsv({
+                        outPath: path,
+                        withHtml: choice.includeHtml,
+                        limit: limitFor(choice.scope, noteIds),
+                    });
+                    // 对照 `exporting.py:355`：`exporting_card_exported(count=…)`
+                    flash(tr.exportingCardExported({ count: exported.val }));
+                    break;
+                }
             }
         } catch (problem) {
             flash(String(problem));

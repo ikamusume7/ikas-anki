@@ -686,7 +686,7 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 | --- | --- | --- |
 | 概览 | 独立页面（`moveToState("overview")`） | 同一页面的面板（`?deck=<id>`），少一次状态切换 |
 | 牌组描述 / 自定义学习 / 取消埋藏 / 清空筛选牌组 | 概览底部一组按钮（`overview.py:283-314`） | 没做 |
-| 牌组导出 | 齿轮菜单里有「导出」 | 没做（要整份导出对话框，见 `tauri/PARITY.md` 5.3） |
+| 牌组导出 | 齿轮菜单里有「导出」 | 没做（导出对话框本身已在浏览器里，见「导出（四种格式）」；牌组列表的齿轮入口还没接，见 `tauri/PARITY.md` 5.3） |
 | 拖拽排序、默认牌组删除保护 | Qt 允许拖动调整牌组顺序；默认牌组也能删（会重建） | 没做排序；**默认牌组的「删除」被禁用**（测试集合全靠它装卡片） |
 | 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮都没有 |
 | 同步按钮 | 有（带同步状态/旋转图标） | 没有（本外壳未实现同步） |
@@ -1064,7 +1064,7 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 | **卡片信息**（Ctrl+Shift+I，独立窗口，复用 `card-info/<cid>` 路由） | `browser.py:799-803`、`aqt/card_info.py:62` |
 | **复制笔记**（Ctrl+Alt+E：开「添加卡片」并载入该笔记） | `browser.py:828-834` |
 | **更改笔记类型**（菜单：开 `change-notetype/<id>` 窗口，页面里映射字段后保存） | `browser.py:1241-1252`、`aqt/changenotetype.py` |
-| **导出**（Ctrl+Shift+E：apkg / colpkg，问宿主要保存路径后调导出 RPC） | `browser.py:377`、`qt/aqt/import_export/exporting.py` |
+| **导出**（Ctrl+Shift+E：牌组包 / 整个集合 / 笔记纯文本 / 卡片纯文本，问宿主要保存路径后调导出 RPC） | `browser.py:377`、`qt/aqt/import_export/exporting.py` |
 | **查找替换**（Ctrl+Alt+F，`FindAndReplace`） | `aqt/browser/find_and_replace.py` |
 | **改牌组**（Ctrl+D，`setDeck`） | `browser.py:918-949` |
 | **删除**（Ctrl+Del / Delete，`removeNotes`，删的是**笔记**） | `browser.py:895-906` |
@@ -1127,9 +1127,12 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 - **导出只在页面里做**：对话框（`ExportDialog.svelte`）→ 问宿主要保存路径
   （**外壳新增的端点** `saveFileDialog`，请求复用 `OpenFilePickerRequest`，其中
   `key` 按外壳约定传建议文件名）→ 页面直接调 `exportAnkiPackage` /
-  `exportCollectionPackage`。宿主只提供"选路径"这一个能力（网页自己弹不出原生保存框）。
+  `exportCollectionPackage` / `exportNoteCsv` / `exportCardCsv`。宿主只提供"选路径"这
+  一个能力（网页自己弹不出原生保存框）。
   测试钩子：`ANKI_SAVE_PATH` 指向目录时直接返回 `<目录>/<建议文件名>`，绕过原生对话框
   （原生框没法自动点；与 `ANKI_*` 其它变量同一套路）。
+  四种格式与勾选项的对应、以及「笔记纯文本 / 卡片纯文本」落成什么文件，见下面
+  「导出（四种格式）」。
   另外**上游的 `exporting-note-exported` 在核心仓库里没有文本**（en/zh 都是空的），
   所以 apkg 导出后状态栏是空的 —— 与 Qt 一致，不是漏翻译。
 - **「更改笔记类型」是"窗口感知的端点"**：页面是既有的动态路由
@@ -1161,6 +1164,36 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 动作之后统一重跑当前搜索，并保留仍然存在的选中项（对照 `table.py:520-543` 的
 `_restore_selection`）。**删除没有确认框** —— 上游就没有（`browser.py:895-906` 直接删），
 靠通用 undo 兜底，所以这里的「删除」也是直接删 + 状态栏提示 + `Ctrl+Z` 可撤销。
+
+### 导出（四种格式）
+
+对话框是页面自己的（`ExportDialog.svelte`），格式与选项照 `qt/aqt/import_export/exporting.py`
+的 `ExportDialog`（`exporter_changed()` 按格式显隐选项，`exporting.py:98-111`）：
+
+| 格式 | 扩展名 | 后端 RPC | 选项 |
+| --- | --- | --- | --- |
+| Anki 牌组包 | `.apkg` | `exportAnkiPackage` | 范围（选中的笔记 / 全部）、排程、牌组预设、媒体、旧版 |
+| Anki 集合包 | `.colpkg` | `exportCollectionPackage` | 媒体、旧版（没有范围：`show_deck_list = False`） |
+| 笔记纯文本 | `.txt` | `exportNoteCsv` | 范围、HTML、标签、牌组名、笔记类型、GUID |
+| 卡片纯文本 | `.txt` | `exportCardCsv` | 范围、HTML |
+
+- **勾选初值**照 `forms/exporting.ui`（`includeHTML` 另由 `setup()` 置 true，
+  `exporting.py:88`）：排程 / 媒体 / HTML / 标签 = 开，牌组预设 / 牌组名 / 笔记类型 /
+  GUID / 旧版 = 关；每次打开对话框都重置。
+- **两个纯文本格式后端写的是制表符分隔的 CSV**
+  （`rslib/src/import_export/text/csv/export.rs`）：头两行固定
+  `#separator:tab` / `#html:<true|false>`，笔记导出再按勾选项补
+  `#guid/#notetype/#deck/#tags column:<N>`（列号后端算），没有单独的表头行。
+  **没有另做"选列"对话框** —— 列由勾选项决定（上游 Qt 也是这样）。
+- **`limit` 是双层 oneof**：`{ limit: { case: "noteIds"|"wholeCollection"|"deckId", value } }`。
+  三个导出 RPC 共用 `ExportLimit`，页面统一走 `limitFor(scope, noteIds)`（用生成的类构造，
+  写错类型编译期就报）。少嵌一层**不报错**，而是静默导出整个集合（踩过，见
+  `TAURI_HANDOVER.md` §5.33）。
+- 导出后的提示照 Qt：apkg / 笔记文本用 `exporting-note-exported(count)`、卡片文本用
+  `exporting-card-exported(count)`、colpkg 用 `exporting-collection-exported`（无计数）。
+- **差异**：范围只有「选中的笔记 / 全部集合」——上游是牌组下拉（可逐个牌组导出，默认
+  文件名也取牌组名）；不做"导出到 profile 目录就拒绝"的拦截（PARITY 5.9）；保存路径走
+  宿主的 `saveFileDialog`，建议文件名固定 `集合-<时间戳>.<ext>`。
 
 ### 预览窗口
 
@@ -1196,11 +1229,11 @@ M3 的另一块：**浏览器（Browse）窗口**。与编辑器不同，**这�
 | 对话框确认键 | Qt 自带的标准按钮（"OK"，仓库里没有核心 ftl key） | 用最贴合的可用文案：重置/重排用动作名，到期日用 `actions-save`，查找替换用对话框标题 |
 | 卡片信息窗口 | `CardInfoDialog`（单例，Qt 对话框） | 独立窗口，**复用已有的 `card-info/<cid>` 路由**；同窗口再看另一张卡时整页导航过去 |
 | 更改笔记类型 | 保存前 `confirm_schema_modification()`（牵涉 schema 时再确认一次） | 跳过这一步（本外壳没有这条确认链路）；其余一致：宿主补 `note_ids`、成功即关窗 |
-| 导出 | 五种格式（牌组包 / 整个集合 / 笔记纯文本 / 卡片 CSV / 带列的笔记 CSV）+ 逐个牌组导出；原生保存对话框；导出到 profile 目录时会拒绝 | 只做了 **apkg / colpkg**（CSV 要先选列，是另一套对话框）；范围只有「选中的笔记 / 全部集合」；保存路径问宿主的 `saveFileDialog`（默认文件名 `集合-<时间戳>.<ext>`）；不做"导出到 profile 目录"的拦截 |
+| 导出 | 五种格式（牌组包 / 整个集合 / 笔记纯文本 / 卡片 CSV / 带列的笔记 CSV）+ 逐个牌组导出；原生保存对话框；导出到 profile 目录时会拒绝 | 四种格式都在（apkg / colpkg / 笔记纯文本 / 卡片纯文本）；范围只有「选中的笔记 / 全部集合」（没有牌组下拉）；纯文本的列由勾选项决定，没有独立的"选列"对话框；保存路径问宿主的 `saveFileDialog`（默认文件名 `集合-<时间戳>.<ext>`）；不做"导出到 profile 目录"的拦截。详见「导出（四种格式）」 |
 | 列清单 | 「视图」菜单里逐项勾选 | 表头右键弹层（同一份 `activeCols`，落库时机一致） |
 | 列宽 / 列顺序 | `saveHeader` 存 PM profile 的**二进制表头状态**（列宽 + 视图顺序） | profile 配置 `tauriBrowserColumnWidths`（JSON，`{cards, notes}` 各存列 key → px）；顺序直接落在 `activeCols` 里 |
 | 侧栏 | 7 个分区 + 折叠状态 + 修饰键组合搜索 | 「当前牌组 / 全部集合 / 牌组树（带计数）/ 笔记模板」，点击即替换搜索词 |
-| 批量动作 | 删除 / 改牌组 / 加标签 / 移除标签 / 清除未使用标签 / 标记 / 暂停 / 埋藏 / 旗标 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改笔记类型 / 查找替换 / 导出… | 都在（行右键菜单 + 工具栏「更多」）；缺的是导出里的 CSV/纯文本格式、查找重复、管理笔记类型，见「尚未实现」 |
+| 批量动作 | 删除 / 改牌组 / 加标签 / 移除标签 / 清除未使用标签 / 标记 / 暂停 / 埋藏 / 旗标 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改笔记类型 / 查找替换 / 导出… | 都在（行右键菜单 + 工具栏「更多」）；缺的是**查找重复**，见「尚未实现」 |
 | 加标签对话框 | `TagEdit`（补全 + 最近标签） | 一个输入框（空格分隔），补全与最近标签未做 |
 | 预览 | 按钮在原生 QDialogButtonBox | 按钮在页面里；前后卡片不做禁用（清单在浏览器手里） |
 | 表头排序指示 | QHeaderView 的箭头 | 列头里的 ▲/▼ |
@@ -1253,6 +1286,12 @@ PASS  添加（原厂 Basic → RPC 复查 2 字段 / 1 模板）/ 克隆现有�
 PASS  「字段…」打了 openFieldsDialogForNotetype / 「卡片…」打了 openCardsDialogForNotetype
 PASS  删除确认框问的是「没人用的类型」/ 已清理临时笔记类型
 PASS  导出对话框默认 apkg + 选中的笔记 / 文案已本地化 / 切到 colpkg 后只剩「含媒体 / 旧版支持」
+PASS  导出勾选初值照 exporting.ui（排程开 / 牌组预设关）
+PASS  切到「笔记纯文本」后只剩文本相关的选项 / 勾选初值照 exporting.ui（HTML·标签开）
+PASS  笔记纯文本导出产出了制表符 CSV — 集合-2026-10-15@12-13-27.txt（#separator:tab / #tags column:3）
+PASS  切到「卡片纯文本」后只剩范围 + HTML
+PASS  卡片纯文本导出产出了制表符 CSV — 集合-2026-10-15@12-13-31.txt
+PASS  已清理导出的文本文件
 PASS  导出 apkg 产出了合法文件 — 集合-2026-10-13@15-48-12.apkg 56633 字节 PK
       （verify 脚本：导出 apkg → 集合-….apkg（55 KB））
 PASS  双击行发出了 editCard — editCard:1791798151921
@@ -1350,11 +1389,12 @@ browserSearch：图表 → 浏览器搜索
     图表 `browserSearch:<query>` 与 `searchInBrowser` 端点三个入口都通了；搜索、排序、
     多选、笔记模式、列清单 / 列宽 / 列顺序拖动、加标签 / 移除标签 / 清除未使用标签 / 标记 / 旗标 /
     暂停 / 埋藏 / 重置 / 设置到期日 / 重新定位 / 立即评分 / 改牌组 / 删除 + 撤销重做、
-    复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）都在，见「浏览器」。
-    **剩下的**：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
-    查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）。
+    复制笔记、卡片信息、查找替换、跳转、预览（独立窗口）、导出（四种格式）都在，见「浏览器」。
+    **剩下的**：查找重复（上游是原生对话框 + 卡片渲染，`find_duplicates.py` 有 114 行）。
   - ~~`more` 命令~~ —— **已实现**（复习界面）：见「复习界面」的「更多」菜单；编辑器里的 `more` 仍未做。
   - ~~卡片布局~~ —— **已实现**：编辑器工具栏的「卡片…」（`openCardsDialog`），见「编辑器」。
+  - ~~导出 CSV / 纯文本~~ —— **已实现**：`ExportDialog.svelte` 的「笔记纯文本 / 卡片纯文本」
+    （`.txt`，后端 `exportNoteCsv` / `exportCardCsv`），见「导出（四种格式）」。
   - ~~管理笔记类型~~ —— **已实现**：新写的 `ts/routes/notetypes/`（列表 + 添加/重命名/删除/克隆
     + 「字段…」「卡片…」两个按钮），入口在浏览器窗口的「更多」菜单，见「管理笔记类型」对话框。
   - 音频的 `current_caller` 区分（editor / reviewer 的打断语义），属 M5 的音频质量项。

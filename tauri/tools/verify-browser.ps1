@@ -42,8 +42,9 @@ $errPath = Join-Path $OutDir "run.err"
 foreach ($path in @($logPath, $errPath)) {
     if (Test-Path $path) { Remove-Item $path -Force }
 }
-# 上一次导出的产物（文件名带时间戳，会越攒越多）
-Get-ChildItem $OutDir -File -Include "*.apkg", "*.colpkg" -ErrorAction SilentlyContinue |
+# 上一次导出的产物（文件名带时间戳，会越攒越多；文本导出是检查脚本的副产物）
+Get-ChildItem (Join-Path $OutDir "*") -File -Include "*.apkg", "*.colpkg", "*.txt" `
+    -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
 Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force

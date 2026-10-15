@@ -44,13 +44,23 @@ export type FormValues = { text: string; number: number; check: boolean }[];
 
 /** 导出对话框的选择（对照 `qt/aqt/import_export/exporting.py` 的 `ExportOptions`）。 */
 export interface ExportChoice {
-    /** `apkg` = Anki 牌组包、`colpkg` = 整个集合（CSV/文本导出未做，见 README） */
-    format: "apkg" | "colpkg";
-    /** 只对 apkg 有效：导出选中的笔记还是整个集合 */
+    /**
+     * `apkg` = Anki 牌组包、`colpkg` = 整个集合、
+     * `notes-txt` = 笔记纯文本（`NoteCsvExporter`，制表符分隔）、
+     * `cards-txt` = 卡片纯文本（`CardCsvExporter`）。
+     */
+    format: "apkg" | "colpkg" | "notes-txt" | "cards-txt";
+    /** 只对带牌组下拉的格式（apkg / 两种文本）有效：选中的笔记还是整个集合 */
     scope: "selection" | "all";
     includeScheduling: boolean;
     includeDeckConfigs: boolean;
     includeMedia: boolean;
+    /** 「HTML 与媒体引用」（`exporting-include-html-and-media-references`） */
+    includeHtml: boolean;
+    includeTags: boolean;
+    includeDeck: boolean;
+    includeNotetype: boolean;
+    includeGuid: boolean;
     /** 「支持旧版 Anki」（`legacy`） */
     legacy: boolean;
 }

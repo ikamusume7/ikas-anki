@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | 5.1 | ❌ | **查找重复** | 菜单项没有（上游是对话框 + 卡片渲染报告） | `qt/aqt/browser/find_duplicates.py`（114 行） |
 | 5.2 | ⚠️ | **管理笔记类型** | **已实现**：新写的 `ts/routes/notetypes/` —— 列表「名字 [笔记数]」（`getNotetypeNamesAndCounts`）、添加两步走（6 种原厂类型 / 克隆现有类型 → 问名字）、重命名、删除（守卫与两种确认文案照 `models.py:189-198`），「字段…」「卡片…」两个按钮走宿主端点 `openFieldsDialogForNotetype` / `openCardsDialogForNotetype`。**入口**因本外壳还没有菜单栏，暂时挂在浏览器窗口的「更多」菜单（上游是主窗口菜单 `main.py:1357` 与浏览器侧栏 Note Types 节点的右键菜单 `tree.py:924-928`）；验证见 `tools/notetypes-check.mjs`（由 `verify-browser.ps1` 调用）。**差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块） | `qt/aqt/models.py` |
-| 5.3 | ❌ | 导出的 CSV / 纯文本 | 只做了 apkg / colpkg；笔记纯文本、卡片 CSV 要先选列 | `qt/aqt/import_export/exporting.py` 的 `NoteCsvExporter`/`CardCsvExporter` |
+| 5.3 | ⚠️ | 导出的 CSV / 纯文本 | **已实现**：导出对话框的「笔记纯文本 / 卡片纯文本」（`.txt`，制表符分隔的 CSV，后端 `exportNoteCsv` / `exportCardCsv`），勾选项（HTML / 标签 / 牌组名 / 笔记类型 / GUID）与初值照 `forms/exporting.ui`；验证见 `browser-check.mjs`（真的导出，并按文件头与内容断言）。**差**：没有独立的"选列"对话框（列由勾选项决定，Qt 也只按勾选项）、没有牌组下拉（只有「选中的笔记 / 全部集合」）、没有逐个牌组导出 | `qt/aqt/import_export/exporting.py` 的 `NoteCsvExporter`/`CardCsvExporter`、`forms/exporting.ui` |
 | 5.4 | ⚠️ | 编辑区位置 | Qt 把编辑区嵌在浏览器窗口内；外壳是独立窗口（`/editor/` 的 CSP 不允许 iframe），双击才打开 | `qt/aqt/browser/browser.py:608-630` |
 | 5.5 | ⚠️ | 侧栏 | 4 个分区（Qt 7 个 + 折叠状态 + 修饰键组合搜索） | `qt/aqt/browser/sidebar/tree.py` |
 | 5.6 | ⚠️ | 加标签对话框 | 没有补全与最近标签 | `qt/aqt/tagedit.py` |
@@ -124,8 +124,9 @@
 4. **4.1–4.4 编辑器** —— 4.1/4.2 两个对话框与 4.4 拖入文件都补完了（验证都在
    `verify-editor.ps1`）；**4.3「更多」菜单经核对上游并不存在**（工具栏已迁到 TS，
    `editor.py` 没有 `onMore`），剩下的只有 4.5 未保存拦截 / `EditorState`
-5. **5.1 / 5.3 浏览器余项**（查找重复 / CSV·纯文本导出）—— 5.2「管理笔记类型」
-   已补（新写的 `ts/routes/notetypes/`，验证在 `verify-browser.ps1`）
+5. **5.1 浏览器余项**（查找重复）—— 5.2「管理笔记类型」与 5.3「CSV / 纯文本导出」
+   都已补（页面在 `ts/routes/notetypes/`，导出对话框在 `ExportDialog.svelte`；
+   验证在 `verify-browser.ps1` + `notetypes-check.mjs` / `browser-check.mjs`）
 6. **6.x 系统集成**（同步、备份、addon 是硬骨头）
 7. **7.x 打包与 Android**
 

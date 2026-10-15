@@ -1055,10 +1055,10 @@ try {
     if (!exportDir) {
         console.log("没有设置 ANKI_SAVE_PATH，跳过导出检查");
     } else {
-        const exportedSince = () =>
+        const exportedSince = (pattern = /\.(apkg|colpkg)$/) =>
             fs
                 .readdirSync(exportDir)
-                .filter((name) => /\.(apkg|colpkg)$/.test(name))
+                .filter((name) => pattern.test(name))
                 .map((name) => ({
                     name,
                     path: path.join(exportDir, name),
@@ -1090,6 +1090,13 @@ try {
             "导出对话框默认 apkg + 选中的笔记",
             (await page.locator("#export-format").inputValue()) === "apkg" &&
                 (await page.locator("#export-scope").inputValue()) === "selection",
+        );
+        // 勾选项初值照 `forms/exporting.ui`（排程开、媒体开、牌组预设**关**）
+        check(
+            "导出勾选初值照 exporting.ui（排程开 / 牌组预设关）",
+            (await page.locator("#export-sched").isChecked()) &&
+                (await page.locator("#export-deck-configs").isChecked()) === false &&
+                (await page.locator("#export-media").isChecked()),
         );
         // 顺手挡住"漏了 i18n 模块"这类问题：缺 key 会直接显示 `missing key: …`
         // （踩过：`exporting-collection` 没加载 → 建议的文件名带冒号 → 导出必然失败）
@@ -1128,6 +1135,102 @@ try {
             !!produced && magic === "PK" && (stats?.size ?? 0) > 512,
             `${produced?.name ?? "（没有新文件）"} ${stats?.size ?? 0} 字节 ${magic}`,
         );
+
+        // 8.7 纯文本导出（笔记 / 卡片）#########################################
+        // 后端写的是**制表符分隔**的 CSV：前两行固定是 `#separator:tab` / `#html:<bool>`，
+        // 笔记导出再按勾选项补 `#guid/#notetype/#deck/#tags column:N`（`csv/export.rs:81-122`）。
+        const textFilesSince = () => exportedSince(/\.txt$/);
+        const visible = async (selector) => (await page.locator(selector).count()) > 0;
+        const openExportDialog = async () => {
+            await page.locator("tbody tr").nth(0).click();
+            await page.locator("tbody tr").nth(0).click({ button: "right" });
+            await page.waitForSelector(".context-menu", { timeout: 5000 });
+            await page.locator('[data-action="export"]').click();
+            await page.waitForSelector(".modal.show #export-format", { timeout: 5000 });
+        };
+
+        const beforeNotes = new Set(textFilesSince().map((entry) => entry.name));
+        await openExportDialog();
+        await page.locator("#export-format").selectOption("notes-txt");
+        await page.waitForTimeout(200);
+        check(
+            "切到「笔记纯文本」后只剩文本相关的选项",
+            (await visible("#export-scope")) &&
+                (await visible("#export-html")) &&
+                (await visible("#export-tags")) &&
+                (await visible("#export-deck")) &&
+                (await visible("#export-notetype")) &&
+                (await visible("#export-guid")) &&
+                !(await visible("#export-sched")) &&
+                !(await visible("#export-media")) &&
+                !(await visible("#export-legacy")),
+        );
+        check(
+            "笔记文本导出的勾选初值照 exporting.ui（HTML/标签开，其余关）",
+            (await page.locator("#export-html").isChecked()) &&
+                (await page.locator("#export-tags").isChecked()) &&
+                (await page.locator("#export-deck").isChecked()) === false &&
+                (await page.locator("#export-notetype").isChecked()) === false &&
+                (await page.locator("#export-guid").isChecked()) === false,
+        );
+        const notesDialogText = await page.locator(".modal.show").innerText();
+        check(
+            "文本导出对话框的文案已本地化",
+            !notesDialogText.includes("missing key"),
+            notesDialogText.split("\n").slice(0, 3).join(" / "),
+        );
+        await page.locator("#export-confirm").click();
+        await page.waitForTimeout(3000);
+        const notesTxt = textFilesSince().find((entry) => !beforeNotes.has(entry.name));
+        const notesText = notesTxt ? fs.readFileSync(notesTxt.path, "utf8") : "";
+        check(
+            "笔记纯文本导出产出了制表符 CSV",
+            !!notesTxt &&
+                notesText.startsWith("#separator:tab\n#html:true\n") &&
+                /^#tags column:\d+$/m.test(notesText) &&
+                notesText.includes(expMarker),
+            `${notesTxt?.name ?? "（没有新文件）"} ${notesText.split("\n").length} 行`,
+        );
+
+        const beforeCards = new Set(textFilesSince().map((entry) => entry.name));
+        await openExportDialog();
+        await page.locator("#export-format").selectOption("cards-txt");
+        await page.waitForTimeout(200);
+        check(
+            "切到「卡片纯文本」后只剩范围 + HTML",
+            (await visible("#export-scope")) &&
+                (await visible("#export-html")) &&
+                !(await visible("#export-tags")) &&
+                !(await visible("#export-notetype")) &&
+                !(await visible("#export-guid")) &&
+                !(await visible("#export-sched")) &&
+                !(await visible("#export-media")) &&
+                !(await visible("#export-legacy")),
+        );
+        await page.locator("#export-confirm").click();
+        await page.waitForTimeout(4000);
+        const cardsTxt = textFilesSince().find((entry) => !beforeCards.has(entry.name));
+        const cardsText = cardsTxt ? fs.readFileSync(cardsTxt.path, "utf8") : "";
+        check(
+            "卡片纯文本导出产出了制表符 CSV",
+            !!cardsTxt &&
+                cardsText.startsWith("#separator:tab\n#html:true\n") &&
+                cardsText.includes(expMarker),
+            `${cardsTxt?.name ?? "（没有新文件）"} ${cardsText.split("\n").length} 行`,
+        );
+
+        // 收尾：文本导出是检查的副产物，不留在产物目录里
+        for (const file of [notesTxt, cardsTxt]) {
+            if (file) {
+                fs.rmSync(file.path, { force: true });
+            }
+        }
+        check(
+            "已清理导出的文本文件",
+            textFilesSince().every((entry) => beforeNotes.has(entry.name)),
+            textFilesSince().map((entry) => entry.name).join(" / "),
+        );
+
         await rpc(
             "removeNotes",
             new RemoveNotesRequest({ noteIds: [expNoteId], cardIds: [] }).toBinary(),

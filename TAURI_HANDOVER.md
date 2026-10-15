@@ -29,7 +29,7 @@
     列清单 / 列宽 / 列顺序、**完整的动作表**（加/移除标签、清除未使用标签、标记、旗标、
     暂停、埋藏、重置、设置到期日、重新定位、立即评分、改牌组、删除、复制笔记、
     卡片信息、更改笔记类型、查找替换、跳转、反选/全选/选中笔记）、撤销重做、
-    **导出 apkg/colpkg**，以及**预览与卡片信息两个独立窗口**。
+    **导出（apkg / colpkg / 笔记纯文本 / 卡片纯文本）**，以及**预览与卡片信息两个独立窗口**。
   - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
     牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/删除）、
     底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与两处**顶部工具栏**
@@ -41,7 +41,7 @@
     `ts/routes/notetypes/`：列表 + 添加/重命名/删除/克隆 + 对指定笔记类型的
     「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为本外壳还没有
     菜单栏，见 PARITY 1.2）。
-  - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、导出 CSV/纯文本、
+  - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、
     查找重复、启动行为（检查/备份）、Android
 - **M4 未开始**：打包与 Android
 
@@ -328,10 +328,13 @@ pickle），不再有第二份存储。
    宿主不必中转。
 6. **导出全在页面里做，宿主只补"选保存路径"**：对话框、选项、导出 RPC 都在
    `ts/routes/browser/` 里（对照 `browser.py:377` 与 `import_export/exporting.py`），
-   只有"原生保存框"必须问宿主 —— 为此加了**外壳自己的端点** `saveFileDialog`
-   （上游没有：Qt 的对话框直接调 `getSaveFile()`）。请求复用
+   四种格式（apkg / colpkg / 笔记纯文本 / 卡片纯文本）与勾选项见 `tauri/README.md`
+   的「导出（四种格式）」。只有"原生保存框"必须问宿主 —— 为此加了**外壳自己的端点**
+   `saveFileDialog`（上游没有：Qt 的对话框直接调 `getSaveFile()`）。请求复用
    `OpenFilePickerRequest`，`key` 字段按外壳约定传建议文件名；`ANKI_SAVE_PATH`
    指向目录时直接返回 `<目录>/<建议文件名>`，好让验证脚本绕过原生对话框。
+   另注意 `ExportLimit` 的**双层 oneof**（§5.33）：三个导出 RPC 共用它，页面里统一用
+   `limitFor(scope, noteIds)` 构造。
 7. **"窗口感知的端点"复用现有页面**：`card-info/<cid>` 与 `change-notetype/<id>` 都是
    仓库里已有的路由，宿主只负责开窗与（必要时）关窗。其中 `changeNotetype` 必须由
    宿主接管：页面提交的请求里**没有 `note_ids`**（它不知道选了哪些笔记），宿主开窗时
@@ -1027,8 +1030,9 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 
 - **M3**：编辑器（`ts/routes/editor/`，89 个文件，依赖剪贴板/图片/录音）、
   导入导出（**Android 必须走 SAF**）、图像遮挡。
-  **进度**：编辑器外壳、浏览器、牌组列表、图像遮挡都已完成；导入导出里 apkg/colpkg
-  已接（浏览器动作表），还差导出 CSV/纯文本与导入的端到端验证。
+  **进度**：编辑器外壳、浏览器、牌组列表、图像遮挡都已完成；导入导出里 apkg / colpkg /
+  笔记纯文本 / 卡片纯文本四种格式都已接（浏览器动作表），导入的端到端验证也在
+  `verify-decks.ps1` 里。
   - **已完成**：编辑器外壳的两个窗口。
     - 「编辑当前卡片」（`mode=current`）：`tools/verify-editor.ps1`；
     - 「添加卡片」（`mode=add`）：`tools/verify-addcards.ps1` —— 含默认牌组/笔记类型
@@ -1055,9 +1059,12 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
     并关窗（见 §3.7）。
   - **已完成**：列清单 / 列宽 / **列顺序拖动**（拖列头写回 `activeCols`；列宽按卡片/笔记
     分开存），以及行高亮「只改选中集合也要刷新」的修复（Svelte 响应式坑，见 §5.25）。
-  - **已完成**：**导出**（apkg / colpkg）—— 对话框与导出 RPC 都在页面里，
-    宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）；验证脚本会真的导出一份
-    `.apkg` 并检查它是合法 zip。
+  - **已完成**：**导出**（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本）——
+    对话框与导出 RPC 都在页面里，宿主只补一个 `saveFileDialog` 端点（见 §3.7 第 6 条）；
+    验证脚本会真的导出 `.apkg`（检查是合法 zip）与两份 `.txt`（按
+    `#separator:tab` / 列说明头与内容断言）。格式与勾选项的对照表见
+    `tauri/README.md` 的「导出（四种格式）」。**差**：没有牌组下拉（只有
+    「选中的笔记 / 全部集合」）、没有独立的"选列"对话框、不做"导出到 profile 目录"的拦截。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
@@ -1148,8 +1155,8 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
       `svelte-check` 0 error / 0 warning）。
     - **差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块，
       本页面的两个按钮已覆盖）；入口还不在菜单栏与侧栏右键菜单上（等 PARITY 1.2）。
-  - 下一步：导出的 **CSV / 纯文本格式**（要先选列，是另一套对话框）、
-    查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）。
+  - 下一步：查找重复（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）、
+    主窗口菜单栏与同步。
     这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
 
   > **git 状态（本条目相关）**：本条目的改动已随本次提交入库
@@ -1186,8 +1193,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 - **浏览器页面是新写的**：上游的浏览器是原生 Qt 界面，没有可复用的 Web 页面，
   因此 `ts/routes/browser/` 属于本工程新增（其余窗口都是复用 `ts/routes/` 里的既有页面）。
   功能面已基本对齐（搜索 / 排序 / 多选 / 笔记模式 / 列清单·列宽·列顺序 / 完整动作表 /
-  导出 apkg·colpkg），仍缺导出里的 CSV·纯文本格式、查找重复、管理笔记类型与
-  「字段…/卡片…」对话框；逐项差异见 `tauri/README.md` 的「浏览器」。
+  导出四种格式），仍缺查找重复；逐项差异见 `tauri/README.md` 的「浏览器」。
 
 ### 7.2 曾经的妥协与解决情况（不是遗漏，已在文档标注）
 
@@ -1223,9 +1229,10 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 - **浏览器的动作覆盖**：`verify-browser.ps1` 验证了加/移除标签、改牌组、删除（+ 撤销）、
   标记、旗标（含清除）、暂停/埋藏（含恢复）、重置、设置到期日、重新定位、立即评分、
   清除未使用标签、选中笔记、查找替换（真的改了字段）、卡片信息、复制笔记、
-  更改笔记类型（真的改了类型）、导出（真的产出 .apkg）、列顺序拖动与两套列宽，
+  更改笔记类型（真的改了类型）、导出四种格式（apkg 真的是 zip；两种纯文本真的产出
+  制表符 CSV 并按文件头与内容断言）、列顺序拖动与两套列宽，
   以及 Home/Ctrl+N/End 跳转与反选/全选。**没验证**：导出到 profile 目录的拦截
-  （上游有提示，本方案没做）、查找重复 / 管理笔记类型 / CSV 导出（都没实现）。
+  （上游有提示，本方案没做）、查找重复（未实现）。
   「放弃输入」确认框里"选放弃 ⇒ 关窗"那一半也只能人工点一次（原生模态框）。
 - **预览的「仅背面」只验证了开关与配置落库**：断言了 `previewBothSides` 打开后切到
   答案面、关闭后回到问题面，但没有断言「问题与答案同时显示」的排版细节。
@@ -1264,7 +1271,7 @@ node_modules\.bin\eslint.cmd --max-warnings=0 -c .eslintrc.cjs ts/routes/notetyp
 | 录音与 TTS | `tauri/src/platform/record.rs`、`tauri/src/platform/audio.rs`、`qt/aqt/sound.py`、`qt/aqt/tts.py` |
 | 编辑器窗口（编辑当前 / 添加卡片 / 浏览器编辑区） | `tauri/src/editor.rs`、`ts/routes/editor/`、`qt/aqt/editor.py`（宿主契约）、`qt/aqt/addcards.py`（关闭确认） |
 | 浏览器窗口 | `tauri/src/browser.rs`、`ts/routes/browser/`（新写）、`qt/aqt/browser/browser.py` + `table/model.py` + `sidebar/tree.py` + `find_and_replace.py`（对照用）、`qt/aqt/forms/browser.ui`（动作表与快捷键） |
-| 导出（apkg / colpkg） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框与导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py`（对照用） |
+| 导出（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本） | `ts/routes/browser/ExportDialog.svelte` + `+page.svelte`（对话框、格式与勾选项、导出 RPC）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py` + `forms/exporting.ui`（对照用）、`rslib/src/import_export/text/csv/export.rs`（纯文本格式） |
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
@@ -1293,9 +1300,10 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
    5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
    4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**浏览器余项 —— 导出 CSV / 纯文本格式（要先选列，是另一套对话框）
-   与查找重复**（原生对话框 + 卡片渲染，`find_duplicates.py` 114 行）；两者都只是
-   "缺界面 / 缺 UI 入口"，没有架构上的障碍。
+   下一步按清单走：**5.1「查找重复」**（上游是原生对话框 + 卡片渲染，
+   `find_duplicates.py` 114 行；先 grep 上游确认这个版本的界面形态，别再照清单臆测）、
+   以及 1.x 的收尾（牌组描述 / 拖拽排序、启动行为）；都只是"缺界面 / 缺 UI 入口"，
+   没有架构上的障碍。
    「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），上游约 980 行，
    是模板/样式/预览最大的一块（§6.4 已作为「已完成」登记）。
    `y`（同步）与 `Ctrl+E`（导出）要等 6.x 的同步与主窗口菜单栏。
