@@ -662,9 +662,13 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 | `overview`（牌组概览） | `/decks/?deck=<id>`（同一页面里的一块面板） | `qt/aqt/overview.py` |
 | `review`（复习） | 复习页（legacy 页面），`/decks/` 点「学习」切过去 | `qt/aqt/reviewer.py` |
 
-页面本身（牌组树、计数、齿轮菜单）直接调 RPC：`deckTree`（`now` 必填，计数来自
+页面本身（牌组树、计数、齿轮菜单、概览面板）直接调 RPC：`deckTree`（`now` 必填，计数来自
 `newCount`/`learnCount`/`reviewCount`）、`setDeckCollapsed`、`addDeck`、`renameDeck`、
-`removeDecks`、`getCurrentDeck`、`setCurrentDeck`、`studiedToday`。**只有四件事回宿主**：
+`removeDecks`、`getCurrentDeck`、`setCurrentDeck`、`studiedToday`；概览面板另外用
+`getDeck`（描述 + 是否筛选牌组）、`renderMarkdown`（markdown 描述）、`congratsInfo`
+（有没有埋藏的卡片）、`updateDeck`（存描述）、`unburyDeck`（取消埋藏）、
+`rebuildFilteredDeck` / `emptyFilteredDeck`（筛选牌组的重建 / 清空）。
+**只有四件事回宿主**：
 
 | 页面动作 | 桥接命令 | 宿主做的事 |
 | --- | --- | --- |
@@ -685,7 +689,11 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 | 项 | Qt | 本外壳 |
 | --- | --- | --- |
 | 概览 | 独立页面（`moveToState("overview")`） | 同一页面的面板（`?deck=<id>`），少一次状态切换 |
-| 牌组描述 / 自定义学习 / 取消埋藏 / 清空筛选牌组 | 概览底部一组按钮（`overview.py:283-314`） | 没做 |
+| 概览底部按钮 | 选项 / 自定义学习 / 重建·清空（筛选牌组）/ 取消埋藏 / 描述（`overview.py:283-314`） | 都在：`O` 选项、`C` 自定义学习、筛选牌组显示 `R` 重建 / `E` 清空、有埋藏卡片时显示 `U` 取消埋藏、「描述」开编辑弹框；快捷键 `o/r/e/c/u` 也照 `overview.py:126-133` |
+| 牌组描述 | `DeckDescriptionDialog`（约 79 行）：markdown 勾选 + 纯文本框 | 同一个弹框思路（`Modal` + `textarea` + markdown 勾选），保存走 `updateDeck`；概览里按 `renderMarkdown` 渲染 |
+| 取消埋藏的三选一 | 两种埋藏都有时弹 `askUserDialog`（手动 / 计划 / 全部） | 同左（`#unbury-user` / `#unbury-sched` / `#unbury-all`），否则直接 ALL |
+| 概览的计数 | `sched.counts()` + 按牌组到期树算出的**埋藏差值**（`-3` 之类，`overview.py:228-266`） | 直接用牌组到期树的 `newCount`/`learnCount`/`reviewCount`；**没做**埋藏差值那一列 |
+| 牌组描述里的链接 | 在 WebView 里直接可点 | 同左（`{@html}` 渲染；本页是不可信路由，CSP 的 `script-src` 挡住内联脚本/事件处理器） |
 | 牌组导出 | 齿轮菜单里有「导出」 | **已实现**：齿轮 → 导出 → 与本页共用的导出对话框，范围默认「该牌组」（`limit = deckId`）、建议文件名用牌组名；验证见 `decks-check.mjs`（导出笔记纯文本 → 读回文件断言只有这个牌组的笔记） |
 | 拖拽排序、默认牌组删除保护 | Qt 允许拖动调整牌组顺序；默认牌组也能删（会重建） | 没做排序；**默认牌组的「删除」被禁用**（测试集合全靠它装卡片） |
 | 工具栏 | 主窗口的 TopWebView，所有页面都在 | 两边都有：牌组列表页自己画，复习界面由宿主注入（`assets/reviewer-toolbar.js`）；同步按钮都没有 |
@@ -699,9 +707,12 @@ M3 的**启动默认页**（`ts/routes/decks/`）。Qt 的主窗口是个状态�
 当前牌组高亮、折叠/展开（写回 `studyCollapsed`）、点牌组进概览（URL + 当前牌组 +
 「学习」按钮）、概览「学习」发出 `study`、齿轮菜单（`opts:<did>` / 重命名 /
 **导出**：范围默认该牌组、文件名用牌组名、导出的笔记纯文本里只有这个牌组的笔记 / 删除）、
+**概览面板**（描述渲染 + 「描述」弹框改写并保存 + markdown 渲染、埋藏后出现「取消埋藏」
+并点掉它）、
 新建牌组与删除、底部按钮、工具栏 → 宿主断言牌组选项窗口、导入窗口、导出走了
 `ANKI_SAVE_PATH` 钩子、概览「学习」真的切到复习页，以及 `d` / `s` / `study` 三个桥接
-命令的来回切页（切到复习页后还会取队列）。
+命令的来回切页（切到复习页后还会取队列）。筛选牌组的「重建 / 清空」与快捷键 `r`
+由 `custom-study-check.mjs` 覆盖（它先建出一个筛选牌组）。
 检查会临时建/删牌组，并还原当前牌组；失败留下的临时牌组用
 `tauri/tools/cleanup-test-decks.mjs` 清掉。
 
@@ -1437,9 +1448,10 @@ browserSearch：图表 → 浏览器搜索
     评分按钮固定四个 —— v3 调度器下 Qt 也是四个（`Scheduler.answerButtons()`
     恒返回 4，2/3 个按钮是 v2 的遗留）。
   - ~~牌组列表~~ —— **已实现**（新写的 SvelteKit 页面，启动默认页）：牌组树与今日
-    计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名 / 选项 / 删除）、底部
-    「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏，见「牌组列表」。
-    **剩下的**：牌组描述、拖拽排序、同步按钮、复习界面的工具栏。
+    计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名 / 选项 / 导出 / 删除）、底部
+    「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏；概览面板还有描述
+    （可编辑 + markdown）、选项、自定义学习 / 筛选牌组的重建·清空、取消埋藏，见「牌组列表」。
+    **剩下的**：拖拽排序、同步按钮、复习界面的工具栏、概览计数的「埋藏差值」那一列。
   - ~~`edit`~~ —— **已实现**：打开「编辑当前卡片」窗口，见「编辑器」。
   - ~~添加卡片~~ —— **已实现**：裸 `a` → `pycmd("add")` → `editor/?mode=add` 窗口，
     见「编辑器」（Qt 的入口在主窗口工具栏 / 全局快捷键 `a`）。

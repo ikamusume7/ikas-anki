@@ -39,17 +39,25 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         RenameDeckRequest,
     } from "@generated/anki/decks_pb";
     import { Empty } from "@generated/anki/generic_pb";
+    import { UnburyDeckRequest_Mode } from "@generated/anki/scheduler_pb";
     import * as tr from "@generated/ftl";
     import { translate as translateRaw } from "@generated/ftl-helpers";
     import {
         addDeck,
+        congratsInfo,
         deckTree,
+        emptyFilteredDeck,
         getCurrentDeck,
+        getDeck,
+        rebuildFilteredDeck,
         removeDecks,
         renameDeck,
+        renderMarkdown,
         setCurrentDeck,
         setDeckCollapsed,
         studiedToday,
+        unburyDeck,
+        updateDeck,
     } from "@generated/backend";
     import { bridgeCommand } from "@tslib/bridgecommand";
     import { ModuleName, setupI18n } from "@tslib/i18n";
@@ -77,6 +85,18 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let busy = false;
     /** 概览面板要显示的牌组（`null` = 只显示列表） */
     let overview: DeckTreeNode | null = null;
+    /** 概览的补充信息：`getDeck` 的完整对象（编辑描述要用）、渲染好的描述、埋藏标记 */
+    let overviewDeck: Deck | null = null;
+    let overviewDescription = "";
+    let haveBuried = false;
+    let haveSchedBuried = false;
+    let haveUserBuried = false;
+    /** 描述编辑弹框（对照 `deckdescription.py`） */
+    let descriptionModal: Modal;
+    let descriptionText = "";
+    let descriptionMarkdown = false;
+    /** 「取消埋藏」的三选一弹框（两种埋藏都有时才弹，`overview.py:152-175`） */
+    let unburyModal: Modal;
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -95,6 +115,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     $: textTitle = textMode === "create" ? tr.decksCreateDeck() : tr.actionsRename();
     $: textPrompt = textMode === "create" ? tr.decksNewDeckName() : tr.actionsRename();
+    /** 当前概览的牌组是不是筛选牌组（决定显示「重建/清空」还是「自定义学习」） */
+    $: overviewFiltered = overviewDeck?.kind.case === "filtered";
 
     /** 取整棵树（`now` 必填：后端按它算「今天」的到期数）。 */
     async function loadTree(): Promise<void> {
@@ -156,6 +178,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                     studied = "";
                 }),
         ]);
+        await loadOverviewExtra();
     }
 
     /** 进入某个牌组的概览（Qt 的 `open:<did>`：设为当前牌组 + 切到概览）。 */
@@ -185,6 +208,144 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     /** 概览里的「学习」：开始复习当前牌组（宿主切到复习页）。 */
     async function study(): Promise<void> {
         bridgeCommand("study");
+    }
+
+    // 概览的补充信息与动作 ####################################################
+
+    /**
+     * 取概览面板的补充数据（`overview.py:182-226` 的 `_renderPage` /
+     * `_desc`，以及 `:283-297` 的底部按钮）：
+     *
+     * - 描述：普通牌组取 `Deck.Normal.description`（`markdownDescription` 时走后端
+     *   `renderMarkdown`，对照 `overview.py:217-219`）；筛选牌组给一段固定说明；
+     * - 有没有埋藏的卡片：`congratsInfo` 的 `haveSchedBuried` / `haveUserBuried`
+     *   （决定要不要显示「取消埋藏」）。
+     */
+    async function loadOverviewExtra(): Promise<void> {
+        const node = overview;
+        if (!node) {
+            overviewDeck = null;
+            overviewDescription = "";
+            haveBuried = false;
+            haveSchedBuried = false;
+            haveUserBuried = false;
+            return;
+        }
+        const deck = await getDeck({ did: node.deckId });
+        overviewDeck = deck;
+        const normal = deck.kind.case === "normal" ? deck.kind.value : undefined;
+        if (deck.kind.case === "filtered") {
+            // 对照 `overview.py:212-215`
+            overviewDescription = [
+                tr.studyingThisIsASpecialDeckFor(),
+                tr.studyingCardsWillBeAutomaticallyReturnedTo(),
+                tr.studyingDeletingThisDeckFromTheDeck(),
+            ].join(" ");
+        } else if (normal?.description) {
+            overviewDescription = normal.markdownDescription
+                ? (await renderMarkdown({ markdown: normal.description, sanitize: true })).val
+                : normal.description;
+        } else {
+            overviewDescription = "";
+        }
+        const info = await congratsInfo(new Empty({}));
+        haveSchedBuried = info.haveSchedBuried;
+        haveUserBuried = info.haveUserBuried;
+        haveBuried = haveSchedBuried || haveUserBuried;
+    }
+
+    /** 概览「选项」（`overview.py:284-285` 的 `O`）。 */
+    function openOverviewOptions(): void {
+        if (overview) {
+            bridgeCommand(`opts:${overview.deckId}`);
+        }
+    }
+
+    /** 筛选牌组：重建（`overview.py:138-141`，快捷键 `r`）。 */
+    async function rebuildCurrentFilteredDeck(): Promise<void> {
+        const node = overview;
+        if (!node || !overviewFiltered) {
+            return;
+        }
+        busy = true;
+        try {
+            await rebuildFilteredDeck({ did: node.deckId });
+            await reload();
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 筛选牌组：清空（`overview.py:143-146`，快捷键 `e`）。 */
+    async function emptyCurrentFilteredDeck(): Promise<void> {
+        const node = overview;
+        if (!node || !overviewFiltered) {
+            return;
+        }
+        busy = true;
+        try {
+            await emptyFilteredDeck({ did: node.deckId });
+            await reload();
+        } finally {
+            busy = false;
+        }
+    }
+
+    /**
+     * 取消埋藏（`overview.py:152-175` 的 `on_unbury`）：两种埋藏都有时先问一句
+     * 「手动埋藏 / 埋藏的兄弟 / 全部」，否则直接 ALL。
+     */
+    function askUnbury(): void {
+        if (!overview) {
+            return;
+        }
+        if (haveSchedBuried && haveUserBuried) {
+            unburyModal.show();
+            return;
+        }
+        void unbury(UnburyDeckRequest_Mode.ALL);
+    }
+
+    async function unbury(mode: UnburyDeckRequest_Mode): Promise<void> {
+        const node = overview;
+        if (!node) {
+            return;
+        }
+        busy = true;
+        try {
+            await unburyDeck({ deckId: node.deckId, mode });
+            await reload();
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 「描述」按钮（`overview.py:277-278` 的 `DeckDescriptionDialog`）。 */
+    function askDescription(): void {
+        const deck = overviewDeck;
+        if (!deck || deck.kind.case !== "normal") {
+            return;
+        }
+        descriptionText = deck.kind.value.description;
+        descriptionMarkdown = deck.kind.value.markdownDescription;
+        descriptionModal.show();
+    }
+
+    /** 保存描述：整份 `Deck` 写回（上游 `update_deck_dict`，`deckdescription.py:69-75`）。 */
+    async function saveDescription(): Promise<void> {
+        const deck = overviewDeck;
+        if (!deck || deck.kind.case !== "normal") {
+            return;
+        }
+        deck.kind.value.description = descriptionText;
+        deck.kind.value.markdownDescription = descriptionMarkdown;
+        busy = true;
+        try {
+            await updateDeck(deck);
+            await reload();
+        } finally {
+            busy = false;
+        }
     }
 
     // 底部按钮 ################################################################
@@ -348,10 +509,35 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 }
                 break;
             case "c":
-                // Qt：概览里按 `c` 打开自定义学习（`overview.py:126-133`）
-                if (overview) {
+                // Qt：概览里按 `c` 打开自定义学习（`overview.py:126-133`，筛选牌组时不响应）
+                if (overview && !overviewFiltered) {
                     event.preventDefault();
                     bridgeCommand(`customStudy:${overview.deckId}`);
+                }
+                break;
+            case "o":
+                // 概览的固定快捷键（`overview.py:126-133`）
+                if (overview) {
+                    event.preventDefault();
+                    openOverviewOptions();
+                }
+                break;
+            case "r":
+                if (overview && overviewFiltered) {
+                    event.preventDefault();
+                    void rebuildCurrentFilteredDeck();
+                }
+                break;
+            case "e":
+                if (overview && overviewFiltered) {
+                    event.preventDefault();
+                    void emptyCurrentFilteredDeck();
+                }
+                break;
+            case "u":
+                if (overview && haveBuried) {
+                    event.preventDefault();
+                    askUnbury();
                 }
                 break;
         }
@@ -367,6 +553,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ModuleName.SCHEDULING,
                 // 齿轮里的「导出」用的是 `ExportDialog.svelte`（`exporting-*` 文案）
                 ModuleName.EXPORTING,
+                // 概览的描述编辑弹框（`deck-config-description-new-handling2`）
+                ModuleName.DECK_CONFIG,
                 // 工具栏的「浏览」「统计」住在 ftl/qt/qt-misc.ftl，没有类型化函数
                 ModuleName.QT_MISC,
             ],
@@ -377,6 +565,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         if (wanted) {
             const id = wanted === "current" ? Number(currentDeckId) : Number(wanted);
             overview = nodes.get(id) ?? null;
+            await loadOverviewExtra();
         }
     });
 </script>
@@ -437,20 +626,62 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 >
                 <button
                     class="btn btn-secondary"
-                    on:click={() => bridgeCommand(`opts:${overview?.deckId}`)}
-                    >{tr.actionsOptions()}</button
+                    id="deck-options"
+                    title={tr.actionsShortcutKey({ val: "O" })}
+                    on:click={openOverviewOptions}>{tr.actionsOptions()}</button
                 >
-                <!-- 对照 Qt 概览底部的「C 自定义学习」（`overview.py:284-292`） -->
-                <button
-                    class="btn btn-secondary"
-                    id="deck-custom-study"
-                    on:click={() => bridgeCommand(`customStudy:${overview?.deckId}`)}
-                    >{tr.actionsCustomStudy()}</button
-                >
+                {#if overviewFiltered}
+                    <!-- 筛选牌组：重建 / 清空（`overview.py:287-290`） -->
+                    <button
+                        class="btn btn-secondary"
+                        id="deck-rebuild"
+                        title={tr.actionsShortcutKey({ val: "R" })}
+                        on:click={() => void rebuildCurrentFilteredDeck()}
+                        >{tr.actionsRebuild()}</button
+                    >
+                    <button
+                        class="btn btn-secondary"
+                        id="deck-empty"
+                        title={tr.actionsShortcutKey({ val: "E" })}
+                        on:click={() => void emptyCurrentFilteredDeck()}
+                        >{tr.studyingEmpty()}</button
+                    >
+                {:else}
+                    <!-- 对照 Qt 概览底部的「C 自定义学习」（`overview.py:284-292`） -->
+                    <button
+                        class="btn btn-secondary"
+                        id="deck-custom-study"
+                        title={tr.actionsShortcutKey({ val: "C" })}
+                        on:click={() => bridgeCommand(`customStudy:${overview?.deckId}`)}
+                        >{tr.actionsCustomStudy()}</button
+                    >
+                {/if}
+                {#if haveBuried}
+                    <!-- 取消埋藏（`overview.py:294-295`） -->
+                    <button
+                        class="btn btn-secondary"
+                        id="deck-unbury"
+                        title={tr.actionsShortcutKey({ val: "U" })}
+                        on:click={askUnbury}>{tr.studyingUnbury()}</button
+                    >
+                {/if}
+                {#if !overviewFiltered}
+                    <!-- 编辑描述（`overview.py:296-297` 的「描述」链接） -->
+                    <button class="btn btn-secondary" id="deck-description" on:click={askDescription}
+                        >{tr.schedulingDescription()}</button
+                    >
+                {/if}
                 <button class="btn btn-secondary" on:click={() => (window.location.href = "/decks/")}
                     >{tr.actionsDecks()}</button
                 >
             </div>
+            {#if overviewDescription}
+                <!-- 牌组描述（上游用 `stdHtml` 直接插 HTML；这里的 CSP 是不可信页面的
+                     那套：内联脚本/事件处理器都被 script-src 挡住） -->
+                <div class="description" id="deck-description-text">
+                    {@html overviewDescription}
+                </div>
+            {/if}
         </div>
     {/if}
 
@@ -541,6 +772,96 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
 <!-- 齿轮 → 导出（与浏览器那边共用同一个对话框与 `exporting.ts`） -->
 <ExportDialog bind:this={exportDialog} onExport={(choice) => void runDeckExport(choice)} />
+
+<!-- 描述编辑（对照 `qt/aqt/deckdescription.py`：markdown 勾选 + 纯文本框 + 保存） -->
+<Modal bind:this={descriptionModal} modalKey="deck-description" onOkClicked={() => void saveDescription()}>
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{tr.schedulingDescription()}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <div class="form-check mb-2">
+            <input
+                class="form-check-input"
+                type="checkbox"
+                id="description-markdown"
+                bind:checked={descriptionMarkdown}
+            />
+            <label
+                class="form-check-label"
+                for="description-markdown"
+                title={tr.deckConfigDescriptionNewHandlingHint()}
+                >{tr.deckConfigDescriptionNewHandling2()}</label
+            >
+        </div>
+        <textarea
+            id="description-text"
+            class="form-control"
+            rows="6"
+            bind:value={descriptionText}
+        ></textarea>
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" on:click={descriptionModal.cancelHandler}>
+            {tr.actionsCancel()}
+        </button>
+        <button
+            id="description-save"
+            type="button"
+            class="btn btn-primary"
+            on:click={descriptionModal.acceptHandler}>{tr.actionsSave()}</button
+        >
+    </div>
+</Modal>
+
+<!-- 「要取消埋藏哪些卡片？」（对照 `overview.py:155-171` 的 askUserDialog） -->
+<Modal bind:this={unburyModal} modalKey="deck-unbury">
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{tr.studyingWhatWouldYouLikeToUnbury()}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body unbury-choices">
+        <button
+            class="btn btn-secondary"
+            id="unbury-user"
+            on:click={() => {
+                unburyModal.hide();
+                void unbury(UnburyDeckRequest_Mode.USER_ONLY);
+            }}>{tr.studyingManuallyBuriedCards()}</button
+        >
+        <button
+            class="btn btn-secondary"
+            id="unbury-sched"
+            on:click={() => {
+                unburyModal.hide();
+                void unbury(UnburyDeckRequest_Mode.SCHED_ONLY);
+            }}>{tr.studyingBuriedSiblings()}</button
+        >
+        <button
+            class="btn btn-primary"
+            id="unbury-all"
+            on:click={() => {
+                unburyModal.hide();
+                void unbury(UnburyDeckRequest_Mode.ALL);
+            }}>{tr.studyingAllBuriedCards()}</button
+        >
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" on:click={unburyModal.cancelHandler}>
+            {tr.actionsCancel()}
+        </button>
+    </div>
+</Modal>
 
 <!-- 新建/重命名共用这一个文本弹框（Qt 是两个 `getOnlyText` 对话框） -->
 <Modal bind:this={textModal} modalKey="deck-text" onOkClicked={() => void applyText()}>
@@ -690,6 +1011,21 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         margin-top: 0.5rem;
         color: var(--fg);
         font-size: 0.9rem;
+    }
+
+    .description {
+        margin-top: 1rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border, #ccc);
+        border-radius: 4px;
+        color: var(--fg);
+        overflow-wrap: anywhere;
+    }
+
+    .unbury-choices {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
     }
 
     .bottom {

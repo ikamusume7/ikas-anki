@@ -22,12 +22,14 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 import { Deck, DeckId, DeckIds } from "../../out/ts/lib/generated/anki/decks_pb.js";
+import { CardIds } from "../../out/ts/lib/generated/anki/cards_pb.js";
 import { OpChangesWithId } from "../../out/ts/lib/generated/anki/collection_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
 import {
     AddNoteRequest,
     AddNoteResponse,
     Note,
+    NoteId,
     RemoveNotesRequest,
 } from "../../out/ts/lib/generated/anki/notes_pb.js";
 import {
@@ -35,6 +37,11 @@ import {
     NotetypeId,
     NotetypeNames,
 } from "../../out/ts/lib/generated/anki/notetypes_pb.js";
+import {
+    BuryOrSuspendCardsRequest,
+    BuryOrSuspendCardsRequest_Mode,
+    CongratsInfoResponse,
+} from "../../out/ts/lib/generated/anki/scheduler_pb.js";
 import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40031";
@@ -291,6 +298,33 @@ try {
     await page.locator(".modal.show .modal-footer .btn-primary").click();
     await page.waitForTimeout(1200);
 
+    // 导出与概览两节共用的夹具工具：随便挑一个普通问答类型，按它的字段数造一条笔记
+    const basicNotetype = Notetype.fromBinary(
+        await rpc(
+            "getNotetype",
+            new NotetypeId({
+                ntid: NotetypeNames.fromBinary(
+                    await rpc("getNotetypeNames", new Empty({}).toBinary()),
+                ).entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name)).id,
+            }).toBinary(),
+        ),
+    );
+    const addNoteTo = async (deckId, firstField) =>
+        AddNoteResponse.fromBinary(
+            await rpc(
+                "addNote",
+                new AddNoteRequest({
+                    note: new Note({
+                        notetypeId: basicNotetype.id,
+                        fields: basicNotetype.fields.map((field, index) =>
+                            index === 0 ? firstField : field.name,
+                        ),
+                    }),
+                    deckId,
+                }).toBinary(),
+            ),
+        ).noteId;
+
     // 5b. 齿轮 → 导出（`deckbrowser.py:317-319` → `main.py:1398-1401`）#########
     // 夹具：父牌组里一张笔记（marker），默认牌组里另一张（另一个 marker）。
     // 导成「笔记纯文本」后直接读文件断言 —— 这样能真的验证「只导了这个牌组」
@@ -299,31 +333,10 @@ try {
     if (!exportDir) {
         console.log("没有设置 ANKI_SAVE_PATH，跳过「齿轮 → 导出」检查");
     } else {
-        const basic = NotetypeNames.fromBinary(
-            await rpc("getNotetypeNames", new Empty({}).toBinary()),
-        ).entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name));
-        const basicNotetype = Notetype.fromBinary(
-            await rpc("getNotetype", new NotetypeId({ ntid: basic.id }).toBinary()),
-        );
-        const addNote = async (deckId, firstField) =>
-            AddNoteResponse.fromBinary(
-                await rpc(
-                    "addNote",
-                    new AddNoteRequest({
-                        note: new Note({
-                            notetypeId: basic.id,
-                            fields: basicNotetype.fields.map((field, index) =>
-                                index === 0 ? firstField : field.name,
-                            ),
-                        }),
-                        deckId,
-                    }).toBinary(),
-                ),
-            ).noteId;
         const deckMarker = `TauriDeckExport${stamp}`;
         const otherMarker = `TauriOtherExport${stamp}`;
-        const deckNote = await addNote(parentId, deckMarker);
-        const otherNote = await addNote(originalDeck, otherMarker);
+        const deckNote = await addNoteTo(parentId, deckMarker);
+        const otherNote = await addNoteTo(originalDeck, otherMarker);
 
         const textFiles = () => fs.readdirSync(exportDir).filter((name) => name.endsWith(".txt"));
         const before = new Set(textFiles());
@@ -367,6 +380,98 @@ try {
             (await searchNotes(deckMarker)).length === 0 &&
                 (await searchNotes(otherMarker)).length === 0,
         );
+    }
+
+    // 5c. 概览：描述 + 取消埋藏（`overview.py`）##############################
+    // 描述：先写一段 HTML → 概览里要渲染出来；点「描述」改一段 Markdown → 概览渲染成 HTML
+    const descMarker = `TauriDesc${stamp}`;
+    const descEdited = `TauriDescEdited${stamp}`;
+    const parentDeck = () =>
+        rpc("getDeck", new DeckId({ did: parentId }).toBinary()).then((bytes) =>
+            Deck.fromBinary(bytes),
+        );
+    {
+        const deck = await parentDeck();
+        deck.kind.value.description = `<b>${descMarker}</b>`;
+        deck.kind.value.markdownDescription = false;
+        await rpc("updateDeck", deck.toBinary());
+
+        await page.locator(`tbody tr[data-deck="${parentId}"] td.name a`).click();
+        await page.waitForSelector(".overview", { timeout: 15_000 });
+        await page.waitForSelector("#deck-description-text", { timeout: 15_000 });
+        const shown = (await page.locator("#deck-description-text").innerText()).trim();
+        check("概览渲染了牌组描述", shown.includes(descMarker), shown);
+
+        await page.locator("#deck-description").click();
+        await page.waitForSelector(".modal.show #description-text", { timeout: 5000 });
+        check(
+            "描述弹框预填了当前描述",
+            (await page.locator("#description-text").inputValue()).includes(descMarker),
+        );
+        await page.locator("#description-text").fill(`**${descEdited}**`);
+        await page.locator("#description-markdown").check();
+        await page.locator("#description-save").click();
+        await page.waitForTimeout(1500);
+
+        const saved = await parentDeck();
+        check(
+            "描述已保存（含 markdown 开关）",
+            saved.kind.value.description === `**${descEdited}**` &&
+                saved.kind.value.markdownDescription === true,
+            JSON.stringify({
+                desc: saved.kind.value.description,
+                md: saved.kind.value.markdownDescription,
+            }),
+        );
+        const rendered = (await page.locator("#deck-description-text").innerText()).trim();
+        check(
+            "markdown 描述渲染成了 HTML",
+            rendered.includes(descEdited) && !rendered.includes("**"),
+            rendered,
+        );
+    }
+
+    // 取消埋藏：埋一张父牌组的卡片 → 概览里出现「取消埋藏」→ 点掉它 → 标记消失
+    {
+        const buriedNote = await addNoteTo(parentId, `TauriBuried${stamp}`);
+        const cardIds = CardIds.fromBinary(
+            await rpc("cardsOfNote", new NoteId({ nid: buriedNote }).toBinary()),
+        ).cids;
+        await rpc(
+            "buryOrSuspendCards",
+            new BuryOrSuspendCardsRequest({
+                cardIds,
+                mode: BuryOrSuspendCardsRequest_Mode.BURY_USER,
+            }).toBinary(),
+        );
+        check(
+            "埋藏后 congratsInfo 报告用户埋藏",
+            CongratsInfoResponse.fromBinary(
+                await rpc("congratsInfo", new Empty({}).toBinary()),
+            ).haveUserBuried === true,
+        );
+
+        await page.reload({ waitUntil: "load" });
+        await page.waitForSelector(".overview", { timeout: 15_000 });
+        await page.waitForSelector("#deck-unbury", { timeout: 15_000 });
+        check("埋藏之后概览出现「取消埋藏」", (await page.locator("#deck-unbury").count()) === 1);
+        await page.locator("#deck-unbury").click();
+        await page.waitForTimeout(1500);
+        check(
+            "点「取消埋藏」后按钮消失",
+            (await page.locator("#deck-unbury").count()) === 0,
+        );
+        check(
+            "RPC 复查：没有用户埋藏的卡片了",
+            CongratsInfoResponse.fromBinary(
+                await rpc("congratsInfo", new Empty({}).toBinary()),
+            ).haveUserBuried === false,
+        );
+        await rpc(
+            "removeNotes",
+            new RemoveNotesRequest({ noteIds: [buriedNote], cardIds: [] }).toBinary(),
+        );
+        check("已清理埋藏检查的笔记", (await searchNotes(`TauriBuried${stamp}`)).length === 0);
     }
 
     // 6. 新建牌组 → 删除 ####################################################

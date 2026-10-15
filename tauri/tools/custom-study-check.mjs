@@ -27,6 +27,7 @@ import {
     DeckTreeRequest,
 } from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
+import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40001";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
@@ -114,7 +115,10 @@ const currentDeck = () =>
 // ##########################################################################
 
 const before = await deckNodes();
-const target = before.find((node) => !node.filtered);
+// 优先挑**有卡片的**普通牌组：集合里可能留着别的空牌组（上一次跑崩留下的），
+// 挑到空牌组的话 cram（「全部卡片」）会因为一张卡片都没有而失败
+const normalDecks = before.filter((node) => !node.filtered);
+const target = normalDecks.find((node) => node.totalInDeck > 0) ?? normalDecks[0];
 if (!target) {
     console.error("集合里没有普通牌组，先跑 seed-card.mjs 造一张卡片");
     process.exit(2);
@@ -195,6 +199,37 @@ try {
             current.id === filtered.deckId,
             `${current.name}（${current.id}）`,
         );
+
+        // 4b. 筛选牌组的概览：有「重建 / 清空」、没有「自定义学习」##############
+        // （对照 `overview.py:283-297` 的底部按钮与 `:126-133` 的快捷键 r/e）
+        const cardsInDeck = async () =>
+            SearchResponse.fromBinary(
+                await rpc(
+                    "searchCards",
+                    new SearchRequest({ search: `did:${filtered.deckId}` }).toBinary(),
+                ),
+            ).ids.length;
+        await page.goto(`${base}/decks/?deck=${filtered.deckId}`, { waitUntil: "load" });
+        await page.waitForSelector(".overview", { timeout: 20_000 });
+        check(
+            "筛选牌组的概览有「重建 / 清空」，没有「自定义学习」",
+            (await page.locator("#deck-rebuild").count()) === 1 &&
+                (await page.locator("#deck-empty").count()) === 1 &&
+                (await page.locator("#deck-custom-study").count()) === 0,
+        );
+        const beforeEmpty = await cardsInDeck();
+        await page.locator("#deck-empty").click();
+        await page.waitForTimeout(1500);
+        const afterEmpty = await cardsInDeck();
+        check(
+            "点「清空」后筛选牌组里没有卡片",
+            beforeEmpty > 0 && afterEmpty === 0,
+            `${beforeEmpty} → ${afterEmpty}`,
+        );
+        await page.keyboard.press("r");
+        await page.waitForTimeout(1500);
+        check("按 `r` 重建筛选牌组", (await cardsInDeck()) > 0, `${await cardsInDeck()} 张`);
+
         await rpc("removeDecks", new DeckIds({ dids: [filtered.deckId] }).toBinary());
         await rpc("setCurrentDeck", new DeckId({ did: originalDeckId }).toBinary());
         check(
