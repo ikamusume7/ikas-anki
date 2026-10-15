@@ -21,7 +21,13 @@ import path from "node:path";
 
 import { chromium } from "playwright";
 
-import { Deck, DeckId, DeckIds } from "../../out/ts/lib/generated/anki/decks_pb.js";
+import {
+    Deck,
+    DeckId,
+    DeckIds,
+    DeckNames,
+    GetDeckNamesRequest,
+} from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { CardIds } from "../../out/ts/lib/generated/anki/cards_pb.js";
 import { OpChangesWithId } from "../../out/ts/lib/generated/anki/collection_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
@@ -473,6 +479,66 @@ try {
         );
         check("已清理埋藏检查的笔记", (await searchNotes(`TauriBuried${stamp}`)).length === 0);
     }
+
+    // 5d. 拖拽移动牌组（`deckbrowser.ts` 的拖放 → `reparentDecks`）#############
+    // 上游是 jQuery UI 的拖放 + `pycmd("drag:source,target")`；这里用页面内的
+    // `DragEvent` 合成（`locator.dispatchEvent` 造的事件在页面里读不到 dataTransfer，
+    // 见 TAURI_HANDOVER §5.32）
+    const deckNames = async () =>
+        DeckNames.fromBinary(
+            await rpc(
+                "getDeckNames",
+                new GetDeckNamesRequest({ skipEmptyDefault: false }).toBinary(),
+            ),
+        ).entries.map((entry) => entry.name);
+    const dragDeckOnto = async (sourceId, targetSelector) =>
+        page.evaluate(
+            ({ source, selector }) => {
+                const sourceRow = document.querySelector(`tbody tr[data-deck="${source}"]`);
+                const targetRow = document.querySelector(selector);
+                const dataTransfer = new DataTransfer();
+                sourceRow.dispatchEvent(
+                    new DragEvent("dragstart", { dataTransfer, bubbles: true }),
+                );
+                for (const kind of ["dragenter", "dragover"]) {
+                    targetRow.dispatchEvent(
+                        new DragEvent(kind, { dataTransfer, bubbles: true, cancelable: true }),
+                    );
+                }
+                targetRow.dispatchEvent(
+                    new DragEvent("drop", { dataTransfer, bubbles: true, cancelable: true }),
+                );
+                sourceRow.dispatchEvent(new DragEvent("dragend", { dataTransfer, bubbles: true }));
+            },
+            { source: String(sourceId), selector: targetSelector },
+        );
+
+    const dragName = `TauriDrag${stamp}`;
+    const dragId = await addDeck(dragName);
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector(`tbody tr[data-deck="${dragId}"]`, { timeout: 15_000 });
+    check("拖拽前是顶层牌组", (await deckNames()).includes(dragName));
+    await dragDeckOnto(dragId, `tbody tr[data-deck="${parentId}"]`);
+    await page.waitForTimeout(1500);
+    check(
+        "拖到另一个牌组上 → 变成它的子牌组",
+        (await deckNames()).includes(`${parentName}::${dragName}`),
+        (await deckNames()).filter((name) => name.includes(dragName)).join(" / "),
+    );
+    check(
+        "子牌组出现在列表里（父牌组下面）",
+        (await deckRows()).some((row) => row.text.includes(dragName)),
+    );
+    await dragDeckOnto(dragId, "tbody tr.top-level-drag-row");
+    await page.waitForTimeout(1500);
+    check(
+        "拖到顶部那条 → 回到顶层",
+        (await deckNames()).includes(dragName) &&
+            !(await deckNames()).includes(`${parentName}::${dragName}`),
+        (await deckNames()).filter((name) => name.includes(dragName)).join(" / "),
+    );
+    await rpc("removeDecks", new DeckIds({ dids: [dragId] }).toBinary());
+    check("已清理拖拽检查的牌组", !(await deckNames()).includes(dragName));
 
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();

@@ -17,6 +17,9 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 - 齿轮 → `opts:<did>` → 重命名 / 选项 / **导出** / 删除（`deckbrowser.py:293-296,309-327`；
   导出走 `mw.onExport(did=...)` → `ExportDialog(mw, did=did)`，范围默认是**这个牌组**，
   建议文件名也用牌组名 —— 复用浏览器那套 `ExportDialog.svelte` + `exporting.ts`）；
+- **拖拽**：把一行拖到另一行上 → 变成它的子牌组；拖到列表顶部那条
+  `top-level-drag-row` → 回到顶层（`deckbrowser.ts:6-32` 的 jQuery UI 拖放 →
+  `deckbrowser.py:121-123` 的 `drag:source,target` → `reparentDecks`）。
 - 底部按钮：获取共享牌组 / 创建牌组 / 导入文件（`deckbrowser.py:382-394`）；
 - 底部还有一行「今日学习」（`deckbrowser.py:207-210` 的 `studied_today`）。
 
@@ -53,6 +56,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         removeDecks,
         renameDeck,
         renderMarkdown,
+        reparentDecks,
         setCurrentDeck,
         setDeckCollapsed,
         studiedToday,
@@ -97,6 +101,10 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let descriptionMarkdown = false;
     /** 「取消埋藏」的三选一弹框（两种埋藏都有时才弹，`overview.py:152-175`） */
     let unburyModal: Modal;
+    /** 拖拽移动牌组：源牌组、当前高亮的落点、失败提示 */
+    let dragSource: bigint | null = null;
+    let dropTarget: bigint | null = null;
+    let dragStatus = "";
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -203,6 +211,67 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             }),
         );
         await loadTree();
+    }
+
+    // 拖拽移动牌组 ############################################################
+
+    /**
+     * 上游是 jQuery UI 的 `draggable`/`droppable`（`deckbrowser.ts:6-32`）：放到某个牌组行上
+     * 就变成它的子牌组，放到列表顶部那条 `top-level-drag-row` 上就回到顶层（目标 id 传 0）。
+     * 这里用 HTML5 拖放，源牌组记在组件状态里（合成事件也能驱动，方便验证脚本）。
+     */
+    function onDragStart(node: DeckTreeNode, event: DragEvent): void {
+        dragSource = node.deckId;
+        dragStatus = "";
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", String(node.deckId));
+        }
+    }
+
+    function onDragOver(target: bigint, event: DragEvent): void {
+        if (dragSource === null || dragSource === target) {
+            return;
+        }
+        // 不 preventDefault 的话浏览器不会派发 drop
+        event.preventDefault();
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = "move";
+        }
+        dropTarget = target;
+    }
+
+    function onDragLeave(target: bigint): void {
+        if (dropTarget === target) {
+            dropTarget = null;
+        }
+    }
+
+    /** 放下：`reparentDecks`（`deckbrowser.py:121-123,360-363`）。`newParent = 0` 表示顶层。 */
+    async function onDrop(target: bigint, event: DragEvent): Promise<void> {
+        event.preventDefault();
+        const source = dragSource;
+        dragSource = null;
+        dropTarget = null;
+        if (source === null || source === target) {
+            return;
+        }
+        busy = true;
+        try {
+            await reparentDecks({ deckIds: [source], newParent: target });
+            await reload();
+        } catch (problem) {
+            // 后端只拒绝一种情况：目标必须是叶子节点（筛选牌组不能当父牌组）
+            console.error("拖拽移动牌组失败", problem);
+            dragStatus = String(problem);
+        } finally {
+            busy = false;
+        }
+    }
+
+    function onDragEnd(): void {
+        dragSource = null;
+        dropTarget = null;
     }
 
     /** 概览里的「学习」：开始复习当前牌组（宿主切到复习页）。 */
@@ -696,10 +765,27 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             </tr>
         </thead>
         <tbody>
+            <!-- 拖到这里 = 移到顶层（`deckbrowser.py:303-304` + `deckbrowser.ts:21-24`） -->
+            <tr
+                class="top-level-drag-row"
+                class:drag-hover={dropTarget === 0n}
+                on:dragover={(event) => onDragOver(0n, event)}
+                on:dragleave={() => onDragLeave(0n)}
+                on:drop={(event) => void onDrop(0n, event)}
+            >
+                <td colspan="5"></td>
+            </tr>
             {#each rows as row (row.node.deckId)}
                 <tr
                     class:current={row.node.deckId === currentDeckId}
+                    class:drag-hover={dropTarget === row.node.deckId}
                     data-deck={row.node.deckId}
+                    draggable="true"
+                    on:dragstart={(event) => onDragStart(row.node, event)}
+                    on:dragover={(event) => onDragOver(row.node.deckId, event)}
+                    on:dragleave={() => onDragLeave(row.node.deckId)}
+                    on:drop={(event) => void onDrop(row.node.deckId, event)}
+                    on:dragend={onDragEnd}
                     on:click={(event) =>
                         event.shiftKey ? void selectDeck(row.node) : void openDeck(row.node)}
                 >
@@ -745,6 +831,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     <!-- 导出之后的提示（上游是 tooltip） -->
     {#if exportStatus}
         <div class="export-status" id="export-status">{exportStatus}</div>
+    {/if}
+
+    <!-- 拖拽失败（只有"目标必须是叶子节点"这一种） -->
+    {#if dragStatus}
+        <div class="export-status" id="deck-drag-error">{dragStatus}</div>
     {/if}
 
     <!-- 底部按钮（对照 `deckbrowser.py:382-394`） -->
@@ -964,6 +1055,17 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
     .indent {
         display: inline-block;
+    }
+
+    /* 拖到这一条 = 移到顶层（`deckbrowser.py:303-304` 的 `top-level-drag-row`） */
+    .top-level-drag-row td {
+        height: 0.6rem;
+        padding: 0;
+    }
+
+    .drag-hover td,
+    .drag-hover {
+        background: var(--fg-faint, #e6e6e6);
     }
 
     .collapse,
