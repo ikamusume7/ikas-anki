@@ -97,13 +97,26 @@ function bridgeShim(config) {
         return originalFetch(input, init);
     };
     window.__bridgeCalls = [];
-    window.bridgeCommand = window.pycmd = (arg) => {
+    // 与 `tauri/src/bridge.rs` 的注入脚本一致：命令打到宿主，**有回调时**把响应
+    // （JSON，解析不了就给原文）交给回调 —— 「帮助 → 关于」靠它拿版本信息
+    window.bridgeCommand = window.pycmd = (arg, callback) => {
         window.__bridgeCalls.push(String(arg));
         window
             .fetch("/_anki/pycmd", {
                 method: "POST",
                 headers: { "Content-Type": "text/plain" },
                 body: String(arg),
+            })
+            .then((response) => response.text())
+            .then((text) => {
+                if (!callback || !text) {
+                    return;
+                }
+                try {
+                    callback(JSON.parse(text));
+                } catch {
+                    callback(text);
+                }
             })
             .catch(() => {});
         return false;
@@ -552,8 +565,8 @@ try {
             el.textContent.trim(),
         ),
     );
-    check("菜单栏有四个菜单", menuTitles.length === 4, menuTitles.join(" / "));
-    // 按下标点：文案随语言变（文件 / 编辑 / 工具 / 帮助）
+    check("菜单栏有五个菜单", menuTitles.length === 5, menuTitles.join(" / "));
+    // 按下标点：文案随语言变（文件 / 编辑 / 视图 / 工具 / 帮助）
     const clickMenu = async (index, action) => {
         await page.locator(".menubar [data-menu-title]").nth(index).click();
         await page.waitForSelector(`.menu-popup [data-menu="${action}"]`, { timeout: 5000 });
@@ -591,6 +604,22 @@ try {
     await page.locator(".modal.show .btn-close").click();
     await page.waitForTimeout(500);
 
+    // 视图 → 放大 / 缩小 / 重置（宿主侧 `set_zoom`）与全屏（F11 → `set_fullscreen`）；
+    // 宿主真的改了窗口状态，由 verify-decks.ps1 断言日志（`缩放: ` / `全屏: `）
+    for (const [action, bridge] of [
+        ["zoomIn", "zoom:in"],
+        ["zoomOut", "zoom:out"],
+        ["zoomReset", "zoom:reset"],
+    ]) {
+        await clickMenu(2, action);
+        check(`视图 → ${action} 发出 ${bridge}`, (await bridgeCalls()).includes(bridge));
+    }
+    await page.keyboard.press("F11");
+    await page.waitForTimeout(500);
+    check("F11 发出 fullscreen", (await bridgeCalls()).includes("fullscreen"));
+    await page.keyboard.press("F11"); // 切回窗口模式，别影响后面的检查
+    await page.waitForTimeout(500);
+
     // 工具 → 检查数据库 / 检查媒体 / 空卡片（空卡片的报告在没有空卡片时本来就是空的，
     // 所以那一项只要求请求 + 弹框）
     for (const [action, method, label, needsText] of [
@@ -599,7 +628,7 @@ try {
         ["emptyCards", "getEmptyCards", "空卡片", false],
     ]) {
         posted.length = 0;
-        await clickMenu(2, action);
+        await clickMenu(3, action);
         await page.waitForSelector(".modal.show #deck-report-body", { timeout: 20_000 });
         const body = (await page.locator("#deck-report-body").innerText()).trim();
         check(
@@ -621,7 +650,7 @@ try {
     check("文件 → 导入… 发出 import", (await bridgeCalls()).includes("import"));
 
     // 帮助 / 文件菜单里那些"不能点"的项只断言存在
-    await page.locator(".menubar [data-menu-title]").nth(3).click();
+    await page.locator(".menubar [data-menu-title]").nth(4).click();
     await page.waitForTimeout(300);
     const helpActions = await page.evaluate(() =>
         [...document.querySelectorAll(".menu-popup [data-menu]")].map((el) => el.dataset.menu),
@@ -630,6 +659,29 @@ try {
         "帮助菜单有用户手册与支持 Anki",
         helpActions.includes("guide") && helpActions.includes("donate"),
         helpActions.join(" / "),
+    );
+    // 帮助 → 关于：版本信息由宿主给（`about` 桥接命令 → JSON）
+    await page.locator('.menu-popup [data-menu="about"]').click();
+    await page.waitForSelector(".modal.show #deck-report-body", { timeout: 5000 });
+    const aboutText = (await page.locator("#deck-report-body").innerText()).trim();
+    check(
+        "帮助 → 关于 显示版本信息",
+        /Anki/.test(aboutText) && /\d+\.\d+/.test(aboutText),
+        (aboutText.split("\n").find((line) => /\d+\.\d+/.test(line)) ?? aboutText).slice(0, 50),
+    );
+    await page.locator(".modal.show .btn-close").click();
+    await page.waitForTimeout(300);
+    await page.locator(".menubar [data-menu-title]").nth(2).click();
+    await page.waitForTimeout(300);
+    const viewActions = await page.evaluate(() =>
+        [...document.querySelectorAll(".menu-popup [data-menu]")].map((el) => el.dataset.menu),
+    );
+    check(
+        "视图菜单有全屏与三档缩放",
+        ["fullscreen", "zoomIn", "zoomOut", "zoomReset"].every((action) =>
+            viewActions.includes(action)
+        ),
+        viewActions.join(" / "),
     );
     await page.locator(".menubar [data-menu-title]").nth(0).click();
     await page.waitForTimeout(300);

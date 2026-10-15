@@ -386,6 +386,39 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         await openLink({ val: "https://docs.ankiweb.net/manual/contrib" });
     }
 
+    /** 视图 → 放大 / 缩小 / 重置：宿主侧 `set_zoom`（`main.py:1462-1470`）。 */
+    function zoomView(mode: "in" | "out" | "reset"): void {
+        bridgeCommand(`zoom:${mode}`);
+    }
+
+    /**
+     * 帮助 → 关于（对照 `onAbout` → `aqt/about.py`）。
+     *
+     * 版本信息由宿主给（`about` 桥接命令返回 JSON）：Anki 版本来自 `anki::version`，
+     * 外壳版本是 `CARGO_PKG_VERSION`。上游对话框里还有 Python / Qt / Chromium 版本 —— 外壳
+     * 没有这三样。
+     */
+    function showAbout(): void {
+        bridgeCommand<{ anki?: string; buildhash?: string; shell?: string; platform?: string }>(
+            "about",
+            (info) => {
+                const data = info ?? {};
+                // `about.ftl` 在 ftl/qt 下：**没有**生成的 `tr.aboutXxx()`（只有 core 模块才有），
+                // 所以走 `translateRaw("about-...")`
+                showReport(
+                    translateRaw("about-about-anki"),
+                    [
+                        `<p>${translateRaw("about-anki-is-a-friendly-intelligent-spaced")}</p>`,
+                        `<p>${translateRaw("about-version", {
+                            val: `${data.anki ?? "?"} (${data.buildhash || "dev"})`,
+                        })}<br>Anki Tauri 外壳 ${data.shell ?? "?"} / ${data.platform ?? ""}</p>`,
+                        `<p>${translateRaw("about-anki-is-licensed-under-the-agpl3")}</p>`,
+                    ].join(""),
+                );
+            },
+        );
+    }
+
     /** 菜单栏内容（对照 `main.ui` 的 menuCol / menuEdit / menuTools / menuHelp）。 */
     function menuBar(): {
         label: string;
@@ -439,6 +472,35 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ],
             },
             {
+                label: qtAccel("qt-accel-view"),
+                items: [
+                    {
+                        label: qtAccel("qt-accel-full-screen"),
+                        action: "fullscreen",
+                        shortcut: "F11",
+                        run: () => bridgeCommand("fullscreen"),
+                    },
+                    {
+                        label: qtAccel("qt-accel-zoom-in"),
+                        action: "zoomIn",
+                        shortcut: "Ctrl++",
+                        run: () => zoomView("in"),
+                    },
+                    {
+                        label: qtAccel("qt-accel-zoom-out"),
+                        action: "zoomOut",
+                        shortcut: "Ctrl+-",
+                        run: () => zoomView("out"),
+                    },
+                    {
+                        label: qtAccel("qt-accel-reset-zoom"),
+                        action: "zoomReset",
+                        shortcut: "Ctrl+0",
+                        run: () => zoomView("reset"),
+                    },
+                ],
+            },
+            {
                 label: qtAccel("qt-accel-tools"),
                 items: [
                     {
@@ -481,6 +543,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                         label: qtAccel("qt-accel-support-anki"),
                         action: "donate",
                         run: () => void openDonate(),
+                    },
+                    {
+                        label: qtAccel("qt-accel-about"),
+                        action: "about",
+                        run: showAbout,
                     },
                 ],
             },
@@ -765,9 +832,15 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
             return;
         }
+        // 视图 → 全屏（`main.py:1472-1476`：F11 / 标准全屏键，作用域是整个应用）
+        if (event.key === "F11") {
+            event.preventDefault();
+            bridgeCommand("fullscreen");
+            return;
+        }
         if (event.ctrlKey || event.metaKey || event.altKey) {
             // 菜单栏的加速键（对照 `forms/main.ui`）：导出 `Ctrl+E`（1.4 的那条）、
-            // 撤销/重做 `Ctrl+Z` / `Ctrl+Shift+Z`、首选项 `Ctrl+P`
+            // 撤销/重做 `Ctrl+Z` / `Ctrl+Shift+Z`、首选项 `Ctrl+P`、缩放 `Ctrl+=`/`-`/`0`
             const key = event.key.toLowerCase();
             if (key === "e") {
                 event.preventDefault();
@@ -778,6 +851,15 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             } else if (key === "p") {
                 event.preventDefault();
                 bridgeCommand("preferences");
+            } else if (key === "=" || key === "+") {
+                event.preventDefault();
+                zoomView("in");
+            } else if (key === "-") {
+                event.preventDefault();
+                zoomView("out");
+            } else if (key === "0") {
+                event.preventDefault();
+                zoomView("reset");
             }
             return;
         }
@@ -855,6 +937,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ModuleName.DATABASE_CHECK,
                 // 「空卡片」没有空卡片时的提示（`empty-cards-not-found`）
                 ModuleName.EMPTY_CARDS,
+                // 「关于」弹框（`about-about-anki` / `about-version` / 许可说明，都在 ftl/qt）
+                ModuleName.ABOUT,
                 // 工具栏的「浏览」「统计」住在 ftl/qt/qt-misc.ftl，没有类型化函数
                 ModuleName.QT_MISC,
             ],

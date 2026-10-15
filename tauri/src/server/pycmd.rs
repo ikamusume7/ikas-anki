@@ -212,6 +212,27 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             state.app.exit(0);
             None
         }
+        // 视图菜单：全屏（`main.py:1484-1495`）与缩放（`main.py:1462-1470`，±0.1 / 重置 1.0）。
+        // 切的是**发命令的那个窗口**（Qt 切的是当前活动窗口）。
+        "fullscreen" => {
+            main_window::toggle_full_screen(state, window);
+            None
+        }
+        command if command.starts_with("zoom:") => {
+            main_window::zoom(state, window, command.trim_start_matches("zoom:"));
+            None
+        }
+        // 帮助 → 关于（`onAbout()` → `aqt/about.py`）。上游的对话框里还有 Python/Qt/
+        // Chromium 版本，外壳只报自己的版本 + Anki 版本，页面据此渲染弹框。
+        "about" => Some(
+            json!({
+                "anki": anki::version::version(),
+                "buildhash": anki::version::buildhash(),
+                "shell": env!("CARGO_PKG_VERSION"),
+                "platform": format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH),
+            })
+            .to_string(),
+        ),
         // 统计图（对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `onStats()`，
         // `main.py:1185`），页面是既有的 `graphs/`
         "stats" => {

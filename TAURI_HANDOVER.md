@@ -33,8 +33,9 @@
     卡片信息、更改笔记类型、查找替换、**查找重复**、跳转、反选/全选/选中笔记）、撤销重做、
     **导出（apkg / colpkg / 笔记纯文本 / 卡片纯文本）**，以及**预览与卡片信息两个独立窗口**。
   - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
-    顶部是**菜单栏**（文件/编辑/工具/帮助，对照 `main.ui` 的四个菜单；`Ctrl+E` 导出、
-    `Ctrl+Z`/`Ctrl+Shift+Z` 撤销重做、`Ctrl+P` 首选项都在这里），下面依次是牌组树/今日
+    顶部是**菜单栏**（文件/编辑/视图/工具/帮助，对照 `main.ui` 的五个菜单；`Ctrl+E` 导出、
+    `Ctrl+Z`/`Ctrl+Shift+Z` 撤销重做、`Ctrl+P` 首选项、`F11` 全屏、`Ctrl++`/`Ctrl+-`/`Ctrl+0`
+    缩放都在这里），下面依次是牌组树/今日
     计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/**导出**/删除）、
     底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与**顶部工具栏**
     （牌组/添加/浏览/统计；复习界面那份由宿主注入 `assets/reviewer-toolbar.js`）；
@@ -1017,6 +1018,21 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
 （异步上下文里调 rslib 仍然是 `AppBackend::call`，它内部用 `spawn_blocking`；
 `run_service_method` 是阻塞调用，别直接 `block_on` 在 tokio 工作线程上。）
 
+### 5.39 qt 模块的文案没有生成的 `tr.*` 函数；检查脚本的桥接垫片要支持回调
+
+1. **`ftl/qt/*.ftl` 的 key 没有 `tr.xxx()`**：`rslib/i18n/typescript.rs:45` 只给
+   `is_core()` 的翻译生成方法，qt 模块（`qt-accel.ftl` / `about.ftl` / `qt-misc.ftl` …）
+   在 TS 侧只有 `ModuleName` 枚举项。所以「关于」弹框里写 `tr.aboutAboutAnki()` 会抛
+   `TypeError: (void 0) is not a function`（在 `bridgeCommand` 的回调里，表现为
+   「点了没反应、弹框不出现」）。正确写法是 `translateRaw("about-about-anki")`
+   （`@generated/ftl-helpers`，带参数就是 `translateRaw(key, { val })`），
+   `setupI18n` 里仍然要列 `ModuleName.ABOUT`（模块要加载才查得到 key）。
+2. **检查脚本里的桥接垫片必须实现回调**：`decks-check.mjs` 的 `bridgeShim` 一开始只
+   `push` 命令、`fetch` 一下就算了。凡是「宿主返回 JSON → 页面渲染」的交互
+   （比如「关于」）在垫片下永远走不到渲染，`waitForSelector` 只会超时。现在垫片
+   与 `tauri/src/bridge.rs` 一致：`bridgeCommand(arg, callback)` 把响应
+   （JSON，解析不了给原文）交给回调。
+
 ---
 
 ## 6. 剩余工作
@@ -1149,13 +1165,14 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
     导出笔记纯文本并**读回文件**断言只有这个牌组的笔记（正好守住 §5.33 的双层 oneof）。
     **差**：上游的范围下拉列着所有牌组、没有"选列"对话框、不做"导出到 profile 目录"的拦截。
   - **已完成**：**主窗口菜单栏**（1.2 的前半）—— 画在牌组列表页顶部，对照 `main.ui` 的
-    四个菜单：文件（导入 / 导出 `Ctrl+E` / 创建备份 / 退出）、编辑（撤销 `Ctrl+Z` /
-    重做 `Ctrl+Shift+Z`）、工具（检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 /
-    首选项 `Ctrl+P`）、帮助（用户手册 → `helpPageLink(INDEX)` + `openLink`；支持 Anki）。
-    三个 `check*` RPC 的结果用弹框渲染后端给的报告；「创建备份」「退出」走桥接命令
-    （`backup` / `quit`），因为备份目录只有宿主知道。**差**：复习界面没有菜单栏（legacy 页
-    只有顶部工具栏）、Switch Profile / 全屏缩放 / 学习牌组 / 创建筛选牌组 / 检查更新 /
-    add-ons / About。
+    五个菜单：文件（导入 / 导出 `Ctrl+E` / 创建备份 / 退出）、编辑（撤销 `Ctrl+Z` /
+    重做 `Ctrl+Shift+Z`）、视图（全屏 `F11` / 放大 / 缩小 / 重置缩放 `Ctrl+0`）、
+    工具（检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项 `Ctrl+P`）、
+    帮助（用户手册 → `helpPageLink(INDEX)` + `openLink`；支持 Anki；关于 → 宿主
+    `about` 命令给的版本 JSON）。三个 `check*` RPC 的结果用弹框渲染后端给的报告；
+    「创建备份」「退出」「全屏」「缩放」「关于」走桥接命令，因为都要宿主侧能力
+    （备份目录 / 退出 / 窗口状态 / 版本）。**差**：复习界面没有菜单栏（legacy 页只有
+    顶部工具栏）、Switch Profile / 学习牌组 / 创建筛选牌组 / 检查更新 / add-ons。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / **导出** / 删除）、底部

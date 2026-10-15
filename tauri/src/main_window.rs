@@ -21,10 +21,13 @@
 //! `d` → 牌组列表、`s` → 概览、`t`/`Shift+t` → 统计、`Ctrl+P` → 设置；
 //! 还没接的是 `Ctrl+:`（Python 调试控制台）与 `y`（同步，见 `tauri/PARITY.md` 6.1）。
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use anyhow::Result;
+use tauri::Manager as _;
 
 use crate::legacy;
 use crate::state::AppState;
@@ -291,4 +294,57 @@ pub fn open_preferences(state: &AppState) -> Result<()> {
             .title(state.backend.i18n().translate("preferences-preferences", None))
             .size(760.0, 700.0),
     )
+}
+
+// 视图菜单 ####################################################################
+
+/// 视图 → 全屏：切换**发起命令的那个窗口**的全屏状态
+/// （`main.py:1484-1495` 的 `on_toggle_full_screen` 切的是当前活动窗口）。
+pub fn toggle_full_screen(state: &AppState, label: &str) {
+    let Some(window) = state.app.get_webview_window(label) else {
+        tracing::warn!("找不到窗口 {label}，无法切换全屏");
+        return;
+    };
+    let next = !window.is_fullscreen().unwrap_or(false);
+    match window.set_fullscreen(next) {
+        Ok(()) => tracing::info!("全屏: {next}"),
+        Err(error) => tracing::warn!("切换全屏失败: {error}"),
+    }
+}
+
+/// 视图 → 放大 / 缩小 / 重置缩放（`main.py:1462-1470`：`±0.1`，重置回 `1.0`）。
+///
+/// Qt 那边**不持久化**缩放（每次启动都是 1.0），这里也保持一致；WebView2 的缩放范围是
+/// 0.25–5，这里再收窄到 0.3–3，避免按几下就变成不可用的尺寸。
+///
+/// 注意：Tauri 的 `WebviewWindow` 只有 `set_zoom`、**没有** getter，所以自己记一份当前值
+/// （能改缩放的只有这个菜单）。
+pub fn zoom(state: &AppState, label: &str, mode: &str) {
+    let Some(window) = state.app.get_webview_window(label) else {
+        tracing::warn!("找不到窗口 {label}，无法缩放");
+        return;
+    };
+    let mut levels = zoom_levels()
+        .lock()
+        .expect("缩放表被 poison 了");
+    let current = *levels.entry(label.to_string()).or_insert(1.0);
+    let next = match mode {
+        "in" => current + 0.1,
+        "out" => current - 0.1,
+        _ => 1.0,
+    }
+    .clamp(0.3, 3.0);
+    match window.set_zoom(next) {
+        Ok(()) => {
+            levels.insert(label.to_string(), next);
+            tracing::info!("缩放: {next:.1}");
+        }
+        Err(error) => tracing::warn!("缩放失败: {error}"),
+    }
+}
+
+/// 每个窗口的缩放系数（见 `zoom`）。
+fn zoom_levels() -> &'static Mutex<HashMap<String, f64>> {
+    static LEVELS: OnceLock<Mutex<HashMap<String, f64>>> = OnceLock::new();
+    LEVELS.get_or_init(|| Mutex::new(HashMap::new()))
 }

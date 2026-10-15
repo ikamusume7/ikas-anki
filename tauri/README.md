@@ -715,10 +715,12 @@ Qt 的主窗口菜单栏是原生的、在所有状态下都在；本外壳把�
 | 文件 | 导入… / 导出…(Ctrl+E) / 创建备份 / 退出 | `import` / 导出对话框（范围=当前牌组）/ `backup` / `quit` 四条桥接命令（后两条是宿主侧：备份目录只有宿主知道） |
 | 编辑 | 撤销(Ctrl+Z) / 重做(Ctrl+Shift+Z) | `undo` / `redo` RPC + 刷新 |
 | 工具 | 检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 / 首选项(Ctrl+P) | 三个 `check*` RPC 的结果弹框（`{@html}` 渲染后端给的报告）+ `notetypes` / `preferences` 桥接命令 |
-| 帮助 | 用户手册 / 支持 Anki | `helpPageLink(INDEX)` → `openLink`；捐赠链接 = `aqt.appDonate` |
+| 视图 | 全屏(F11) / 放大(Ctrl++) / 缩小(Ctrl+-) / 重置缩放(Ctrl+0) | `fullscreen` / `zoom:in|out|reset` 桥接命令 → 宿主 `set_fullscreen` / `set_zoom`（±0.1，钳在 0.3–3；Qt 也不持久化缩放） |
+| 帮助 | 用户手册 / 支持 Anki / 关于 | `helpPageLink(INDEX)` → `openLink`；捐赠链接 = `aqt.appDonate`；关于 = `about` 桥接命令返回 JSON（Anki 版本来自 `anki::version`，外壳版本是 `CARGO_PKG_VERSION`），页面渲染成弹框 |
 
 **差异**：菜单栏只在牌组列表页（复习界面是 legacy 页，那里仍是顶部工具栏，功能重合）；
-缺 Switch Profile、全屏/缩放、学习牌组、创建筛选牌组、检查更新、add-ons、About 对话框。
+缺 Switch Profile、学习牌组、创建筛选牌组、检查更新、add-ons；「关于」比上游少了
+Python / Qt / Chromium 版本与贡献者名单。
 
 ### 与 Qt 的差异（有意为之）
 

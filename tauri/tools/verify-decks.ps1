@@ -186,6 +186,16 @@ try {
         $passed = $false
     }
 
+    # 视图菜单：宿主真的改了窗口状态（decks-check 5e 点了 3 次缩放 + 按了 2 次 F11）
+    $zoomCount = Count-Log "缩放: "
+    $fullScreenCount = Count-Log "全屏: "
+    if ($zoomCount -ge 3 -and $fullScreenCount -ge 2) {
+        Write-Host "视图菜单生效（缩放 $zoomCount 次、全屏 $fullScreenCount 次）" -ForegroundColor Green
+    } else {
+        Write-Host "视图菜单没生效（缩放 $zoomCount 次、全屏 $fullScreenCount 次）" -ForegroundColor Red
+        $passed = $false
+    }
+
     # 宿主侧：菜单里的两个窗口 + 概览「学习」切页
     if (-not (Wait-LogPattern "打开窗口: deck-options ->" 20)) {
         Write-Host "齿轮 → 选项没有开窗" -ForegroundColor Red
