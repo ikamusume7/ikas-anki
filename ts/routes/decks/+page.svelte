@@ -42,17 +42,24 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         RenameDeckRequest,
     } from "@generated/anki/decks_pb";
     import { Empty } from "@generated/anki/generic_pb";
+    import { HelpPageLinkRequest_HelpPage } from "@generated/anki/links_pb";
     import { UnburyDeckRequest_Mode } from "@generated/anki/scheduler_pb";
     import * as tr from "@generated/ftl";
     import { translate as translateRaw } from "@generated/ftl-helpers";
     import {
         addDeck,
+        checkDatabase,
+        checkMedia,
         congratsInfo,
         deckTree,
         emptyFilteredDeck,
         getCurrentDeck,
         getDeck,
+        getEmptyCards,
+        helpPageLink,
+        openLink,
         rebuildFilteredDeck,
+        redo,
         removeDecks,
         renameDeck,
         renderMarkdown,
@@ -61,6 +68,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         setDeckCollapsed,
         studiedToday,
         unburyDeck,
+        undo,
         updateDeck,
     } from "@generated/backend";
     import { bridgeCommand } from "@tslib/bridgecommand";
@@ -105,6 +113,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let dragSource: bigint | null = null;
     let dropTarget: bigint | null = null;
     let dragStatus = "";
+    /** 菜单栏：当前展开的菜单；工具菜单那几个报告用的弹框 */
+    let openMenu: string | null = null;
+    let reportModal: Modal;
+    let reportTitle = "";
+    let reportBody = "";
     /** 齿轮菜单的位置与目标牌组 */
     let gear: { x: number; y: number; node: DeckTreeNode } | null = null;
 
@@ -272,6 +285,206 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     function onDragEnd(): void {
         dragSource = null;
         dropTarget = null;
+    }
+
+    // 菜单栏（主窗口）##########################################################
+
+    /** 取 Qt 的加速键文案（`qt-accel-*`）；`&` 是助记符，网页上要去掉。 */
+    function qtAccel(key: string): string {
+        return translateRaw(key).replace(/&/g, "");
+    }
+
+    /** 导出（`Ctrl+E` 与「文件 → 导出…」）：范围默认是**当前牌组**（`main.py:1398-1401`）。 */
+    function exportCurrentDeck(): void {
+        exportStatus = "";
+        const node = nodes.get(Number(currentDeckId)) ?? null;
+        const deck = node ? { id: node.deckId, name: node.name } : undefined;
+        exportDeck = deck ?? null;
+        exportDialog.show(deck ? { deck } : {});
+    }
+
+    /** 编辑 → 撤销 / 重做（`main.py:1448-1450`）。 */
+    async function undoLast(kind: "undo" | "redo"): Promise<void> {
+        busy = true;
+        try {
+            if (kind === "undo") {
+                await undo(new Empty({}));
+            } else {
+                await redo(new Empty({}));
+            }
+            await reload();
+        } catch (problem) {
+            // 没有可撤销的东西时后端会报错（上游在状态栏提示）
+            console.error("撤销/重做失败", problem);
+        } finally {
+            busy = false;
+        }
+    }
+
+    function showReport(title: string, body: string): void {
+        reportTitle = title;
+        reportBody = body;
+        reportModal.show();
+    }
+
+    /** 工具 → 检查数据库（`main.py:1710-1713` → `aqt/dbcheck.py`）。 */
+    async function runDatabaseCheck(): Promise<void> {
+        busy = true;
+        try {
+            const response = await checkDatabase(new Empty({}));
+            const title = qtAccel("qt-accel-check-database");
+            if (response.problems.length === 0) {
+                showReport(title, `<p>${tr.databaseCheckRebuilt()}</p>`);
+            } else {
+                // 问题文案由后端本地化好（`database-check-*` 系列）
+                showReport(
+                    title,
+                    `<ul>${response.problems.map((problem) => `<li>${problem}</li>`).join("")}</ul>`,
+                );
+            }
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 工具 → 检查媒体（`main.py:1715-1719` → `aqt/mediacheck.py`）。 */
+    async function runMediaCheck(): Promise<void> {
+        busy = true;
+        try {
+            const response = await checkMedia(new Empty({}));
+            showReport(qtAccel("qt-accel-check-media"), response.report);
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 工具 → 空卡片（`main.py:1740-1743` → `aqt/emptycards.py`，上游在对话框里渲染卡片）。 */
+    async function runEmptyCardsCheck(): Promise<void> {
+        busy = true;
+        try {
+            const response = await getEmptyCards(new Empty({}));
+            // 没有空卡片时后端给空报告（`emptycards.rs:78-88` 才往里写字），补一句文案
+            showReport(
+                tr.actionsEmptyCards(),
+                response.report || `<p>${tr.emptyCardsNotFound()}</p>`,
+            );
+        } finally {
+            busy = false;
+        }
+    }
+
+    /** 帮助 → 用户手册：后端给出语言相关的链接（对照 `onDocumentation` → `openHelp(INDEX)`）。 */
+    async function openGuide(): Promise<void> {
+        const url = await helpPageLink({ page: HelpPageLinkRequest_HelpPage.INDEX });
+        if (url.val) {
+            await openLink({ val: url.val });
+        }
+    }
+
+    /** 帮助 → 支持 Anki（对照 `onDonate` → `openLink(aqt.appDonate)`）。 */
+    async function openDonate(): Promise<void> {
+        await openLink({ val: "https://docs.ankiweb.net/manual/contrib" });
+    }
+
+    /** 菜单栏内容（对照 `main.ui` 的 menuCol / menuEdit / menuTools / menuHelp）。 */
+    function menuBar(): {
+        label: string;
+        items: { label: string; action: string; shortcut?: string; run: () => void }[];
+    }[] {
+        return [
+            {
+                label: qtAccel("qt-accel-file"),
+                items: [
+                    {
+                        label: qtAccel("qt-accel-import"),
+                        action: "import",
+                        run: () => bridgeCommand("import"),
+                    },
+                    {
+                        label: qtAccel("qt-accel-export"),
+                        action: "export",
+                        shortcut: "Ctrl+E",
+                        run: exportCurrentDeck,
+                    },
+                    {
+                        label: qtAccel("qt-accel-create-backup"),
+                        action: "backup",
+                        run: () => {
+                            exportStatus = qtAccel("qt-accel-create-backup");
+                            bridgeCommand("backup");
+                        },
+                    },
+                    {
+                        label: qtAccel("qt-accel-exit"),
+                        action: "quit",
+                        run: () => bridgeCommand("quit"),
+                    },
+                ],
+            },
+            {
+                label: qtAccel("qt-accel-edit"),
+                items: [
+                    {
+                        label: tr.undoUndo(),
+                        action: "undo",
+                        shortcut: "Ctrl+Z",
+                        run: () => void undoLast("undo"),
+                    },
+                    {
+                        label: tr.undoRedo(),
+                        action: "redo",
+                        shortcut: "Ctrl+Shift+Z",
+                        run: () => void undoLast("redo"),
+                    },
+                ],
+            },
+            {
+                label: qtAccel("qt-accel-tools"),
+                items: [
+                    {
+                        label: qtAccel("qt-accel-check-database"),
+                        action: "checkDatabase",
+                        run: () => void runDatabaseCheck(),
+                    },
+                    {
+                        label: qtAccel("qt-accel-check-media"),
+                        action: "checkMedia",
+                        run: () => void runMediaCheck(),
+                    },
+                    {
+                        label: tr.actionsEmptyCards(),
+                        action: "emptyCards",
+                        run: () => void runEmptyCardsCheck(),
+                    },
+                    {
+                        label: translateRaw("qt-misc-manage-note-types"),
+                        action: "notetypes",
+                        run: () => bridgeCommand("notetypes"),
+                    },
+                    {
+                        label: qtAccel("qt-accel-preferences"),
+                        action: "preferences",
+                        shortcut: "Ctrl+P",
+                        run: () => bridgeCommand("preferences"),
+                    },
+                ],
+            },
+            {
+                label: qtAccel("qt-accel-help"),
+                items: [
+                    {
+                        label: qtAccel("qt-accel-guide"),
+                        action: "guide",
+                        run: () => void openGuide(),
+                    },
+                    {
+                        label: qtAccel("qt-accel-support-anki"),
+                        action: "donate",
+                        run: () => void openDonate(),
+                    },
+                ],
+            },
+        ];
     }
 
     /** 概览里的「学习」：开始复习当前牌组（宿主切到复习页）。 */
@@ -553,6 +766,19 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             return;
         }
         if (event.ctrlKey || event.metaKey || event.altKey) {
+            // 菜单栏的加速键（对照 `forms/main.ui`）：导出 `Ctrl+E`（1.4 的那条）、
+            // 撤销/重做 `Ctrl+Z` / `Ctrl+Shift+Z`、首选项 `Ctrl+P`
+            const key = event.key.toLowerCase();
+            if (key === "e") {
+                event.preventDefault();
+                exportCurrentDeck();
+            } else if (key === "z") {
+                event.preventDefault();
+                void undoLast(event.shiftKey ? "redo" : "undo");
+            } else if (key === "p") {
+                event.preventDefault();
+                bridgeCommand("preferences");
+            }
             return;
         }
         switch (event.key.toLowerCase()) {
@@ -624,6 +850,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 ModuleName.EXPORTING,
                 // 概览的描述编辑弹框（`deck-config-description-new-handling2`）
                 ModuleName.DECK_CONFIG,
+                // 菜单栏：撤销/重做（`undo-undo` / `undo-redo`）与检查数据库的结果文案
+                ModuleName.UNDO,
+                ModuleName.DATABASE_CHECK,
+                // 「空卡片」没有空卡片时的提示（`empty-cards-not-found`）
+                ModuleName.EMPTY_CARDS,
                 // 工具栏的「浏览」「统计」住在 ftl/qt/qt-misc.ftl，没有类型化函数
                 ModuleName.QT_MISC,
             ],
@@ -639,9 +870,44 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     });
 </script>
 
-<svelte:window on:keydown={onKeydown} />
+<svelte:window on:keydown={onKeydown} on:click={() => (openMenu = null)} />
 
 <div class="decks">
+    <!-- 主窗口菜单栏（对照 Qt 主窗口的 `menuCol` / `menuEdit` / `menuTools` / `menuHelp`） -->
+    <div class="menubar">
+        {#each menuBar() as menu (menu.label)}
+            <div class="menu">
+                <button
+                    class="menu-title"
+                    class:open={openMenu === menu.label}
+                    data-menu-title={menu.label}
+                    on:click|stopPropagation={() =>
+                        (openMenu = openMenu === menu.label ? null : menu.label)}
+                    >{menu.label}</button
+                >
+                {#if openMenu === menu.label}
+                    <div class="menu-popup">
+                        {#each menu.items as item (item.action)}
+                            <button
+                                class="menu-entry"
+                                data-menu={item.action}
+                                on:click|stopPropagation={() => {
+                                    openMenu = null;
+                                    item.run();
+                                }}
+                            >
+                                <span>{item.label}</span>
+                                {#if item.shortcut}
+                                    <span class="shortcut">{item.shortcut}</span>
+                                {/if}
+                            </button>
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+        {/each}
+    </div>
+
     <!-- 顶部工具栏（对照 `toolbar.py:353-389`；同步按钮没做） -->
     <div class="toolbar">
         <button
@@ -863,6 +1129,27 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
 
 <!-- 齿轮 → 导出（与浏览器那边共用同一个对话框与 `exporting.ts`） -->
 <ExportDialog bind:this={exportDialog} onExport={(choice) => void runDeckExport(choice)} />
+
+<!-- 工具菜单的报告弹框（检查数据库 / 检查媒体 / 空卡片） -->
+<Modal bind:this={reportModal} modalKey="deck-report" dialogClass="modal-lg">
+    <div slot="header" class="modal-header">
+        <h5 class="modal-title">{reportTitle}</h5>
+        <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+            aria-label={tr.actionsClose()}
+        ></button>
+    </div>
+    <div slot="body" class="modal-body">
+        <div id="deck-report-body">{@html reportBody}</div>
+    </div>
+    <div slot="footer" class="modal-footer">
+        <button type="button" class="btn btn-secondary" on:click={reportModal.cancelHandler}>
+            {tr.actionsClose()}
+        </button>
+    </div>
+</Modal>
 
 <!-- 描述编辑（对照 `qt/aqt/deckdescription.py`：markdown 勾选 + 纯文本框 + 保存） -->
 <Modal bind:this={descriptionModal} modalKey="deck-description" onOkClicked={() => void saveDescription()}>
@@ -1113,6 +1400,66 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         margin-top: 0.5rem;
         color: var(--fg);
         font-size: 0.9rem;
+    }
+
+    /* 菜单栏（对照 Qt 主窗口的 QMenuBar） */
+    .menubar {
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.25rem 0.5rem 0;
+        font-size: 0.9rem;
+    }
+
+    .menu {
+        position: relative;
+    }
+
+    .menu-title {
+        padding: 0.15rem 0.5rem;
+        border: none;
+        border-radius: 3px;
+        background: none;
+        color: var(--fg);
+        cursor: pointer;
+    }
+
+    .menu-title:hover,
+    .menu-title.open {
+        background: var(--canvas-inset, #e6e6e6);
+    }
+
+    .menu-popup {
+        position: absolute;
+        z-index: 1000;
+        top: 100%;
+        left: 0;
+        min-width: 12rem;
+        padding: 0.25rem 0;
+        border: 1px solid var(--border, #ccc);
+        border-radius: 4px;
+        background: var(--canvas, #fff);
+        box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+    }
+
+    .menu-entry {
+        display: flex;
+        justify-content: space-between;
+        gap: 1.5rem;
+        width: 100%;
+        padding: 0.2rem 0.75rem;
+        border: none;
+        background: none;
+        color: var(--fg);
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .menu-entry:hover {
+        background: var(--canvas-inset, #e6e6e6);
+    }
+
+    .shortcut {
+        color: var(--fg-faint, #777);
     }
 
     .description {

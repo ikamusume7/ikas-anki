@@ -67,6 +67,12 @@ pub fn spawn(state: AppState) {
         .expect("启动备份线程失败");
 }
 
+/// 菜单「文件 → 创建备份」：强制一次并等它写完（`main.py:1575-1586` 的
+/// `on_create_backup_now` → `create_backup_now()`）。
+pub async fn create_now(state: &AppState) {
+    try_backup(state, true, true).await;
+}
+
 /// 调 `createBackup`：`force` 跳过间隔判断，`wait` 等它写完（默认留给后端线程）。
 async fn try_backup(state: &AppState, force: bool, wait: bool) {
     let folder = backup_folder(&state.profile_dir);

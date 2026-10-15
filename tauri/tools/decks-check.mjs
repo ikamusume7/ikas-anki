@@ -540,6 +540,104 @@ try {
     await rpc("removeDecks", new DeckIds({ dids: [dragId] }).toBinary());
     check("已清理拖拽检查的牌组", !(await deckNames()).includes(dragName));
 
+    // 5e. 菜单栏（`main.ui` 的 menuCol / menuEdit / menuTools / menuHelp）#######
+    // 断言菜单渲染，并让几个能验证的动作真的走通（拦 RPC 请求 / 看桥接命令 / 等产物）。
+    // 「退出」与两个帮助链接只断言存在 —— 点了会真的退出 / 打开系统浏览器。
+    const posted = [];
+    page.on("request", (request) => posted.push(request.url().split("/").pop()));
+    await page.goto(`${base}/decks/`, { waitUntil: "load" });
+    await page.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+    const menuTitles = await page.evaluate(() =>
+        [...document.querySelectorAll(".menubar [data-menu-title]")].map((el) =>
+            el.textContent.trim(),
+        ),
+    );
+    check("菜单栏有四个菜单", menuTitles.length === 4, menuTitles.join(" / "));
+    // 按下标点：文案随语言变（文件 / 编辑 / 工具 / 帮助）
+    const clickMenu = async (index, action) => {
+        await page.locator(".menubar [data-menu-title]").nth(index).click();
+        await page.waitForSelector(`.menu-popup [data-menu="${action}"]`, { timeout: 5000 });
+        await page.locator(`.menu-popup [data-menu="${action}"]`).click();
+        await page.waitForTimeout(1000);
+    };
+
+    // 文件 → 创建备份（走宿主：`backup` 桥接命令 → `crate::backup::create_now`）
+    const collectionPath = process.env.ANKI_COLLECTION ?? "";
+    const backupDir = collectionPath ? path.join(path.dirname(collectionPath), "backups") : "";
+    const backupsBefore = new Set(
+        backupDir && fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [],
+    );
+    await clickMenu(0, "backup");
+    let newBackup = null;
+    for (let attempt = 0; attempt < 20 && !newBackup; attempt++) {
+        await page.waitForTimeout(500);
+        const files = backupDir && fs.existsSync(backupDir) ? fs.readdirSync(backupDir) : [];
+        newBackup = files.find((name) => !backupsBefore.has(name)) ?? null;
+    }
+    check("文件 → 创建备份产出了新的 .colpkg", !!newBackup, newBackup ?? "（没有新文件）");
+
+    // 文件 → 导出…（范围默认当前牌组）与 `Ctrl+E` 等价
+    await clickMenu(0, "export");
+    await page.waitForSelector(".modal.show #export-format", { timeout: 5000 });
+    check(
+        "文件 → 导出… 打开导出对话框（范围默认当前牌组）",
+        (await page.locator("#export-scope").inputValue()) === "deck",
+    );
+    await page.locator(".modal.show .btn-close").click();
+    await page.waitForTimeout(500);
+    await page.keyboard.press("Control+e");
+    await page.waitForSelector(".modal.show #export-format", { timeout: 5000 });
+    check("Ctrl+E 也能打开导出对话框", (await page.locator(".modal.show #export-format").count()) === 1);
+    await page.locator(".modal.show .btn-close").click();
+    await page.waitForTimeout(500);
+
+    // 工具 → 检查数据库 / 检查媒体 / 空卡片（空卡片的报告在没有空卡片时本来就是空的，
+    // 所以那一项只要求请求 + 弹框）
+    for (const [action, method, label, needsText] of [
+        ["checkDatabase", "checkDatabase", "检查数据库", true],
+        ["checkMedia", "checkMedia", "检查媒体", true],
+        ["emptyCards", "getEmptyCards", "空卡片", false],
+    ]) {
+        posted.length = 0;
+        await clickMenu(2, action);
+        await page.waitForSelector(".modal.show #deck-report-body", { timeout: 20_000 });
+        const body = (await page.locator("#deck-report-body").innerText()).trim();
+        check(
+            `工具 → ${label} 调了 ${method} 并弹出报告`,
+            posted.includes(method) && (!needsText || body.length > 0),
+            `${method}${body ? ` / ${body.slice(0, 40)}` : ""}`,
+        );
+        await page.locator(".modal.show .btn-close").click();
+        await page.waitForTimeout(500);
+    }
+
+    // 编辑 → 撤销（没有可撤销的东西时后端会报错，页面只记 console.error，请求照样发出）
+    posted.length = 0;
+    await clickMenu(1, "undo");
+    check("编辑 → 撤销调了 undo", posted.includes("undo"), posted.filter((m) => m === "undo").length + " 次");
+
+    // 文件 → 导入…（桥接命令，宿主弹原生文件对话框）
+    await clickMenu(0, "import");
+    check("文件 → 导入… 发出 import", (await bridgeCalls()).includes("import"));
+
+    // 帮助 / 文件菜单里那些"不能点"的项只断言存在
+    await page.locator(".menubar [data-menu-title]").nth(3).click();
+    await page.waitForTimeout(300);
+    const helpActions = await page.evaluate(() =>
+        [...document.querySelectorAll(".menu-popup [data-menu]")].map((el) => el.dataset.menu),
+    );
+    check(
+        "帮助菜单有用户手册与支持 Anki",
+        helpActions.includes("guide") && helpActions.includes("donate"),
+        helpActions.join(" / "),
+    );
+    await page.locator(".menubar [data-menu-title]").nth(0).click();
+    await page.waitForTimeout(300);
+    const fileActions = await page.evaluate(() =>
+        [...document.querySelectorAll(".menu-popup [data-menu]")].map((el) => el.dataset.menu),
+    );
+    check("文件菜单有退出", fileActions.includes("quit"), fileActions.join(" / "));
+
     // 6. 新建牌组 → 删除 ####################################################
     await page.locator("#deck-create").click();
     await page.waitForSelector(".modal.show #deck-name", { timeout: 5000 });

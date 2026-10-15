@@ -33,9 +33,12 @@
     卡片信息、更改笔记类型、查找替换、**查找重复**、跳转、反选/全选/选中笔记）、撤销重做、
     **导出（apkg / colpkg / 笔记纯文本 / 卡片纯文本）**，以及**预览与卡片信息两个独立窗口**。
   - 牌组列表：**页面是新写的**（`ts/routes/decks/`），是主窗口的**启动默认页**；
-    牌组树/今日计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/**导出**/删除）、
-    底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与两处**顶部工具栏**
-    （牌组/添加/浏览/统计）；概览面板还有**牌组描述**（可编辑 + markdown 渲染）、选项、
+    顶部是**菜单栏**（文件/编辑/工具/帮助，对照 `main.ui` 的四个菜单；`Ctrl+E` 导出、
+    `Ctrl+Z`/`Ctrl+Shift+Z` 撤销重做、`Ctrl+P` 首选项都在这里），下面依次是牌组树/今日
+    计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名/选项/**导出**/删除）、
+    底部「获取共享牌组 / 创建牌组 / 导入文件」，配 `d`/`s` 快捷键与**顶部工具栏**
+    （牌组/添加/浏览/统计；复习界面那份由宿主注入 `assets/reviewer-toolbar.js`）；
+    概览面板还有**牌组描述**（可编辑 + markdown 渲染）、选项、
     自定义学习、筛选牌组的**重建/清空**、**取消埋藏**（埋藏三选一），快捷键
     `o`/`r`/`e`/`c`/`u` 照 `overview.py:126-133`；牌组行可**拖拽**（拖到另一行 → 变成
     它的子牌组，拖到顶部那条 `top-level-drag-row` → 回顶层，`reparentDecks`）。
@@ -1145,6 +1148,14 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
     与两份 `.txt`（按 `#separator:tab` / 列说明头与内容断言）；`decks-check.mjs` 从齿轮
     导出笔记纯文本并**读回文件**断言只有这个牌组的笔记（正好守住 §5.33 的双层 oneof）。
     **差**：上游的范围下拉列着所有牌组、没有"选列"对话框、不做"导出到 profile 目录"的拦截。
+  - **已完成**：**主窗口菜单栏**（1.2 的前半）—— 画在牌组列表页顶部，对照 `main.ui` 的
+    四个菜单：文件（导入 / 导出 `Ctrl+E` / 创建备份 / 退出）、编辑（撤销 `Ctrl+Z` /
+    重做 `Ctrl+Shift+Z`）、工具（检查数据库 / 检查媒体 / 空卡片 / 管理笔记类型 /
+    首选项 `Ctrl+P`）、帮助（用户手册 → `helpPageLink(INDEX)` + `openLink`；支持 Anki）。
+    三个 `check*` RPC 的结果用弹框渲染后端给的报告；「创建备份」「退出」走桥接命令
+    （`backup` / `quit`），因为备份目录只有宿主知道。**差**：复习界面没有菜单栏（legacy 页
+    只有顶部工具栏）、Switch Profile / 全屏缩放 / 学习牌组 / 创建筛选牌组 / 检查更新 /
+    add-ons / About。
   - **已完成**：**牌组列表（主窗口默认页）** —— 新写的 `ts/routes/decks/`
     + `tools/verify-decks.ps1`：牌组树与今日计数、折叠、点牌组 → 概览（`?deck=`，
     同一页面的面板）→ 学习、齿轮菜单（重命名 / 选项 / **导出** / 删除）、底部
@@ -1363,6 +1374,7 @@ std::thread::Builder::new().name("anki-backup".into()).spawn(move || {
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
 | 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
+| 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
 | 自动备份 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`）、`tauri/src/main.rs`（`backup::spawn`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` 断言 |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
 | 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
@@ -1390,9 +1402,9 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
    5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
    4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**1.5 剩下的两条**（「检查数据库 / 检查媒体 / 空卡片」入口 ——
-   6.3 说 RPC 都有，缺的是主窗口菜单栏 1.2；以及 6.2 的"还原备份 / 打开备份文件夹"）、
-   **1.x 的收尾**（启动行为其余部分）、**5.5–5.9 的几条
+   下一步按清单走：**菜单栏剩下的项**（Switch Profile / 全屏缩放 / 学习牌组 /
+   创建筛选牌组 / 检查更新 / add-ons / About —— 有的要窗口能力，有的要新界面）、
+   **6.2 的"还原备份 / 打开备份文件夹"**、**6.5 原生取色器**，**5.5–5.9 的几条
    浏览器小差异**（侧栏分区、加标签补全、列设置存储、导出到 profile 目录的拦截），
    以及 **6.x 的系统集成**（同步 / 备份 / addon —— 硬骨头）。
    浏览器的三块大功能（管理笔记类型 / CSV·纯文本导出 / 查找重复）已经全部补完。

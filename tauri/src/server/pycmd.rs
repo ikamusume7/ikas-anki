@@ -200,6 +200,18 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             }
             None
         }
+        // 主窗口菜单「文件 → 创建备份」（`main.py:1575-1586`：立刻、强制、等它写完）与
+        // 「文件 → 退出」（`main.py:1439`）。备份目录在宿主侧（`<profile>/backups`），
+        // 所以由宿主执行，页面只发命令。
+        "backup" => {
+            crate::backup::create_now(state).await;
+            None
+        }
+        "quit" => {
+            tracing::info!("菜单 → 退出");
+            state.app.exit(0);
+            None
+        }
         // 统计图（对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `onStats()`，
         // `main.py:1185`），页面是既有的 `graphs/`
         "stats" => {
