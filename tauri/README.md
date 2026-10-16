@@ -159,6 +159,30 @@ cargo build
 .\target\debug\anki-tauri.exe
 ```
 
+### 5. 本地门禁与 CI（PARITY 7.3）
+
+一条命令跑完所有不需要图形界面的门禁（`cargo build/test/clippy` + `yarn build` +
+`eslint` + `svelte-check`）：
+
+```powershell
+pwsh -File tauri/tools/check-all.ps1          # 全部；-SkipBuild 只跑测试与 lint
+```
+
+`just` 配方在 `tauri/justfile`（`just` 的工作目录就是 justfile 所在目录；本机已用
+`cargo install just` 装好并实测 `just check-quick` 全绿）：
+
+```powershell
+cd tauri
+just              # = just check
+just check-quick  # 跳过编译
+just verify reviewer   # 单个一键验证脚本
+just verify-all        # 全部 verify-*.ps1（要图形界面，串行，很慢）
+```
+
+GitHub Actions 用 **同一个脚本**（`.github/workflows/tauri.yml`：windows-2022 +
+`check-all.ps1`，`paths` 只认 `tauri/ts/rslib/proto` 的改动）。`verify-*.ps1` 需要真实窗口与
+桌面会话，所以不进 CI —— 它们留给本地与真机。
+
 ## 已验证行为
 
 ### M0
@@ -1776,6 +1800,7 @@ browserSearch：图表 → 浏览器搜索
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `auto-advance-check.mjs` | `verify-reviewer.ps1` 调用的自动前进检查：把牌组配置改成 1 秒 → 没开开关不会自己翻 → 打开后自动翻答案并自动评「良好」→ 关掉就停（收尾还原配置与临时笔记） |
 | `sync-check.mjs` | 同步成功路径的页面级检查（由 `verify-sync.ps1` 调用）：登录 + 整份上传 + 服务器侧产物断言。**注意**：Playwright 加载的页面必须带 API 凭据与窗口身份的 fetch shim，否则页面自身的 `/_anki/*` 全 401（`has_api_access` 只认 `Authorization: Bearer <key>`） |
+| `check-all.ps1` | 本地门禁一条命令跑完（`cargo build/test/clippy` + `yarn build` + `eslint` + `svelte-check`；`-RunVerify` 再加全部一键脚本）。**CI（`.github/workflows/tauri.yml`）调的就是它** |
 | `sync-server.ps1` | 起/停一个**真的**本地同步服务器（仓库自带的 `anki-sync-server`，`SYNC_BASE`/`SYNC_HOST`/`SYNC_PORT`/`SYNC_USER1`）；`-Stop` 收尾。用于把同步的**成功路径**测起来（不依赖真 AnkiWeb 账号） |
 | `focus-window.ps1` | 把外壳的某个窗口切到前台（自动前进的焦点判定 / 需要真实焦点的场景用）；`-TitleLike` 选窗口 |
 | `close-window.ps1` | 给某个窗口发一次真正的 `WM_CLOSE`（与用户点标题栏 × 同一条 `CloseRequested` 路径），用来验证关窗契约；`-TitleLike` 选窗口，`-All` 全关 |

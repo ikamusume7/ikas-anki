@@ -1,0 +1,62 @@
+# Tauri 外壳的 CI（PARITY 7.3）。
+#
+# 之前外壳改动完全没有自动回归：上游 `ci.yml` 只构建 pylib/qt，不碰 `tauri/`。
+# 这个 workflow 在 Windows runner 上跑 `tauri/tools/check-all.ps1` —— 与本地
+# （`cd tauri; just check`）**同一个脚本**，避免"CI 跑的"和"本地跑的"分叉。
+#
+# 只跑不需要图形界面的那几步（cargo build/test/clippy + yarn build + eslint +
+# svelte-check）；`verify-*.ps1` 需要真实窗口与桌面会话，留给本地/真机。
+#
+# 说明：本仓库当前环境没法实际触发 Actions（没有 Windows runner），所以这份 workflow
+# 只做了静态审查；它调用的 `check-all.ps1` 已在本机跑通（见 PARITY 7.3 的说明）。
+name: Tauri shell
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'release/**']
+    paths:
+      - 'tauri/**'
+      - 'ts/**'
+      - 'rslib/**'
+      - 'proto/**'
+      - '.github/workflows/tauri.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tauri/**'
+      - 'ts/**'
+      - 'rslib/**'
+      - 'proto/**'
+      - '.github/workflows/tauri.yml'
+
+concurrency:
+  group: tauri-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v4
+      - name: 工具链版本
+        shell: pwsh
+        run: |
+          node --version
+          corepack --version
+          rustc --version
+          cargo --version
+      - name: 依赖（前端）
+        shell: pwsh
+        run: corepack yarn install --immutable
+      - name: 本地门禁（cargo build/test/clippy + yarn build + eslint + svelte-check）
+        shell: pwsh
+        run: pwsh -File tauri/tools/check-all.ps1
+      - name: 失败时上传日志
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a #v7.0.1
+        with:
+          name: tauri-check-all-log
+          path: out/check-all/check-all.log
+          retention-days: 7

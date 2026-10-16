@@ -89,6 +89,7 @@
 | `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
 | `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
 | `tauri/tools/verify-profiles.ps1` | 多 profile：`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs`（列表/新建/非法名/重命名/删除）→ **真切换**（重启后的新进程打开 Second 并建出集合） |
+| `tauri/tools/check-all.ps1` | 本地门禁（cargo build/test/clippy + yarn build + eslint + svelte-check；`-RunVerify` 追加全部一键脚本）；`tauri/justfile` 与 `.github/workflows/tauri.yml` 都调它 |
 | `tauri/tools/verify-sync.ps1` | 同步成功路径：起仓库自带的真同步服务器（`anki-sync-server`）+ 专用集合/profile 的外壳 → `sync-check.mjs`（登录 `/sync/hostKey`、整份上传、服务器侧 `collection.anki2` 与链路 200 断言） |
 | `tauri/tools/verify-timebox.ps1` | 时间盒：**两次**启动外壳（`ANKI_TIMEBOX_CHOICE=finish` / `continue`）→ `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言「结束回牌组列表 / 继续重新渲染」+ 真实窗口截图） |
 

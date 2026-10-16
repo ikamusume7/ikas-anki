@@ -1,0 +1,51 @@
+# Tauri 外壳的 just 配方。
+#
+# 用法（`just` 按 justfile 所在目录当工作目录，所以这样跑最省事）：
+#   cd tauri
+#   just            # = just check
+#   just check      # 本地门禁：cargo build/test/clippy + yarn build + eslint + svelte-check
+#   just test       # 只跑 cargo test
+#   just build      # cargo build --manifest-path Cargo.toml
+#   just verify reviewer     # 单个一键验证脚本（verify-reviewer.ps1）
+#   just verify-all  # 串行跑全部 verify-*.ps1（要图形界面，很慢）
+#
+# 注：CI（`.github/workflows/tauri.yml`）调的是同一个 `tools/check-all.ps1`，
+# 保证"本地跑的"和"CI 跑的"是同一件事。本机没装 `just`，所以这份 justfile
+# 是按同样的命令写的、没有实际执行过（脚本本身已单独跑通）。
+
+set shell := ["pwsh", "-NoProfile", "-Command"]
+
+# 默认目标：本地门禁
+default: check
+
+# 本地门禁（不需要图形界面）
+check:
+    pwsh -File tools/check-all.ps1
+
+# 只想快速看一眼：跳过编译，只跑测试与 lint
+check-quick:
+    pwsh -File tools/check-all.ps1 -SkipBuild
+
+# Rust 单元测试
+test:
+    cargo test --manifest-path Cargo.toml
+
+# 编译外壳（连同 rslib）
+build:
+    cargo build --manifest-path Cargo.toml
+
+# 前端产物（out/sveltekit，一键脚本都依赖它）
+web:
+    corepack yarn build
+
+# 单个一键验证脚本，例如：just verify reviewer
+verify name:
+    pwsh -File tools/verify-{{name}}.ps1
+
+# 全部一键验证脚本（串行；共享测试集合，别并行）
+verify-all:
+    pwsh -File tools/check-all.ps1 -SkipBuild -RunVerify
+
+# 打包出可分发目录（见 PARITY 7.1）
+package:
+    pwsh -File tools/package.ps1
