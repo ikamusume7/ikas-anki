@@ -45,16 +45,26 @@
     它的子牌组，拖到顶部那条 `top-level-drag-row` → 回顶层，`reparentDecks`）。
   - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通；
     概览里还能开**自定义学习**（`C` → 新写的 `ts/routes/custom-study/`）。
+    **注意两个名不副实**：统计窗口虽然按当前牌组打开（页面默认 `deck:current`），但缺 Qt 的
+    牌组下拉与 Save PDF；`Ctrl+P` 打开的**只是 Qt 偏好设置对话框里的 Labs 实验页**，
+    语言/主题/复习上限/备份/网络等 8 个分页全没迁（PARITY 3.2 / 3.3）。
   - 编辑器的两个对话框（「字段…」/「卡片…」，都是新写的页面）：`ts/routes/fields/`、
     `ts/routes/cards/`；**「管理笔记类型」对话框也已完成**（新写的
     `ts/routes/notetypes/`：列表 + 添加/重命名/删除/克隆 + 对指定笔记类型的
-    「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为本外壳还没有
-    菜单栏，见 PARITY 1.2）。
-  - 未做：主窗口菜单栏与同步、编辑已有筛选牌组、
-    启动行为（检查/备份）、Android
+    「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为主窗口菜单栏画在
+    牌组列表页、浏览器窗口自己没有菜单栏，见 PARITY 5.2）。
+  - 未做：编辑已有筛选牌组（筛选牌组点「选项」会开到报错窗口）、Android、addon、
+    夜间模式/主题、多 profile 管理、真正的首选项对话框、文件关联（PARITY 第 8 节）
 - **M4 进行中**：**Windows 可分发目录**已做并验证（`tauri/tools/package.ps1` +
   `verify-package.ps1`，`tauri/tauri.conf.json` 的 bundle 配置也写好了）——
   `tauri/PACKAGING.md` 里写了布局、与 `tauri build` 的差别、签名与 Android 的缺口。
+  **安装器本身从未生成过**（本机没有 tauri-cli/NSIS/WiX），也没有签名与 `fileAssociations`。
+
+> **2026-10-16 逐项代码核查**：用户可见差异的真实完成度是 **✅3 / ⚠️33 / ❌8（44 项）**，
+> 另有 **12 项清单原先没覆盖**的缺口。`tauri/PARITY.md` 已按这次核查重新定级并新增第 8/9 节
+> （未覆盖缺口、验证体系缺口），`tauri/README.md` 同步；本文档 §6 / §7 / §9 也已对齐。
+> 核查同时确认：**键盘答题整条链路没有**（复习页只绑了 8 个键）、**Congratulations 收尾不存在**、
+> **时间盒不存在**、**addon/文件关联/夜间模式/profile 管理为零**。
 
 **当前可直接验证**（六个一键脚本，详见 §2.4）：
 
@@ -1141,18 +1151,21 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 
 | 项 | 说明 |
 | --- | --- |
-| ~~**计时与时间盒**~~ | **已完成**：`showQuestion(button, maxTime)` 的 `maxTime` 取自牌组 `timer` / `maxTaken`；`showAnswer` 传 `stopTimerOnAnswer` |
+| **计时器 / 时间盒** | **计时器已完成**：`showQuestion(button, maxTime)` 的 `maxTime` 取自牌组 `timer` / `maxTaken`，`showAnswer` 传 `stopTimerOnAnswer`；但**没有任何自动断言**（`set-deck-timer.mjs` 不在任何 verify 脚本里，`visual-check.mjs` 把 maxTime 写死 0）。**时间盒整块没做**：没有 `timeboxReached`，也没有到点的「继续 / 结束」对话框（PARITY 2.6） |
 | ~~**按钮下次间隔**~~ | **已完成**：用 `DescribeNextStates` 在按钮上标注「<1分 / 10分 / 1天 / 3天」 |
 | ~~**按钮数量**~~ | **无需改动**：v3 下 Qt 的 `answerButtons()` 恒返回 4（2/3 个是 v2 遗留，v3 对 v2 是 assert 拒绝） |
-| ~~**`more`（更多菜单）**~~ | **已实现**：底部栏「更多」与卡片右键 → 13 项菜单 + 旗标子菜单 + 重置/到期日表单（`reviewer_menu.rs` + `assets/reviewer-menu.js`）。差上一张卡片信息、音频 5 项、自动前进，见 `tauri/PARITY.md` 的 2.2-2.4 |
+| ~~**`more`（更多菜单）**~~ | **已实现**：底部栏「更多」与卡片右键 → **11 项菜单 + 旗标子菜单** + 重置/到期日表单（`reviewer_menu.rs` + `assets/reviewer-menu.js`）。**比 Qt 少 8 项**：上一张卡片信息、重播音频、暂停音频、±5 秒、录音、重播录音、自动前进（带勾选态），见 `tauri/PARITY.md` 的 2.1-2.4 |
 | ~~**`edit`**~~ | **已完成**：打开「编辑当前卡片」窗口。编辑器外层窗口全在 Web 里，宿主只需开窗 + `editorReady` 后注入 `loadNote`，见 `tauri/README.md` 的「编辑器」 |
-| ~~**`more`**~~ | **已实现**（复习界面）：13 项菜单 + 旗标子菜单 + 两个表单对话框，见 `tauri/README.md` 的「复习界面」；编辑器里的 `more` 仍未做 |
+| ~~**`more`**~~ | **已实现**（复习界面）：11 项菜单 + 旗标子菜单 + 两个表单对话框，见 `tauri/README.md` 的「复习界面」；编辑器里的 `more` 仍未做 |
 | ~~**撤销**~~ | **已完成**：`undo` 桥接命令 + 页面内快捷键（`Ctrl+Z` / `Cmd+Z` / 裸 `u`），撤销后重新取队列 |
 | ~~**音频自动播放队列**~~ | **已完成**：`audio.rs` 改为队列播放（对照 `AVPlayer.play_tags`），显示问题/答案时按牌组配置自动播放 |
 | ~~**类型作答**~~ | **已完成**：问题面插入 `#typeans` 输入框、答案面用 `CompareAnswer` 生成对比；输入值由桥接垫片附在 `ans:` 后面回传 |
 | ~~**计数显示**~~ | **已完成**：对照 `Reviewer._remaining()`，「显示答案」按钮上显示「新 + 学习中 + 复习」，当前队列加下划线 |
 | ~~**界面状态同步**~~ | **已完成**：`getSchedulingStatesWithContext` / `setSchedulingStates` + `cardStateCustomizer` 注入，见 `platform/scheduling.rs` |
-| ~~**顶部工具栏**~~ | **已完成**：牌组 / 添加 / 浏览 / 统计 + 快捷键提示，宿主注入 `assets/reviewer-toolbar.js`。差同步链接与 add-ons 托盘（`qt/aqt/toolbar.py:353-418`），见 `tauri/README.md` 的「顶部工具栏」 |
+| ~~**顶部工具栏**~~ | **已完成**：牌组 / 添加 / 浏览 / 统计 / **同步** + 快捷键提示，宿主注入 `assets/reviewer-toolbar.js`。差的只有 add-ons 左右托盘、全屏自动隐藏，以及同步链接**只有文字**（没有 Qt 的状态色与旋转图标），见 `tauri/README.md` 的「顶部工具栏」 |
+| **键盘答题** | **整条链路没有**（PARITY 1.4）：`install_reviewer_shortcuts` 只绑了 `Ctrl+Z`/`Ctrl+P` 与裸 `u`/`a`/`b`/`t`/`d`/`s`；Qt 的 `_shortcutKeys`（`reviewer.py:595-642`）里空格 / 回车显示答案、`1`–`4` 评分、`e`/`m`/`r`/`5`/`6`/`7`/`v`/`Shift+v`/`o`/`i`/`*`/`=`/`-`/`!`/`@`/`Ctrl+1..7`… 一个都没绑 → 只能用鼠标点按钮 |
+| **答完队列的收尾** | **没有 Congratulations**（PARITY 1.6）：队列空时只注入一句硬编码中文，不回概览、没有「下次到期时间 / 提前学习」、概览面板也永不显示；底栏按钮与会话都不清（再点会拿过期状态评分，后端以 `card was modified` 报错） |
+| **音频的显示与语义** | 卡面**不画播放按钮**（没有 `play:q:N` 这条命令，`[sound:]` / `{{tts}}` 原样显示、点不了）；答案面会把问题面音频**再播一遍**（Qt 是 `partial_render`，`answer_av_tags` 不含 FrontSide 音频）；重播 / 暂停 / ±5 秒 / 录音 / 重播录音都没有（PARITY 2.3） |
 
 ### 6.2 桥接命令扩充
 
@@ -1170,8 +1183,11 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 `previewNext` / `previewPrev` /
 `previewReplay` / `previewBothSides:<0|1>`、`saveRecording` / `cancelRecording`
 与编辑器的状态跟踪命令。
-待实现清单（都会打 debug 日志）：`more`、`updateToolbar`、`repaintNeeded`、
-`toggleSticky`、`saveTags`、`paste`、`cutOrCopy` 等。
+待实现清单（都会打 debug 日志）：`updateToolbar`、`repaintNeeded`、`toggleSticky`、`saveTags`、
+`paste`、`cutOrCopy` 等（`more` 已经在 §6.1 落地，不再属于这份清单）。另外**编辑器的
+`Ctrl+L` 在本外壳无效**：`NotetypeButtons.svelte` 的 `Shortcut` 无条件发 `bridgeCommand("cards")`，
+宿主不处理 —— 但**上游这版同样没处理**（`qt/aqt/editor.py` 的 `_links` 只有 paste/cut/copy/saved），
+所以这不是迁移差异；`tauri/src/server/api.rs` 里"`Ctrl+L` 调的就是这个端点"的注释是错的，待改。
 
 > 注意 `js/reviewer/index.ts` 里的 `isLegacy` 分支：新路径走 RPC，
 > 旧路径走 `bridgeCommand`。优先确认某个命令是否真的还需要。
@@ -1206,14 +1222,18 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   一次（上游 on-open；没有 on-close，因为外壳没有优雅关闭钩子）+ 之后每 5 分钟检查
   `autoSyncMediaMinutes`（默认 15）做媒体同步。验证见 `decks-check.mjs` 5i/5j 与
   `reviewer-menu-check.mjs`（自带**假同步服务器** + `ANKI_SYNC_TICK_SECONDS`）。
-  **差**：冲突的完整处理（只有上传/下载入口）、进度条、关闭时同步；
-  媒体同步的 happy path 没有自动化覆盖。
+  **差**（PARITY 6.1）：① `syncCollection` 与媒体同步的**成功路径零覆盖**（假服务器只实现到
+  `/sync/meta`，之后全 500）；② 冲突只有上传/下载二选一，缺 Qt 的分支确认与"空集合"防误触，
+  完成后也不刷新、不关其它窗口；③ 进度只有文字（Qt 有进度条 + Abort）；④ **关闭时同步没有**
+  （`quit` 直接 `app.exit(0)`）；⑤ 没有 `restoring_backup` / safeMode 守卫；
+  ⑥ **启动那一次整份同步从未被断言**（启动时没有凭据，日志里只有"自动同步: 还没登录"）。
 - **原生取色器**（6.5）—— **已实现**：`tauri/src/platform/colours.rs` 用系统对话框
   （`ChooseColorW`，Windows 上与 Qt 用的是同一个）取色，16 个色槽写进集合配置
   `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键）；
   页面侧 `<input type="color">` 的点击改走 `pickColour:` 桥接命令（宿主能力标记
   `window.__ankiHostColourPicker` 只在 Windows 注入），回调里写回颜色并补发
   `input`/`change`。**差**：非 Windows 没有等价对话框。见 `tauri/README.md` 的「原生取色器」。
+  **验证**：自动检查用 `ANKI_PICK_COLOUR` 短路，真正的 `ChooseColorW` 只手工点过一次。
 - ~~**剪贴板按任意 MIME 读取**~~ —— **已实现**：`text/uri-list` 在 Windows 上读
   剪贴板的 `CF_HDROP`（编辑器「复制文件 → 粘贴成媒体」依赖它），图片与文本仍走
   `arboard`。**拖入文件**（HTML5 drop）不走剪贴板，见 §6.4 的 4.4。
@@ -1226,7 +1246,9 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   **关集合 → `importCollectionPackage` → 重开集合** → 关掉其它窗口、主窗口回牌组列表
   （顺序不能反，见 §5.41）。验证：`verify-decks.ps1` 用 `ANKI_BACKUP_NOW` 断言备份产物，
   用 `ANKI_RESTORE_PATH=newest` 断言还原后"新牌组消失、备份里就有的牌组还在"。
-  **差**：没有「打开备份文件夹」这一项。
+  **差**（PARITY 6.2）：没有「打开备份文件夹」这一项；退出时 Qt 还会做 `pragma quick_check`
+  与损坏警告，外壳退出不做任何收尾；还原后没有 Qt 的 `restoring_backup` 标志（它会禁用自动
+  同步与自动备份）；备份目录与确认框在自动化里都被钩子顶掉，原生对话框路径只能手工。
 - ~~`getConfigJson` / `setConfigJson`~~ —— 这两个由 rslib 的 `ConfigService` 直接
   服务，实测可用（`getAllConfig` → 200），从来不是缺口。
 
@@ -1266,7 +1288,8 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   - **已完成**：**查找重复**（上游 `browser/find_duplicates.py` 的 `FindDuplicatesDialog`）
     —— 新写的 `ts/routes/browser/FindDuplicatesModal.svelte`（浏览器「更多」菜单入口）：
     「搜索位置」字段下拉 + 「可选筛选器」+ 「搜索」+ 分组报告 + 「Tag Duplicates」，
-    判重复刻 `col.find_dupes()`（`collection.py:744-778`：字段非空搜索 → 逐条取字段值 →
+    判重逻辑是页面里**复刻** `col.find_dupes()`（`collection.py:744-778`：字段非空搜索 →
+    逐条取字段值 →
     `stripHtml(PRESERVE_MEDIA_FILENAMES)` → 按值分组，顺序按"第二次出现"）；点一组让浏览器
     换 `nid:…` 搜索并切笔记模式（对照 `search_for()` + `onNote()`）。
     验证：`browser-check.mjs` 第 8.8 节（造两条同值笔记 → 搜索 → 点组 → 打标签 → 清理）。
@@ -1316,7 +1339,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
     宿主在注入 `loadNote` 时记「窗口 → 笔记类型」（平台端点拿不到来源窗口）。
     验证见 `tools/fields-check.mjs`（由 `verify-editor.ps1` 调用）。
     差：系统字体下拉、拖动重排、删除时「有 N 张笔记用到它」的提示。
-  - **已完成**：**「卡片…」对话框**（4.2）—— 编辑器工具栏的「卡片」/ `Ctrl+L`（前端端点
+  - **已完成**：**「卡片…」对话框**（4.2）—— 编辑器工具栏的「卡片」**按钮**（前端端点
     `openCardsDialog`，上游 `qt/aqt/clayout.py` 有 884 行）→ 新写的 `ts/routes/cards/`：
     正面/背面/样式三块编辑区、添加字段、翻转、卡片类型增删改重排、恢复默认、
     浏览器外观、牌组覆盖、复制信息，预览走 `RenderUncommittedCard`（**未保存**的改动
@@ -1324,6 +1347,8 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
     「窗口 → 笔记类型」还记了「窗口 → 那张 note」，再带上复习卡的 `ord`（`?notetype=&ord=&note=`）。
     验证见 `tools/cards-check.mjs`（由 `verify-editor.ps1` 调用）。
     差：帮助按钮、系统字体下拉、下拉里没有 Qt 的字段摘要、复制后没有提示。
+    另注：**`Ctrl+L` 快捷键是坏的**（同组件的 `Shortcut` 发 `bridgeCommand("cards")`，宿主
+    不处理），但上游这版同样没处理 —— 属上游同款问题，不是迁移差异，见 §6.2 的说明。
   - **已完成**：**拖入文件（HTML5 drop，4.4）** —— 页面链路本来就是上游 TS 的
     （`data-transfer.ts` 的 `handleDrop`：图片/音频/URL/文本/HTML 五支，媒体走
     `addMediaFile` / `convertPastedImage`），宿主要做的只是**别挡路**：Tauri 默认会
@@ -1332,8 +1357,12 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
     `editor.py:120`、`reviewer.py:355`、`previewer.py:158` 的 `allow_drops`）。
     验证见 `tools/drop-check.mjs`（由 `verify-editor.ps1` 调用，页面里合成带 PNG 的
     drop → 字段里的 `<img src="paste-…">` → 媒体真的落进 `collection.media`）。
-    **没覆盖**「操作系统 → WebView2」那一步（只能真机手工确认）；关掉拦截之后 Rust 侧
-    收不到 `DragDropEvent`，将来的「拖 `.apkg` 到主窗口导入」（6.7）要落在页面里做。
+    **没覆盖**「操作系统 → WebView2」那一步（只能真机手工确认）；`drop-check.mjs` 也只测了
+    **图片**这一支（音频 / URL / 文本 / HTML 四支没有断言）；**已知遗漏**：
+    `editor.rs::open_add_cards_with_note`（浏览器「复制笔记」开的添加卡片窗口）忘了加
+    `.html5_drops(true)` → 那条路径的拖放会被 Tauri 顶掉（窗口已存在时沿用旧设置，间歇复现）。
+    关掉拦截之后 Rust 侧收不到 `DragDropEvent`，将来的「拖 `.apkg` 到主窗口导入」（6.7）
+    要落在页面里做。
     顺带核对：**4.3「编辑器更多菜单」在上游并不存在**（工具栏已迁到 TS，`editor.py`
     没有 `onMore`），`PARITY.md` 已按"不存在"标注。
   - **已完成**：**导入**（3.4 + 6.7 的拖入那一半）—— 实现都在新文件
@@ -1379,8 +1408,9 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
       `cards/?notetype=<id>&ord=0`（复用已完成的字段/卡片对话框）。
     - 宿主侧：窗口标签 `windows::NOTETYPES`（`windows.rs`）、`main_window::open_notetypes`
       开 `notetypes/`（尺寸 560×640，标题 `notetypes-note-types`）、`pycmd("notetypes")` →
-      `open_notetypes`（`server/pycmd.rs`）。因本外壳还没有菜单栏（PARITY 1.2），**入口挂在
-      浏览器窗口的「更多」菜单**：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()` →
+      `open_notetypes`（`server/pycmd.rs`）。主窗口菜单栏画在牌组列表页、浏览器窗口自己
+      没有菜单栏与侧栏右键菜单，**入口挂在浏览器窗口的「更多」菜单**：
+      `ts/routes/browser/+page.svelte` 的 `manageNotetypes()` →
       `bridgeCommand("notetypes")`，菜单项 `data-action="manageNotetypes"`（文案
       `browsing-manage-note-types`）；对照 `main.py:1357` 与
       `browser/sidebar/tree.py:924-928` 的两个上游入口。页面已加进 `server/assets.rs` 的
@@ -1393,10 +1423,11 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
       `notetypes-page.png`。**2026-10-15 实测全绿**（`verify-browser.ps1` 退出码 0，
       `svelte-check` 0 error / 0 warning）。
     - **差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块，
-      本页面的两个按钮已覆盖）；入口还不在菜单栏与侧栏右键菜单上（等 PARITY 1.2）。
-  - 下一步：1.x 的收尾（牌组描述 / 拖拽排序、启动行为）、5.5–5.9 那几条浏览器小差异，
-    以及主窗口菜单栏与同步。
-    这些都是"缺界面 / 缺 UI 入口"，没有架构上的障碍。
+      本页面的两个按钮已覆盖）；入口还不在主窗口菜单栏（菜单栏画在牌组列表页）与浏览器
+      侧栏右键菜单上 —— 后者要等侧栏补齐分区与右键菜单（PARITY 5.2 / 5.5）。
+  - 下一步：1.1/1.2 的收尾（概览埋藏差值列、v1→v3 提示、复习界面补菜单栏）、
+    5.5–5.9 那几条浏览器差异，以及第 8 节那四件"日常必用"（首选项真页面 / profile 管理 /
+    夜间模式 / 界面语言）。这些大多是"缺界面 / 缺 UI 入口"，没有架构障碍。
 
   > **git 状态（本条目相关）**：本条目的改动已随本次提交入库
   > （`feat(tauri): manage note types dialog`）—— 宿主侧
@@ -1413,15 +1444,29 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `anki-tauri.exe + web/ + sveltekit/`，`tauri/tools/verify-package.ps1` 用
   `ANKI_RESOURCE_DIR` 强制打包模式（源码树里默认走仓库模式，见 §5.44）跑 release 产物，
   断言页面/资源都能从包里取到并跑完整 `decks-check`。`tauri/tauri.conf.json` 的
-  `bundle`（NSIS + `resources` 映射 + 图标）也写好了，有网时 `cargo tauri build` 即可。
-  **差**：真正生成 NSIS/MSI 需要联网下载 Tauri CLI 与 WiX/NSIS；代码签名未做；
-  Android（`tauri android init/build`，需要 SDK/NDK）未做。详见 `tauri/PACKAGING.md`。
+  `bundle`（NSIS + `resources` 映射 + 图标 + `installMode=currentUser`）也写好了。
+  **差**（PARITY 7.1）：**安装器从未生成过** —— 卡点不是网络（实测 crates.io /
+  api.github.com 都通），而是本机没有 `tauri-cli` / NSIS / WiX；没有代码签名；
+  `bundle.fileAssociations` 没配（所以「双击 `.apkg`」即使装了包也不成立）；产物元数据
+  只有 `FileVersion 0.1.0`、无 publisher/copyright；图标仍是 favicon 的单帧副本。
+  Android（`tauri android init/build`）未做，但 SDK/NDK/JDK 已就位，缺 rustup target 与真机。
+  详见 `tauri/PACKAGING.md`。
 
 ### 6.5 工程化
 
-- 把 §2.1 的手工构建步骤接入 `just` 流程。
-- 补 `tauri/capabilities/` 目录。
-- 替换图标（现为 `favicon.ico` 副本）。
+- 把 §2.1 的手工构建步骤接入 `just` 流程：产物本来有官方路径（`just build` 会生成
+  `out/sveltekit` 与 `qt/_aqt/data/web`，`package.ps1` 用的就是这两处），但 `justfile` 里
+  **没有任何 tauri 配方**，CI 里也没有外壳的 `cargo check/build` → **外壳改动目前没有自动
+  回归**（PARITY 7.3）。建议补 `just tauri-build / tauri-run / tauri-package / tauri-verify`。
+- `tauri/capabilities/` 目录不存在：因为前端不走 IPC（没有 `#[tauri::command]` / `invoke`，
+  也没有用 Tauri 插件），**现在无害**，引入插件时才需要补。
+- 替换图标：现为 `qt/aqt/data/web/imgs/favicon.ico` 的**逐字节副本**（1 帧 32×32），上游
+  `qt/installer/app/resources/anki.ico` 是 7 帧多尺寸；bundle 里也缺 `.icns` / `.png`
+  （Android/macOS 无图标可用）。
+- **验证脚本之间有顺序耦合**：三个 `verify-*.ps1` 共用 `out/tauri-test/collection.anki2`，
+  `verify-decks` 的「还原备份」会替换集合并留下失效的当前牌组 —— 紧接着跑 `verify-browser`
+  就会首屏 0 结果、5 个开窗断言全挂（2026-10-16 实测）。**一次只跑一个脚本**；
+  根因是把夹具集合当成了共享状态，后续应给每个脚本独立的集合或显式重建夹具。
 
 ---
 
@@ -1434,8 +1479,11 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 - **未用 Tauri 插件系统**：页面是外部 URL，`@tauri-apps/api` 的 IPC 不可用。
 - **浏览器页面是新写的**：上游的浏览器是原生 Qt 界面，没有可复用的 Web 页面，
   因此 `ts/routes/browser/` 属于本工程新增（其余窗口都是复用 `ts/routes/` 里的既有页面）。
-  功能面已基本对齐（搜索 / 排序 / 多选 / 笔记模式 / 列清单·列宽·列顺序 / 完整动作表 /
+  功能面大体对齐（搜索 / 排序 / 多选 / 笔记模式 / 列清单·列宽·列顺序 / 完整动作表 /
   导出四种格式 / 查找重复 / 管理笔记类型）；逐项差异见 `tauri/README.md` 的「浏览器」。
+  **但侧栏只有 2/7 个分区**（Decks + Note Types，缺 Saved Searches / Today / Card State /
+  Flags / Tags），也没有折叠状态、修饰键组合搜索与节点右键菜单；导出到 profile 目录没有
+  拦截；没有 `Ctrl+G` / 侧栏收起 / 缩放 / 布局 / 全屏（PARITY 5.5–5.9、8.11）。
 
 ### 7.2 曾经的妥协与解决情况（不是遗漏，已在文档标注）
 
@@ -1485,6 +1533,24 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 - **取色器的"颜色落到字段上"没有稳定断言**：字段上色走编辑器工具栏的 `surrounder`，
   只在选区 active 时生效；检查脚本现在只断言宿主钩子 + 调色板落库（见
   `tauri/README.md` 的「原生取色器」）。
+- **首选项 / 主题 / 界面语言 / 多 profile 完全没有**：`Ctrl+P` 打开的只是 Labs 实验页
+  （Qt 是 8 个分页的对话框）；夜间模式与 `standard_css` 的动态样式没注入；语言固定
+  `en-US`、只认 `ANKI_LANG`；没有 ProfileManager 与「切换配置」，路径永远推断
+  `Anki2/User 1`。见 PARITY 3.3 与 8.1-8.4。
+- **复习界面的三块缺口**：键盘答题（只绑了 8 个键）、答完队列的 Congratulations 收尾、
+  时间盒 —— 见 §6.1 的三行新条目；另外自动前进、上一张卡片信息、音频重播/暂停/±5 秒/
+  录音也没有（PARITY 2.2-2.4）。
+- **同步只验到「登录 / 取消 / 自动媒体同步请求」**：`syncCollection` 与媒体同步的成功路径、
+  冲突分支、关闭时同步、`restoring_backup` 守卫都没有覆盖（PARITY 6.1）。
+- **addon 与文件关联为零**（PARITY 6.6 / 6.7）：双击 `.apkg`、命令行带文件启动都不存在；
+  主窗口拖入导入只有单测，没有端到端。
+- **`prefs21.db` 的跨实现互操作只在手工脚本里验证过**（`check-prefs21.mjs` 没接进任何
+  `verify-*.ps1`），而且写入侧是**写 JSON null 而不是删键** → 桌面版的
+  `autoSyncMediaMinutes` 会读到 None 当 falsy，**周期媒体同步被静默关掉**（PARITY 6.8）。
+- **验证脚本自身的毛病**：`cards-check.mjs:175` 与 `reviewer-menu-check.mjs:310` 是恒真断言；
+  `visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移）；`drop-check.mjs`
+  只测图片分支、`fields-check.mjs` / `notetypes-check.mjs` 只覆盖一半分支。完整清单见
+  PARITY 第 9 节。
 - 检查脚本跑完会把集合里的 `previewBothSides` 留成 `false`（它先打开再关掉），
   如果之前是打开的，需要手工再打开。
 
@@ -1523,14 +1589,14 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | 导出（四种格式：apkg / colpkg / 笔记纯文本 / 卡片纯文本；入口：浏览器「更多」+ 牌组列表齿轮） | `ts/routes/browser/exporting.ts`（格式映射 / `ExportLimit` / 保存路径 / 导出 RPC）、`ts/routes/browser/ExportDialog.svelte`（对话框）、`ts/routes/decks/+page.svelte`（齿轮入口）、`tauri/src/platform/dialogs.rs` 的 `save_file_dialog`（外壳新增端点）、`qt/aqt/import_export/exporting.py` + `forms/exporting.ui`（对照用）、`rslib/src/import_export/text/csv/export.rs`（纯文本格式） |
 | 更改笔记类型 | `tauri/src/browser.rs`（开窗）、`tauri/src/server/api.rs`（补 `note_ids` + 关窗）、`ts/routes/change-notetype/`（**既有页面**）、`qt/aqt/changenotetype.py`（对照用） |
 | 管理笔记类型 | 宿主：`tauri/src/windows.rs`（`NOTETYPES`）、`tauri/src/main_window.rs`（`open_notetypes` / `open_fields_for_notetype` / `open_cards_for_notetype`）、`tauri/src/server/pycmd.rs`（`"notetypes"`）、`tauri/src/server/api.rs`（`openFieldsDialogForNotetype` / `openCardsDialogForNotetype`）；入口：`ts/routes/browser/+page.svelte` 的 `manageNotetypes()`（`data-action="manageNotetypes"` → `bridgeCommand("notetypes")`）；验证：`tauri/tools/notetypes-check.mjs` + `verify-browser.ps1`；页面：`ts/routes/notetypes/+page.svelte`（新写，见 §6.4），对照 `qt/aqt/models.py` |
-| 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重复刻 `find_dupes()`，字段/筛选器/报告/打标签）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
+| 查找重复 | `ts/routes/browser/FindDuplicatesModal.svelte`（判重逻辑是页面里**复刻** `col.find_dupes()`：字段/筛选器/报告/打标签，逐条 `getNote`、不是调后端 RPC）、`ts/routes/browser/+page.svelte`（菜单入口 + 点组切换搜索与模式）、`browser-check.mjs` 第 8.8 节；对照：`qt/aqt/browser/find_duplicates.py` + `qt/aqt/forms/finddupes.ui` + `pylib/anki/collection.py:744-778` |
 | 打包（可分发目录） | `tauri/tools/package.ps1`、`tauri/tools/verify-package.ps1`、`tauri/tauri.conf.json`（bundle 配置）、`tauri/src/paths.rs`（`ANKI_RESOURCE_DIR` + `for_resource_dir`）、`tauri/PACKAGING.md`；验证：`verify-package.ps1` 跑 release 产物 + 完整 `decks-check` |
 | 同步（登录 / 状态 / 同步入口） | `ts/routes/decks/+page.svelte`（工具栏同步按钮 + 登录/全量同步弹框 + `syncLogin`/`syncStatus`/`syncCollection`/`fullUploadOrDownload`）、`tauri/src/autosync.rs`（启动一次 + 媒体定时器）、`@tslib/profile`（`syncKey` 等 profile 配置键）、`qt/aqt/sync.py` + `qt/aqt/profiles.py:660-725` + `qt/aqt/toolbar.py:410-419`（对照用）；验证：`decks-check.mjs` 5i/5j（假同步服务器） |
 | 原生取色器 | `tauri/src/platform/colours.rs`（`ChooseColorW` + 色槽落库）、`tauri/src/platform/mod.rs`（`saveCustomColours` 端点）、`tauri/src/bridge.rs`（`__ankiHostColourPicker` 能力标记）、`tauri/src/server/pycmd.rs`（`pickColour:`，在按窗口分发之前）、`ts/routes/editor/editor-toolbar/ColorPicker.svelte`、`qt/aqt/mediasrv.py:1122-1128`（对照用）；验证：`editor-check.mjs` 的取色器两断言 + `verify-editor.ps1` 的 `ANKI_PICK_COLOUR` 钩子 |
 | 主窗口菜单栏（文件/编辑/工具/帮助） | `ts/routes/decks/+page.svelte`（菜单与动作）、`tauri/src/server/pycmd.rs`（`backup` / `quit`）、`tauri/src/backup.rs`（创建备份）、`qt/aqt/forms/main.ui` + `qt/aqt/main.py:1425-1470`（对照用）；验证：`decks-check.mjs` 5e 节 |
 | 自动备份与还原 | `tauri/src/backup.rs`（启动 + 每 5 分钟，`createBackup(force=false)`；菜单 文件 → 创建备份 走 `create_now`）、`tauri/src/restore.rs`（文件 → 还原备份：关集合 → `importCollectionPackage` → 重开 → 回牌组列表）、`tauri/src/main.rs`（`backup::spawn`）、`tauri/src/server/pycmd.rs`（`backup` / `restoreBackup`）、`rslib/src/collection/backup.rs`（后端的间隔/瘦身逻辑）、`qt/aqt/main.py:441-477,726-733,1543-1549`（对照用）；验证：`verify-decks.ps1` 的 `ANKI_BACKUP_NOW` / `ANKI_RESTORE_PATH` 断言 |
 | 复习菜单 | `tauri/src/reviewer_menu.rs` + `tauri/assets/reviewer-menu.js`（宿主拼数据、页面画菜单）、`qt/aqt/reviewer.py:998-1056`（对照用）、`tauri/tools/reviewer-menu-check.mjs`（UI + 宿主动作） |
-| 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗）、`ts/routes/graphs/` 与 `ts/routes/preferences/`（**既有页面**）、`qt/aqt/main.py:1331,1459`（对照用） |
+| 统计 / 设置窗口 | `tauri/src/main_window.rs`（开窗：统计标题用 `qt-misc-stats`，Qt 是 `statistics-title`）、`ts/routes/graphs/`（默认 `deck:current` = Qt 的 `_selectedDeck()`）与 `ts/routes/preferences/`（**注意：这只是 Qt 偏好设置里的 Labs 实验页**，8 个分页没迁）、`qt/aqt/stats.py` + `qt/aqt/preferences.py`（对照用） |
 | 用户可见差异清单（对齐路线图） | `tauri/PARITY.md` |
 | 预览窗口 | `tauri/src/preview.rs`、`tauri/src/legacy.rs` 的 `preview_page`、`qt/aqt/browser/previewer.py` |
 | 验证脚本与用法 | `tauri/tools/`（`verify-reviewer.ps1` 复习界面 / `verify-m2.ps1` 平台能力 / `verify-editor.ps1` 编辑当前 / `verify-addcards.ps1` 添加卡片 / `verify-browser.ps1` 浏览器）、`tauri/README.md` 的「验证工具」 |
@@ -1550,26 +1616,31 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    联动）、`verify-decks.ps1`（牌组列表 + 主窗口切页）。它们是「改完马上确认没坏」的入口。
 2. **对齐清单在 `tauri/PARITY.md`**：那里按"用户感知顺序"列着还差什么（主窗口/牌组列表、
    既有页面接入、字段/卡片对话框、浏览器余项、系统集成、打包与 Android），每项带
-   上游参考与验收方式；**补完一项就更新那份清单**。当前进度：复习界面的「更多」菜单
-   与顶部工具栏、3.1-3.6「既有页面接入」（牌组选项 / 统计 / 设置 / 导入 / 图像遮挡 /
-   自定义学习）、1.1 牌组列表、1.2 的两条工具栏、4.1 / 4.2 / 4.4 编辑器、
-   5.2「管理笔记类型」都已补（1.3 状态栏核对下来 Qt v3 并没有，已按对齐处理；
-   4.3 编辑器「更多」菜单上游并不存在）。
-   下一步按清单走：**打包与 Android**（M4：可分发目录已做并验证，见
-   `tauri/PACKAGING.md`；剩下的 NSIS/MSI 生成要联网，签名与 Android 未做）、
-   **同步剩下的几项**（冲突的完整处理、复习界面的同步链接、进度条、关闭时同步）、
-   **菜单栏 / 浏览器的小差异**（Switch Profile / 检查更新 / add-ons、侧栏分区、
-   加标签补全、列设置存储）。
-   浏览器的三块大功能（管理笔记类型 / CSV·纯文本导出 / 查找重复）已经全部补完。
-   「卡片…」的入口与「字段…」同源（`openCardsDialog` 端点），上游约 980 行，
-   是模板/样式/预览最大的一块（§6.4 已作为「已完成」登记）。
-   `y`（同步）与 `Ctrl+E`（导出）要等 6.x 的同步与主窗口菜单栏。
+   上游参考与验收方式；**补完一项就更新那份清单**。**2026-10-16 已按代码逐项重新定级**
+   （44 项里 ✅3 / ⚠️33 / ❌8），并新增第 8 节（清单原先没覆盖的 12 项缺口）与第 9 节
+   （验证体系缺口）。已补完的大块：复习界面「更多」菜单（11 项）与顶部工具栏、3.1-3.6
+   既有页面接入、1.1 牌组列表、1.2 的两条工具栏、4.1/4.2/4.4 编辑器、5.1-5.3 浏览器三块
+   （查找重复 / 管理笔记类型 / CSV·纯文本导出）。（1.3 状态栏核对下来 Qt v3 并没有，
+   4.3 编辑器「更多」菜单上游并不存在，都按"无对齐对象"处理。）
+   下一步建议的顺序（同 `tauri/PARITY.md` §10）：
+   1. **首选项真页面 + profile 管理 + 夜间模式 `standard_css` + 界面语言** —— 一次消掉
+      "日常必用却完全缺失"和最大的文档落差（PARITY 8.1-8.4）；
+   2. **复习键盘答题 + Congratulations 收尾 + 时间盒**（每天都会碰到，改动集中在
+      `reviewer.rs`）；
+   3. **数据安全三项**：关窗契约（牌组选项 / 编辑当前 / 浏览器编辑区）、筛选牌组「选项」、
+      导出目录拦截；顺手把 `prefs21` 的"写 null"改成删键；
+   4. **音频显示与语义 + 自动前进 + 上一张卡片信息**；
+   5. **同步成功率路径与冲突分支 / 进度条**、**打包**（fileAssociations + 签名 + 图标）、
+      `just` + CI、Android。
+   `y`（同步）与 `Ctrl+E`（导出）**已经有了**（牌组列表页），剩余的是复习页的那几个键。
    做之前先读
    `tauri/README.md` 的「编辑器」「浏览器」「复习界面」「牌组列表」：宿主契约都不复杂，
-   但踩坑不少（§5.18 - §5.30）。
+   但踩坑不少（§5.18 - §5.44）。
    注意有些"新窗口"不必新写界面 —— `card-info/<cid>`、`change-notetype/<id>`
    这类**仓库里已有的路由**直接复用即可（§3.7 第 7 条）；反过来，"原生对话框"这类
    宿主独有能力（保存路径、消息框）则要按 §3.7 第 6 条补端点。
-3. 若只做小步：4.5「未保存拦截 / `EditorState`」、`current_caller`（editor /
-   reviewer 的 TTS 打断语义）属编辑器 / 音频细节；工程化侧还有把 §2.1 的构建步骤
-   接进 `just`、补 `tauri/capabilities/`、换掉占位图标。
+3. 若只做小步：4.5「未保存拦截 / `EditorState`」的补全（编辑当前 / 浏览器编辑区的原生 ×
+   现在**完全不拦**，600ms 内未落库的编辑会丢）、`current_caller`（editor / reviewer 的
+   播放打断语义）；工程化侧还有把 §2.1 的构建步骤接进 `just`、补 CI 里的
+   `cargo check/build`、换掉占位图标、给每个 verify 脚本独立夹具（现在是共用集合、
+   顺序耦合，见 §6.5）。

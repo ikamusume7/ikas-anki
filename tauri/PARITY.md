@@ -154,7 +154,7 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
 
 跑回归的正确姿势：**一次一个脚本**（见 §0 的顺序耦合问题）。当前断言强度分四档：
 
-1. **恒真/无效断言**：`cards-check.mjs:175` 的 `check(..., true)`；`reviewer-menu-check.mjs:309`
+1. **恒真/无效断言**：`cards-check.mjs:175` 的 `check(..., true)`；`reviewer-menu-check.mjs:310`
    的「more 命令被接受」；`editor-check.mjs` 的字段级取色只剩 `console.log`。
 2. **半覆盖**：`drop-check.mjs` 只测图片分支；`occlusion-check.mjs` 不存遮挡笔记；
    `fields-check.mjs` 不验字体/RTL/排序字段/重定位/删除守卫；`notetypes-check.mjs` 只验
