@@ -38,7 +38,7 @@
 | 1.1 | ⚠️ | **牌组列表主界面** | 已有 `ts/routes/decks/`（启动默认页）：今日计数、折叠/展开、Shift 选牌组、点牌组 → 概览 → 学习、概览里的**牌组描述**（可编辑 + markdown）、选项、自定义学习、筛选牌组重建/清空、**取消埋藏**、齿轮菜单（重命名/选项/导出/删除）、**拖拽移动牌组**、底部三按钮、今日学习行。**还差**：概览计数取的是到期树，Qt 用 `sched.counts()` 并单列「埋藏差值 ±N」（有埋藏时概览数字大于实际可学，无提示）；没有 v1→v3 调度器升级提示条；概览缺「Reviews and Updates」共享来源链接；齿轮/文件导出的建议文件名用**叶子名**（子牌组导出文件名与 Qt 不同）；点整行任意处即进概览（Qt 只在点牌组名时进）；默认牌组的删除被禁用；今日学习行无任何断言 | `qt/aqt/deckbrowser.py` + `overview.py` |
 | 1.2 | ⚠️ | 菜单栏 + 工具栏 | 菜单栏有了（牌组列表页顶部，File/Edit/View/Tools/Help）：文件=导入/导出/创建备份/**还原备份**/退出、编辑=撤销/重做、视图=全屏/三档缩放、工具=学习牌组/创建筛选牌组/检查数据库/检查媒体/空卡片/管理笔记类型/首选项、帮助=用户手册/支持 Anki/关于；快捷键 `Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`F11`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`/`F`。工具栏两页都有（牌组/添加/浏览/统计/同步）。**还差**：**复习界面整条菜单栏没有**（复习中拿不到 导入/导出/备份/还原/检查数据库/管理笔记类型）；缺 Switch Profile(`Ctrl+Shift+P`)/Add-ons(`Ctrl+Shift+A`)/检查更新；同步链接只有文字，没有 Qt 的状态色与旋转图标；「关于」缺 logo/网站/复制调试信息/Python&Qt&Chromium 版本/贡献者名单；「学习牌组」不列筛选牌组（注释却写"筛选牌组也在内"）、无 `Ctrl+N`/上下键/`Ctrl+1..9`/回车提交；菜单不响应 `Ctrl+Q`/`Ctrl+Shift+I`/`/`/`F1` | `qt/aqt/toolbar.py:353-418`、`qt/aqt/forms/main.ui`、`qt/aqt/main.py:1425-1470` |
 | 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，`qt/aqt` 里也没有 `showMessage` 调用（`profiles.ui` 那个 statusbar 在 `main.py:336` 被设为不可见）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui` |
-| 1.4 | ⚠️ | 主窗口快捷键 | 牌组列表页已接 `a`/`b`/`t`/`s`/`c`/`o`/`r`/`e`/`u`/`y`(同步)/`F`(筛选牌组)/`F11`/`Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`；复习页只接了 `u`/`a`/`b`/`t`/`d`/`s`/`Ctrl+Z`/`Ctrl+P`。**还差**：牌组列表缺 `d`（概览里按 d 回不到列表）、`Ctrl+Shift+I`、`/`、`Ctrl+Shift+N`、`Ctrl+Shift+A`、`Ctrl+Q`；复习页缺 `y`、`F11`、`Ctrl+E`、`Ctrl+Shift+Z`、缩放三键；两页都没有 `Ctrl+:`（调试控制台）。**验证只覆盖了 F11/Ctrl+E/`f` 三个真实按键**，其余是桥接命令或点击级断言 | `qt/aqt/main.py:1189-1198` |
+| 1.4 | ⚠️ | 主窗口快捷键 | 牌组列表页已接 `a`/`b`/`t`/`s`/`c`/`o`/`r`/`e`/`u`/`y`(同步)/`F`(筛选牌组)/`F11`/`Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`；复习页已照 `_shortcutKeys()` 接上所有有后端能力的键位（`assets/reviewer-keys.js`，宿主 `include_str!` 注入）：空格/回车（问题面显示答案；答案面按 `meta.spacebar_rates_card` 用焦点档或默认档 3，关闭则不动）、`1`–`4`（仅答案面，宿主另有 `answer_shown` 守卫）、`e`/`m`/`u`/`o`/`i`、`*`/`=`/`-`/`!`/`@`、`Ctrl+1..7`、`Ctrl+Alt+N`/`Ctrl+Alt+E`、`Ctrl+Del`、`Ctrl+Shift+D`、`Ctrl+Z`/`Ctrl+P`，以及主窗口全局的 `a`/`b`/`t`(`Shift+t`)/`d`/`s`/`y`。**还差**：复习页缺 `r`/`F5`/`5`/`6`/`7`/`v`/`Shift+v`（音频，见 2.3）、`Shift+A`（自动前进，2.4）、`Ctrl+Alt+I`（上一张卡片信息，2.2）、`F11`/`Ctrl+E`/`Ctrl+Shift+Z`/缩放三键；牌组列表缺 `d`（概览里按 d 回不到列表）、`Ctrl+Shift+I`、`/`、`Ctrl+Shift+N`、`Ctrl+Shift+A`、`Ctrl+Q`；两页都没有 `Ctrl+:`（调试控制台）。验证：`reviewer-keys-check.mjs` 按 31 组真实按键断言桥接命令（含输入框不抢键），另对真外壳断言评分守卫 | `qt/aqt/main.py:1189-1198`、`qt/aqt/reviewer.py:595-642` |
 | 1.5 | ⚠️ | 启动行为 | 启动即牌组列表；**自动备份**（启动一次 + 每 5 分钟，`force=False`，`verify-decks.ps1` 断言产物是 >1KB 的 `.colpkg`）；启动自动同步线程；检查数据库/媒体/空卡片有入口；**还原备份**能用（6.2）。**还差**：界面语言已按 `meta["defaultLang"]` / 系统语言生效（见 8.4），只剩偏好设置里的语言下拉与首次运行的语言框；**主窗口几何不恢复**（固定 1200×820，`windows.rs` 的几何记忆只管 `windows::open` 开的窗口；「重置窗口大小」还需要 prefs21 的删键端点）；**profile 选择已实现**（`meta["last_loaded_profile_name"]` + 切换配置窗口，见 8.2）；缺「检查更新」 | `qt/aqt/main.py:setupProfile`、`_backup` |
 | 1.6 | ⚠️ | 每日学习流程 | 空队列时**只在复习页注入一句硬编码中文**「本队列已无待复习卡片。」（英文界面也是中文），`/congrats` 路由没有任何打开路径，`congratsInfo` 只被概览面板用来判断埋藏。**Congratulations 环 = ❌**。还差：答完最后一张不 `moveToState("overview")`、不渲染 congrats（下次到期时间 / 提前学习按钮都没有）、概览面板永不显示；时间盒到点的「继续/结束」对话框（见 2.6）；非 v3 调度器时回牌组列表 + 警告 | `qt/aqt/reviewer.py:257-259`、`qt/aqt/overview.py:190-209` |
 
@@ -165,9 +165,10 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    "没人用"的删除分支；`browser-check.mjs` 对侧栏只验"有默认牌组"。
 3. **靠钩子顶掉原生交互**：`ANKI_SAVE_PATH`/`ANKI_PICK_COLOUR`/`ANKI_RESTORE_PATH`/`ANKI_BACKUP_NOW`
    → 真对话框（保存、确认、取色、还原）路径全靠手工。
-4. **0 断言的主要功能**：键盘快捷键（只验了 F11/Ctrl+E/`f`）、计时器与时间盒、答完队列/congrats、
-   埋藏·暂停·重置·副本·删除笔记、同步成功路径、TTS 播放链路、`prefs21` 桌面版↔外壳互操作、
-   文件关联与命令行、`just`/CI（根本没有）。
+4. **0 断言的主要功能**：计时器与时间盒、答完队列/congrats、上一张卡片信息、
+   音频的重播·暂停·±5 秒·录音、埋藏/暂停/重置/副本/删除笔记的**按键与菜单路径**
+   （`rev:` 动作只有旗标·标记·到期日有断言）、同步成功路径、TTS 播放链路、
+   `prefs21` 桌面版↔外壳互操作、文件关联与命令行、`just`/CI（根本没有）。
 
 另外两处**测试自身**的问题：`visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移、
 且把 maxTime 写死 0）；`verify-*.ps1` 与 `*-check.mjs` 共用同一份集合，脚本间有顺序依赖。
@@ -180,7 +181,11 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    `tauri/src/theme.rs`、`tauri/src/i18n_lang.rs`；四个一键脚本 `verify-prefs` /
    `verify-profiles` / `verify-theme` / `verify-i18n` 全绿。剩下的尾巴记在 3.3 / 8.1 / 8.2
    （媒体日志窗口、`answer_keys`、`resetWindowSizes`、「干扰项」的消费方等）
-2. **复习键盘（空格/回车/1–4 等，2.x 附）+ Congratulations 收尾（1.6）+ 时间盒（2.6）**
+2. **~~复习键盘（空格/回车/1–4 等，2.x 附）~~ + Congratulations 收尾（1.6）+ 时间盒（2.6）**
+   —— **键盘已落地**（2026-10-16）：`tauri/assets/reviewer-keys.js` 照 `_shortcutKeys()`
+   绑完整张可用表、宿主加 `answer_shown` 守卫、`meta.spacebar_rates_card` 生效，
+   `reviewer-keys-check.mjs`（31 组真实按键 + 宿主守卫）接进 `verify-reviewer.ps1`；
+   剩下 congrats 与时间盒。
 3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
    筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
 4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**

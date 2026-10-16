@@ -519,9 +519,11 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
                         }))}
                 />
             </div>
-            <p class="note">⚠️「空格评分」（`meta.spacebar_rates_card`）只落库：复习页的键盘答题
-                整条链路还没实现（PARITY 1.4 / 2.4）。自定义答案键（`answer_keys`）的键是整数，
-                现有 prefs21 端点读不出来，暂时不提供。</p>
+            <p class="note">「空格评分」（`meta.spacebar_rates_card`）在复习界面的键盘答题里生效：
+                答案面按空格 / 回车时，开启则用默认档评分，关闭则什么都不做（对照
+                `reviewer.py:661`）。自定义答案键（`answer_keys`）的键是整数，现有 prefs21
+                端点读不出来，暂时固定用 1–4。音频（重播 / 暂停 / ±5 秒 / 录音）与自动前进
+                （`Shift+A`）的快捷键还没有对应的后端能力（PARITY 2.2 / 2.6）。</p>
         {:else if tab === "editing"}
             <h3>{text("preferences-editing")}</h3>
             <div class="row">

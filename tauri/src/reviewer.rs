@@ -9,15 +9,16 @@
 //!
 //! 当前实现的是主链路（显示问题 → 显示答案 → 四档评分 → 下一张），以及计时器、
 //! 撤销、自动播放与音频队列、类型作答（`type:`）、队列计数显示、
-//! `getSchedulingStatesWithContext` 界面状态同步、顶部/底部工具栏与「更多」菜单。
+//! `getSchedulingStatesWithContext` 界面状态同步、顶部/底部工具栏、「更多」菜单，
+//! 以及键盘答题（`assets/reviewer-keys.js`）。
 //!
 //! **未实现**（见 `tauri/PARITY.md`）：
-//! - **键盘答题**：只绑了 `Ctrl+Z`/`Ctrl+P` 与裸 `u`/`a`/`b`/`t`/`d`/`s`，
-//!   Qt `_shortcutKeys` 里的空格 / 回车显示答案、`1`–`4` 评分等一个都没绑；
 //! - **答完队列的收尾**：只注入一句提示，没有 Congratulations 页与概览跳转；
 //! - **时间盒**（`timeboxReached` 与「继续 / 结束」对话框）；
 //! - **音频**：卡面不画播放按钮（没有 `play:q:N`）、没有重播 / 暂停 / ±5 秒 / 录音，
-//!   答案面还会把问题面音频再播一遍（`partial_render` 的差异）。
+//!   答案面还会把问题面音频再播一遍（`partial_render` 的差异）。因此 `_shortcutKeys()`
+//!   里的 `r`/`F5`（重播）、`5`/`6`/`7`（暂停、±5 秒）、`v`/`Shift+v`（录音与重播录音）
+//!   与 `Shift+A`（自动前进）都没有绑定。
 
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -62,6 +63,8 @@ use anki_proto::scheduler::SchedulingContext;
 use serde_json::json;
 
 use crate::platform::audio;
+use crate::platform::prefs21::Prefs21;
+use crate::platform::prefs21::Store;
 use crate::state::AppState;
 
 #[derive(Default)]
@@ -93,6 +96,11 @@ struct Session {
     state_mutation_js: Option<String>,
     /// 本张卡的自定义调度是否已完成（完成后才显示评分按钮）
     states_mutated: bool,
+    /// 是否已经显示答案（对照 Qt 的 `self.state == "answer"`）。
+    ///
+    /// Qt 的 `_answerCard()` 有 `if self.state != "answer": return` 守卫，
+    /// 所以「问题面按 1」不会评分。评分按钮由 `show_answer()` 画出，这里同步记录。
+    answer_shown: bool,
     shown_at: Option<std::time::Instant>,
 }
 
@@ -233,6 +241,8 @@ pub async fn start(state: &AppState) {
         session.context = queued_card.context.clone();
         session.state_mutation_js = state_mutation_js;
         session.states_mutated = states_mutated;
+        // 新卡片：还没显示答案（对照 Qt 在 `_showQuestion()` 里把 state 置回 "question"）
+        session.answer_shown = false;
         // 对照 Qt 的 `_state_mutation_key`：整个复习会话保持不变
         if session.state_mutation_key.is_none() {
             session.state_mutation_key = Some(rand::random::<u64>().to_string());
@@ -275,71 +285,41 @@ pub async fn undo(state: &AppState) {
     start(state).await;
 }
 
-/// 复习界面的快捷键。
+/// 复习界面的快捷键脚本（对照 Qt 的 `Reviewer._shortcutKeys()`）。
 ///
-/// Qt 用 QShortcut 注册（`Reviewer._shortcutKeys()` 里的 `u`，以及主窗口的
-/// Ctrl+Z、全局 `a` 与 `b`），单页方案里改为在页面内监听键盘。这里只装撤销、
-/// 添加卡片与浏览器，且裸键会避开输入框（类型作答时 `u` / `a` / `b` 都是普通字符）。
+/// Qt 用 QShortcut 注册，单页方案里改为在页面内监听键盘 —— 脚本本体放在
+/// `assets/reviewer-keys.js`，用 `include_str!` 引用，这样验证脚本能加载**同一份文件**
+/// （与 `assets/reviewer-menu.js` 相同的做法）。
+const KEYS_JS: &str = include_str!("../assets/reviewer-keys.js");
+
+/// 安装键盘操作。
+///
+/// 每次会话开始都会刷新 `window.__ankiReviewerConfig`（脚本本身只装一次），
+/// 这样在设置里改「空格评分」后，下一张卡片就生效。
 fn install_reviewer_shortcuts(state: &AppState) {
+    let spacebar_rates_card = read_spacebar_rates_card(state);
+    tracing::debug!("键盘答题: spacebarRatesCard={spacebar_rates_card}");
     eval(
         state,
-        r#"(function () {
-    if (window.__ankiReviewerShortcuts) {
-        return;
-    }
-    window.__ankiReviewerShortcuts = true;
-    function inTextInput(target) {
-        if (!target) {
-            return false;
-        }
-        var name = target.tagName;
-        return name === "INPUT" || name === "TEXTAREA" || target.isContentEditable === true;
-    }
-    document.addEventListener("keydown", function (event) {
-        if (event.altKey) {
-            return;
-        }
-        if (event.ctrlKey || event.metaKey) {
-            if (event.key === "z" || event.key === "Z") {
-                event.preventDefault();
-                window.pycmd("undo");
-            } else if (event.key === "p" || event.key === "P") {
-                // 对照 `forms/main.ui` 的 `actionPreferences`（Ctrl+P）→ `onPrefs()`
-                event.preventDefault();
-                window.pycmd("preferences");
-            }
-            return;
-        }
-        if (inTextInput(event.target)) {
-            return;
-        }
-        if (event.key === "u" || event.key === "U") {
-            event.preventDefault();
-            window.pycmd("undo");
-        } else if (event.key === "a" || event.key === "A") {
-            // 对照 Qt 主窗口的全局快捷键 `a` → `mw.onAddCard()`（`main.py:1183`）
-            event.preventDefault();
-            window.pycmd("add");
-        } else if (event.key === "b" || event.key === "B") {
-            // 对照 Qt 主窗口的全局快捷键 `b` → `mw.onBrowse()`
-            event.preventDefault();
-            window.pycmd("browse");
-        } else if (event.key === "t" || event.key === "T") {
-            // 对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `mw.onStats()`（`main.py:1185`）
-            event.preventDefault();
-            window.pycmd("stats");
-        } else if (event.key === "d" || event.key === "D") {
-            // 对照 `d` → `moveToState("deckBrowser")`（`main.py:1181`）：回牌组列表
-            event.preventDefault();
-            window.pycmd("decks");
-        } else if (event.key === "s" || event.key === "S") {
-            // 对照 `s` → `onStudyKey()`（`main.py:1240-1245`）：复习状态下进概览
-            event.preventDefault();
-            window.pycmd("overview");
-        }
-    });
-})();"#,
+        &format!(
+            "window.__ankiReviewerConfig = {{ spacebarRatesCard: {spacebar_rates_card} }};\n{KEYS_JS}"
+        ),
     );
+}
+
+/// 读 `meta["spacebar_rates_card"]`（对照 `ProfileManager.spacebar_rates_card()`）。
+///
+/// 缺键时按桌面版的默认值 `True` 处理（`pylib/anki/profiles.py` 的 `defaultProfile`）。
+fn read_spacebar_rates_card(state: &AppState) -> bool {
+    let Some(prefs) = Prefs21::locate(state.profile_dir.as_path()) else {
+        return true;
+    };
+    prefs
+        .get(Store::Meta, "spacebar_rates_card")
+        .ok()
+        .flatten()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
 }
 
 /// 当前卡片对应的 body class（对照 `theme_manager.body_classes_for_card_ord(ord)`）。
@@ -425,6 +405,8 @@ pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
         .map(|settings| settings.stop_timer_on_answer)
         .unwrap_or(false);
     tracing::debug!("评分按钮: stopTimerOnAnswer={stop_timer} 间隔={next_intervals:?}");
+    // 评分按钮画出来之后才允许评分（对照 Qt 的 `self.state = "answer"`）
+    state.reviewer.session().answer_shown = true;
     eval(
         state,
         &format!("showAnswer({}, {});", js_string(&buttons), stop_timer),
@@ -436,7 +418,14 @@ pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
 /// 提交评分（`ease` 为 1..4），随后显示下一张卡片。
 pub async fn answer(state: &AppState, ease: u32) {
     let (card_id, current, next) = {
-        let session = state.reviewer.session();
+        let mut session = state.reviewer.session();
+        // 对照 `_answerCard()` 的 `if self.state != "answer": return`：
+        // 问题面按 1..4 不评分；提交中的重复按键（双击评分按钮）也在这里挡掉。
+        if !session.answer_shown {
+            tracing::warn!("尚未显示答案，忽略评分请求（ease{ease}）");
+            return;
+        }
+        session.answer_shown = false;
         let Some(card_id) = session.card_id else {
             return;
         };

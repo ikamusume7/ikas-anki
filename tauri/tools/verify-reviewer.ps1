@@ -181,6 +181,15 @@ try {
             -ProcessName "anki-tauri" -OutFile (Join-Path $OutDir "preferences.png") `
             -WaitSeconds 20 -TitleLike $preferencesTitle
     }
+
+    # 复习键盘：页面脚本把按键翻成桥接命令（`tauri/assets/reviewer-keys.js`，宿主用
+    # `include_str!` 引用），宿主再执行动作。第 1 半查映射（同一个脚本文件），
+    # 第 2 半查宿主侧那条「答案面之外不评分」的守卫。
+    # 放在最后：第 2 半会把队列里的卡片答掉，前面的「更多」菜单/卡片信息要用到它。
+    Write-Host "检查复习键盘（按键映射 + 宿主守卫）…"
+    $env:ANKI_LOG = $logPath
+    node tauri/tools/reviewer-keys-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red
     $passed = $false

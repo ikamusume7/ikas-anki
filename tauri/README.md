@@ -678,28 +678,37 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 调用 rslib 的 `CollectionService.Undo`，然后**重新取队列** —— 撤销会改变卡片的调度
 状态（通常是把上一张卡放回队列），所以必须重取并重渲染。
 
-快捷键：Qt 用 QShortcut 注册（复习界面的 `u` 与主窗口的 `Ctrl+Z` / `a`），单页方案改为
-在页面内监听 `keydown`（`src/reviewer.rs` 的 `install_reviewer_shortcuts`）：
+快捷键：Qt 用 QShortcut 注册（`Reviewer._shortcutKeys()`），单页方案改为在页面内监听
+`keydown`。键位表在 `tauri/assets/reviewer-keys.js`（宿主用 `include_str!` 注入，见
+`src/reviewer.rs::install_reviewer_shortcuts`）：页面只把按键翻成桥接命令，动作都在宿主侧，
+因此验证脚本能加载**同一份文件**按真实按键断言。
 
-- `Ctrl+Z` / `Cmd+Z` → 撤销；
-- 裸 `u` → 撤销，裸 `a` → 打开「添加卡片」窗口（对照主窗口的全局快捷键 `a` →
-  `mw.onAddCard()`，`main.py:1183`）；两者都在 `INPUT` / `TEXTAREA` /
-  `contenteditable` 内不生效（类型作答时 `u` / `a` 是普通字符）。
+- 空格 / 回车 → 问题面显示答案（类型作答的输入值由桥接脚本附加）；答案面按
+  `meta.spacebar_rates_card`：开（默认）则用当前焦点按钮那一档评分、没有焦点用默认档 3，
+  关则什么都不做（对照 `reviewer.py:658-664` 的 `onEnterKey` + `_defaultEase`）；
+- `1`–`4` → 评分。**只在答案面**：问题面按 `1` 被宿主挡掉（对照 `_answerCard()` 的
+  `state != "answer"`），免得手快把还没看的卡片评掉；
+- `e` 编辑当前卡片、`m` 更多菜单、`u` 撤销、`o` 牌组选项、`i` 卡片信息；
+- `*` 标记笔记、`=` 暂缓笔记、`-` 暂缓卡片、`!` 搁置笔记、`@` 搁置卡片；
+- `Ctrl+1..7` 设旗标、`Ctrl+Alt+N` 重置卡片、`Ctrl+Alt+E` 创建副本、`Ctrl+Del` 删除笔记、
+  `Ctrl+Shift+D` 设置到期日、`Ctrl+Z` 撤销、`Ctrl+P` 设置；
+- 主窗口的全局键在复习页同样有效：`a` 添加、`b` 浏览、`t`/`Shift+t` 统计、`d` 牌组列表、
+  `s` 概览、`y` 同步。
 
-**这个页面一共只绑了这些键**（`install_reviewer_shortcuts` 的完整列表）：
-`Ctrl+Z`/`Cmd+Z`、`Ctrl+P`、裸 `u`/`a`/`b`/`t`/`d`/`s`。**Qt 的键盘答题一个都没绑** ——
-空格 / 回车显示答案、`1`–`4` 评分，以及 `e`/`m`/`r`/`5`/`6`/`7`/`v`/`Shift+v`/`o`/`i`/`*`/`=`/`-`/
-`!`/`@`/`Ctrl+1..7`/`Ctrl+Alt+N`/`Ctrl+Alt+E`/`Ctrl+Del`/`Ctrl+Shift+D` 全都不响应
-（对照 `qt/aqt/reviewer.py:595-642` 的 `_shortcutKeys`）→ **只能用鼠标点按钮答题**，
-这是复习界面目前最大的可用性缺口（PARITY 1.4）。
+页面里没有第二份状态：「是否已显示答案」直接看底部栏有没有画出评分按钮（`#middle` 里的
+`[data-ease]`），与 Qt 的 `self.state == "answer"` 一一对应。类型作答的输入框里所有按键都
+交给输入框自己（回车由页面的 `_typeAnsPress()` 处理），不会误触发 `u` / `a` / `1`。
 
-验证：评分一张卡（队列 `学习中 1` → `学习中 0`）后执行 `undo`，日志出现
-`已撤销上一步操作`，队列回到 `学习中 1`。**键盘绑定本身没有断言**（检查脚本都是直接发
-`pycmd`），只有牌组列表页的 `F11`/`Ctrl+E`/`f` 是按真实按键验过的。
+**没绑的**：`r`/`F5`（重播）、`5`/`6`/`7`（暂停、±5 秒）、`v`/`Shift+v`（录音与重播录音）——
+播放器没有 pause/seek、录音也没有入口（PARITY 2.3）；`Shift+A`（自动前进，2.4）；
+`Ctrl+Alt+I`（上一张卡片信息，2.2）。`Shift+A` 刻意不当作 `a`。复习页仍缺
+`F11`/`Ctrl+E`/`Ctrl+Shift+Z`/缩放三键，两页都没有 `Ctrl+:`（调试控制台）。
 
-未实现：重做（`Ctrl+Shift+Z`）、`y`（同步）、`F11`、`Ctrl+E`、缩放三键；**整条菜单栏**也没有
-—— 复习中拿不到 导入/导出/创建备份/还原备份/检查数据库/管理笔记类型，而 Qt 的菜单栏在所有
-状态都在（PARITY 1.2）。
+验证：`tauri/tools/reviewer-keys-check.mjs`（由 `verify-reviewer.ps1` 调用）。第 1 半把
+`assets/reviewer-keys.js` 加载进 Playwright（底部栏状态用上游那份 `reviewer-bottom.js` 摆），
+**31 组真实按键**断言 `pycmd` 收到的命令，含「输入框里不抢键」与「未实现的键不发命令」；
+第 2 半对着真外壳发桥接命令断言宿主守卫：问题面发 `ease3` 不把卡片答掉（日志
+`尚未显示答案`），`ans` 之后再发 `ease3` 才换下一张。
 
 ### 「更多」菜单（= 右键菜单）
 
@@ -1587,7 +1596,7 @@ browserSearch：图表 → 浏览器搜索
 
 | 脚本 | 作用 |
 | --- | --- |
-| `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言。改完复习界面先跑它 |
+| `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言 + 「更多」菜单 + 复习键盘。改完复习界面先跑它 |
 | `verify-m2.ps1` | 一键：验证 M2 的平台能力（剪贴板文件列表、TTS 合成、录音闭环）并检查多窗口的命令归属。**录音那项需要本机有输入设备**，没有时会以 `recordAudio → HTTP 500 找不到可用的录音设备` 失败（其余断言照常通过） |
 | `m2-check.mjs` | 上面那个脚本调用的实际检查（HTTP 层端到端断言）。注意：那条会一直挂着的 `recordAudio` 必须马上挂 `.catch()`、且收尾**不要** `abort()` —— 否则 node 会以 unhandled rejection 自杀并带出 libuv 的 `UV_HANDLE_CLOSING` 断言，看着像被测程序崩了 |
 | `verify-editor.ps1` | 一键：验证「编辑当前卡片」窗口（开窗 → 载入 note → 截图 → 关窗 → 保存链路 → 「字段…」/「卡片…」两个对话框） |
@@ -1614,6 +1623,7 @@ browserSearch：图表 → 浏览器搜索
 | `prefs-check.mjs` | 上面那个脚本调用的检查：七个分页的结构 + 每个分页代表控件的「改 → RPC 复查 → 还原」（主题命令、语言、缩放、调度、reviewer、编辑、`customSyncUrl` 连带清 `currentSyncUrl`、备份份数…） |
 | `verify-profiles.ps1` | 一键：多 profile（`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs` → **真切换**：发 `profile:{"action":"switch"}` 后等重启出来的新进程日志 + 新 profile 的集合） |
 | `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
+| `reviewer-keys-check.mjs` | `verify-reviewer.ps1` 调用的复习键盘检查：第 1 半加载 `assets/reviewer-keys.js` 按 **31 组真实按键**断言桥接命令（含焦点档、空格评分开关、输入框不抢键、未实现的键不发命令），第 2 半对真外壳断言「问题面不许评分」的宿主守卫 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |
