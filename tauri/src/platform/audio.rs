@@ -49,6 +49,14 @@ enum Command {
 
 static COMMANDS: OnceLock<mpsc::Sender<Command>> = OnceLock::new();
 
+/// 当前是否有音频在播（自动前进的 `waitForAudio` 用它，对照 `av_player.current_player`）。
+static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 是否正在播放音频（复制标签/`playFile` 都会走同一个队列）。
+pub fn is_playing() -> bool {
+    PLAYING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// 对应 mediasrv 的 `play_file`。
 pub fn play_file(state: &AppState, body: &[u8]) -> HandlerResult {
     let request = GenericString::decode(body).map_err(|e| e.to_string())?;
@@ -143,6 +151,9 @@ fn audio_loop(rx: mpsc::Receiver<Command>) {
                 }
             }
         }
+
+        // 供自动前进的 `waitForAudio` 判断（对照 Qt 的 `av_player.current_player`）
+        PLAYING.store(playing, std::sync::atomic::Ordering::SeqCst);
     }
 }
 

@@ -52,6 +52,7 @@ use anki_proto::scheduler::CardAnswer;
 use anki_proto::scheduler::GetQueuedCardsRequest;
 use anki_proto::scheduler::QueuedCards;
 use anki_i18n::I18n;
+use tauri::Manager as _;
 use anki_proto::scheduler::SchedulingStates;
 use anki_proto::config::Preferences;
 use anki_proto::generic::Empty;
@@ -114,6 +115,14 @@ struct Session {
     /// Qt 的 `_answerCard()` 有 `if self.state != "answer": return` 守卫，
     /// 所以「问题面按 1」不会评分。评分按钮由 `show_answer()` 画出，这里同步记录。
     answer_shown: bool,
+    /// 自动前进的运行时开关（对照 Qt 的 `self.auto_advance_enabled`）。
+    ///
+    /// Qt 每次构造 reviewer 都重置为 `False`，只能靠 `Shift+A`/菜单打开 —— 牌组配置里那
+    /// 几个秒数与动作只是"参数"，不决定开关（`qt/aqt` 里没有读 `autoAdvance` 的地方）。
+    auto_advance: bool,
+    /// 计时器的"代"：每次重排或清理都 +1；旧任务睡醒发现代对不上就自己退出
+    /// （Qt 用 `QTimer.deleteLater()` 做同一件事）。
+    auto_advance_generation: u64,
     shown_at: Option<std::time::Instant>,
 }
 
@@ -171,6 +180,48 @@ impl Reviewer {
     /// 空了也能用（Qt 里那个对话框对象一直留着）。
     pub(crate) fn previous_card_id(&self) -> Option<i64> {
         self.session().previous_card_id
+    }
+
+    /// 自动前进是否开着（菜单勾选态与 `Shift+A` 都用它）。
+    pub(crate) fn auto_advance_enabled(&self) -> bool {
+        self.session().auto_advance
+    }
+
+    /// 切换自动前进（对照 `reviewer.py:1219-1231` 的 `toggle_auto_advance`）。
+    ///
+    /// 返回切换后的状态；调用方负责提示与重新排定时器。
+    pub(crate) fn toggle_auto_advance(&self) -> bool {
+        let mut session = self.session();
+        session.auto_advance = !session.auto_advance;
+        // 换了一代：旧的计时任务作废（`auto_advance_if_enabled()` 会按当前面重排）
+        session.auto_advance_generation += 1;
+        session.auto_advance
+    }
+
+    /// 焦点丢失时自动前进要自己关掉（对照 `reviewer.py:428-434`）。
+    pub(crate) fn disable_auto_advance(&self) {
+        let mut session = self.session();
+        if session.auto_advance {
+            tracing::info!("窗口失去焦点，自动前进已关闭（对照 Qt 的同一行为）");
+            session.auto_advance = false;
+            session.auto_advance_generation += 1;
+        }
+    }
+
+    /// 起一代新的计时器，返回它的代号（0 = 当前不需要计时）。
+    fn arm_auto_advance(&self, seconds: f64) -> u64 {
+        let mut session = self.session();
+        session.auto_advance_generation += 1;
+        if !session.auto_advance || seconds <= 0.0 {
+            return 0;
+        }
+        session.auto_advance_generation
+    }
+
+    /// 这一代还是最新的吗（旧的 sleep 任务醒来看这个）。
+    fn auto_advance_still_current(&self, generation: u64) -> bool {
+        let session = self.session();
+        session.auto_advance && session.auto_advance_generation == generation
     }
 
     /// 重新开始计时（对照 `col.startTimebox()`）。
@@ -418,6 +469,209 @@ async fn check_timebox(state: &AppState) -> bool {
     true
 }
 
+/// 切换自动前进（`Shift+A` 与菜单里的「自动前进」，对照 `reviewer.py:1219-1231`）。
+pub(crate) async fn toggle_auto_advance(state: &AppState) {
+    let enabled = state.reviewer.toggle_auto_advance();
+    let message = if enabled {
+        state.backend.i18n().actions_auto_advance_activated()
+    } else {
+        state.backend.i18n().actions_auto_advance_deactivated()
+    };
+    tracing::info!("自动前进: {enabled}");
+    toast(state, &message);
+    // 对照 `auto_advance_if_enabled()`：按当前是问题面还是答案面重新排定
+    if state.reviewer.session().answer_shown {
+        auto_advance_to_question_if_enabled(state);
+    } else {
+        auto_advance_to_answer_if_enabled(state);
+    }
+}
+
+/// 显示问题面之后的自动前进排定（对照 `reviewer.py:408-420` 的
+/// `_auto_advance_to_answer_if_enabled`）。
+///
+/// 到点走 `_on_show_answer_timeout`：`questionAction` 是「显示答案」就直接显示，
+/// 否则提示一句（Qt 是 tooltip，本外壳用一个小小的浮层）。
+pub(crate) fn auto_advance_to_answer_if_enabled(state: &AppState) {
+    let (enabled, seconds) = {
+        let session = state.reviewer.session();
+        let seconds = session
+            .deck_settings
+            .as_ref()
+            .map(|settings| settings.seconds_to_show_question)
+            .unwrap_or(0.0);
+        (session.auto_advance, seconds)
+    };
+    if !enabled {
+        // 没开也要换代：旧的计时任务作废（Qt 每次都 `_clear_auto_advance_timers()`）
+        state.reviewer.arm_auto_advance(0.0);
+        return;
+    }
+    let generation = state.reviewer.arm_auto_advance(seconds as f64);
+    if generation == 0 {
+        return;
+    }
+    tracing::debug!("自动前进: {seconds} 秒后显示答案");
+    let state = state.clone();
+    // `Box::pin` 是必须的：`show_question → 排定 → (到点) show_answer → 排定 → answer → start
+    // → show_question` 会绕回自己，不装箱的话编译器算不出这个 future 的类型
+    // （E0391 cycle detected）
+    let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_secs_f64(seconds as f64)).await;
+            if !state.reviewer.auto_advance_still_current(generation) {
+                return;
+            }
+            on_show_answer_timeout(&state).await;
+        });
+    tauri::async_runtime::spawn(task);
+}
+
+/// 显示答案面之后的自动前进排定（对照 `reviewer.py:489-497`）。
+pub(crate) fn auto_advance_to_question_if_enabled(state: &AppState) {
+    let (enabled, seconds) = {
+        let session = state.reviewer.session();
+        let seconds = session
+            .deck_settings
+            .as_ref()
+            .map(|settings| settings.seconds_to_show_answer)
+            .unwrap_or(0.0);
+        (session.auto_advance, seconds)
+    };
+    if !enabled {
+        state.reviewer.arm_auto_advance(0.0);
+        return;
+    }
+    let generation = state.reviewer.arm_auto_advance(seconds as f64);
+    if generation == 0 {
+        return;
+    }
+    tracing::debug!("自动前进: {seconds} 秒后动作（answerAction）");
+    let state = state.clone();
+    let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_secs_f64(seconds as f64)).await;
+            if !state.reviewer.auto_advance_still_current(generation) {
+                return;
+            }
+            on_show_question_timeout(&state).await;
+        });
+    tauri::async_runtime::spawn(task);
+}
+
+/// 问题面超时（对照 `reviewer.py:422-443` 的 `_on_show_answer_timeout`）。
+async fn on_show_answer_timeout(state: &AppState) {
+    if state.reviewer.session().card_id.is_none() {
+        return;
+    }
+    let settings = state.reviewer.session().deck_settings.clone();
+    let Some(settings) = settings else {
+        return;
+    };
+    // `waitForAudio`：有音频在播就先不动（Qt 是 `av_player.current_player`）
+    if settings.wait_for_audio && crate::platform::audio::is_playing() {
+        tracing::debug!("自动前进: 还有音频在播，等下一轮");
+        return;
+    }
+    if !main_window_focused(state) {
+        state.reviewer.disable_auto_advance();
+        return;
+    }
+    match settings.question_action() {
+        anki_proto::deck_config::deck_config::config::QuestionAction::ShowReminder => {
+            tracing::info!("自动前进: 到点提示（问题面）");
+            toast(state, &state.backend.i18n().studying_question_time_elapsed());
+        }
+        // 默认（含非法值）：显示答案
+        _ => {
+            tracing::info!("自动前进: 到点显示答案");
+            show_answer(state, None).await;
+        }
+    }
+}
+
+/// 答案面超时（对照 `reviewer.py:501-527` 的 `_on_show_question_timeout`）。
+async fn on_show_question_timeout(state: &AppState) {
+    if state.reviewer.session().card_id.is_none() {
+        return;
+    }
+    let settings = state.reviewer.session().deck_settings.clone();
+    let Some(settings) = settings else {
+        return;
+    };
+    if settings.wait_for_audio && crate::platform::audio::is_playing() {
+        tracing::debug!("自动前进: 还有音频在播，等下一轮");
+        return;
+    }
+    if !main_window_focused(state) {
+        state.reviewer.disable_auto_advance();
+        return;
+    }
+    match settings.answer_action() {
+        anki_proto::deck_config::deck_config::config::AnswerAction::AnswerAgain => {
+            tracing::info!("自动前进: 到点评「重来」");
+            answer(state, 1).await;
+        }
+        anki_proto::deck_config::deck_config::config::AnswerAction::AnswerHard => {
+            tracing::info!("自动前进: 到点评「困难」");
+            answer(state, 2).await;
+        }
+        anki_proto::deck_config::deck_config::config::AnswerAction::AnswerGood => {
+            tracing::info!("自动前进: 到点评「良好」");
+            answer(state, 3).await;
+        }
+        anki_proto::deck_config::deck_config::config::AnswerAction::ShowReminder => {
+            tracing::info!("自动前进: 到点提示（答案面）");
+            toast(state, &state.backend.i18n().studying_answer_time_elapsed());
+        }
+        // 默认（含非法值）：埋藏这张卡（对照 Qt 的 `else: self.bury_current_card()`）
+        _ => {
+            tracing::info!("自动前进: 到点埋藏卡片");
+            crate::reviewer_menu::handle(state, "rev:buryCard").await;
+        }
+    }
+}
+
+/// 主窗口是否在前台（对照 `reviewer.py:428-434` 的 `focusWidget().window() != self.mw`）。
+fn main_window_focused(state: &AppState) -> bool {
+    // 测试钩子：自动化里终端才是前台窗口（Windows 不允许后台进程随便抢前台），
+    // 这个钩子让"焦点判定"直接通过 —— 与 `ANKI_CONFIRM_YES` 同一套路。
+    // 真实行为（窗口没有焦点就关掉自动前进）在日志里能看到：「窗口失去焦点，自动前进已关闭」
+    if std::env::var("ANKI_AUTO_ADVANCE_IGNORE_FOCUS")
+        .is_ok_and(|value| !value.is_empty() && value != "0")
+    {
+        return true;
+    }
+    state
+        .app
+        .get_webview_window(crate::windows::MAIN)
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false)
+}
+
+/// 复习页里的小浮层提示（Qt 的 `tooltip()`；本外壳没有原生 tooltip，用页面里的一个 div）。
+fn toast(state: &AppState, message: &str) {
+    eval(
+        state,
+        &format!(
+            r#"(function () {{
+    var el = document.getElementById("anki-toast");
+    if (!el) {{
+        el = document.createElement("div");
+        el.id = "anki-toast";
+        el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--bottom-bar-height, 4rem) + 1rem);background:rgba(0,0,0,0.8);color:#fff;padding:0.35rem 0.75rem;border-radius:0.3rem;font-size:0.9rem;z-index:99;opacity:0;transition:opacity 0.3s;pointer-events:none;";
+        document.body.appendChild(el);
+    }}
+    el.textContent = {};
+    el.style.opacity = "1";
+    clearTimeout(window.__ankiToastTimer);
+    window.__ankiToastTimer = setTimeout(function () {{ el.style.opacity = "0"; }}, 2500);
+}})();"#,
+            js_string(message)
+        ),
+    );
+}
+
 /// 撤销上一次操作（对照 Qt 的 `mw.undo()` → `operations/collection.py:undo()`）。
 ///
 /// 撤销会改变卡片的调度状态（通常是把上一张卡放回队列），所以完成后必须重新取队列并
@@ -571,6 +825,8 @@ pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
     );
     // 换成评分按钮后底部栏宽度/换行可能变化
     sync_bottom_bar_height(state);
+    // 对照 `reviewer.py:489`：显示答案之后按需排定「自动前进到下一张/评分」
+    auto_advance_to_question_if_enabled(state);
 }
 
 /// 提交评分（`ease` 为 1..4），随后显示下一张卡片。
@@ -705,6 +961,8 @@ async fn show_question(state: &AppState) {
         &format!("showQuestion({}, {});", js_string(&button), max_time),
     );
     sync_bottom_bar_height(state);
+    // 对照 `reviewer.py:406`：显示问题之后按需排定「自动前进到答案」
+    auto_advance_to_answer_if_enabled(state);
 }
 
 /// 把底部栏高度写进 CSS 变量，供卡片区留白使用（见 `legacy::REVIEWER_ISOLATION_CSS`）。

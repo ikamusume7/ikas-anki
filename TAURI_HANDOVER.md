@@ -54,7 +54,7 @@
     「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为主窗口菜单栏画在
     牌组列表页、浏览器窗口自己没有菜单栏，见 PARITY 5.2）。
   - 未做：编辑已有筛选牌组（筛选牌组点「选项」会开到报错窗口）、Android、addon、文件关联、
-    以及复习界面剩下的几块（音频语义、自动前进、卡片计时器的断言）（PARITY 第 8 节；
+    以及复习界面剩下的几块（音频语义、卡片计时器的断言）（PARITY 第 8 节；
     **多 profile 管理、夜间模式、界面语言、首选项真页面、键盘答题、答完队列的 Congratulations、时间盒都已完成**）。
 - **M4 进行中**：**Windows 可分发目录**已做并验证（`tauri/tools/package.ps1` +
   `verify-package.ps1`，`tauri/tauri.conf.json` 的 bundle 配置也写好了）——
@@ -1168,9 +1168,9 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | ~~**计时器**~~ | **已完成**：`showQuestion(button, maxTime)` 的 `maxTime` 取自牌组 `timer` / `maxTaken`，`showAnswer` 传 `stopTimerOnAnswer`；但**仍然没有自动断言**（`set-deck-timer.mjs` 不在任何 verify 脚本里，`visual-check.mjs` 把 maxTime 写死 0）。时间盒见下一行 |
 | ~~**按钮下次间隔**~~ | **已完成**：用 `DescribeNextStates` 在按钮上标注「<1分 / 10分 / 1天 / 3天」 |
 | ~~**按钮数量**~~ | **无需改动**：v3 下 Qt 的 `answerButtons()` 恒返回 4（2/3 个是 v2 遗留，v3 对 v2 是 assert 拒绝） |
-| ~~**`more`（更多菜单）**~~ | **已实现**：底部栏「更多」与卡片右键 → **12 项菜单 + 旗标子菜单** + 重置/到期日表单（`reviewer_menu.rs` + `assets/reviewer-menu.js`）。**比 Qt 少 7 项**：重播音频、暂停音频、±5 秒、录音、重播录音、自动前进（带勾选态），见 `tauri/PARITY.md` 的 2.1-2.4 |
+| ~~**`more`（更多菜单）**~~ | **已实现**：底部栏「更多」与卡片右键 → **13 项菜单 + 旗标子菜单** + 重置/到期日表单（`reviewer_menu.rs` + `assets/reviewer-menu.js`）。**比 Qt 少 6 项**：重播音频、暂停音频、±5 秒、录音、重播录音，见 `tauri/PARITY.md` 的 2.1-2.4 |
 | ~~**`edit`**~~ | **已完成**：打开「编辑当前卡片」窗口。编辑器外层窗口全在 Web 里，宿主只需开窗 + `editorReady` 后注入 `loadNote`，见 `tauri/README.md` 的「编辑器」 |
-| ~~**`more`**~~ | **已实现**（复习界面）：12 项菜单 + 旗标子菜单 + 两个表单对话框，见 `tauri/README.md` 的「复习界面」；编辑器里的 `more` 仍未做 |
+| ~~**`more`**~~ | **已实现**（复习界面）：13 项菜单 + 旗标子菜单 + 两个表单对话框，见 `tauri/README.md` 的「复习界面」；编辑器里的 `more` 仍未做 |
 | ~~**撤销**~~ | **已完成**：`undo` 桥接命令 + 页面内快捷键（`Ctrl+Z` / `Cmd+Z` / 裸 `u`），撤销后重新取队列 |
 | ~~**音频自动播放队列**~~ | **已完成**：`audio.rs` 改为队列播放（对照 `AVPlayer.play_tags`），显示问题/答案时按牌组配置自动播放 |
 | ~~**类型作答**~~ | **已完成**：问题面插入 `#typeans` 输入框、答案面用 `CompareAnswer` 生成对比；输入值由桥接垫片附在 `ans:` 后面回传 |
@@ -1181,6 +1181,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | ~~**答完队列的收尾**~~ | **已完成**：队列空了**清会话**（卡片/调度状态/计数/底栏一起清，否则再按 `1`–`4` 会拿过期状态评分）+ 回概览（对照 `reviewer.py:257-259`），概览在没有可学卡片时改画 Congratulations（`overview.py:190-209`）—— 标题、下次学习时间（复用 `ts/routes/congrats/lib.ts`）、今日复习/新卡片上限两句、埋藏卡片的「取消埋藏」链接（实点验证会真的 `unburyDeck`）、自定义学习提示与描述；选项/自定义学习/取消埋藏按钮保留；`undo` 按当前界面刷新（在复习页就重取队列，已回概览/列表就重新加载页面）。差 `/congrats` 路由仍无打开路径（内容画在概览面板里）。验证 `congrats-check.mjs` |
 | ~~**时间盒**~~ | **已完成**：`Reviewer` 存「开始时刻 + 已答卡片数」（对照 `collection.py:1239-1251`），进入概览 / 开始复习时重新计时（`overview.py:98` / `main.py:1242`），每答一张比较实际用时与 `Preferences.reviewing.time_limit_secs`（对照 `col.conf["timeLim"]`，0 = 关闭，按 Qt 的浮点语义），到点弹原生「继续 / 结束」框（`studying-continue` / `studying-finish`，走 `rfd` 的 `OkCancelCustom`）：结束 → 清会话 + 回牌组列表，继续 → 重新计时。验证 `verify-timebox.ps1` + `timebox-check.mjs`（两种选择各起一次外壳；原生框在自动化里用 `ANKI_TIMEBOX_CHOICE` 跳过，真框只能手工点） |
 | ~~**上一张卡片信息**~~ | **已完成**（PARITY 2.2）：会话里记 `previous_card_id`（在取下一张**之前**记，对照 `reviewer.py:249-250`），菜单加一项 + `Ctrl+Alt+I` 键位，开 `card-info` 窗口、标题 `actions-previous-card-info`。验证：`reviewer-menu-check.mjs` 答一张卡后发 `rev:prevCardInfo`，断言日志里的 card id 就是刚答掉的那张 + 真实菜单 `共 13 项` |
+| ~~**自动前进**~~ | **已完成**（PARITY 2.4）：运行时开关（菜单勾选态 + `Shift+A`），问题面按 `secondsToShowQuestion`/`questionAction`、答案面按 `secondsToShowAnswer`/`answerAction` 排定（计时器带代号，旧任务自动作废），`waitForAudio` 看 `audio::is_playing()`，窗口没焦点就自己关掉。验证 `auto-advance-check.mjs`（改配置成 1 秒 → 自动翻答案 → 自动评「良好」→ 关掉就停） |
 | **音频的显示与语义** | 卡面**不画播放按钮**（没有 `play:q:N` 这条命令，`[sound:]` / `{{tts}}` 原样显示、点不了）；答案面会把问题面音频**再播一遍**（Qt 是 `partial_render`，`answer_av_tags` 不含 FrontSide 音频）；重播 / 暂停 / ±5 秒 / 录音 / 重播录音都没有（PARITY 2.3） |
 
 ### 6.2 桥接命令扩充
@@ -1559,7 +1560,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   ~~时间盒~~ → **2026-10-16 均已补齐**（`assets/reviewer-keys.js` + 宿主 `answer_shown` 守卫 +
   `reviewer-keys-check.mjs`；`reviewer::start()` 清会话 + 回概览，概览改画 Congratulations，
   `congrats-check.mjs`；`startTimebox` / `timeboxReached` + 「继续 / 结束」框，
-  `verify-timebox.ps1` + `timebox-check.mjs`）。另外自动前进、
+  `verify-timebox.ps1` + `timebox-check.mjs`）。另外
   音频重播/暂停/±5 秒/录音，以及卡片**计时器**的断言也还没有（PARITY 2.2-2.4、2.6）。
 - **同步只验到「登录 / 取消 / 自动媒体同步请求」**：`syncCollection` 与媒体同步的成功路径、
   冲突分支、关闭时同步、`restoring_backup` 守卫都没有覆盖（PARITY 6.1）。

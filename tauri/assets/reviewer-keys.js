@@ -131,6 +131,11 @@
             case "F5":
                 event.preventDefault();
                 return;
+            // Shift+A → 自动前进开关（`reviewer.py:640`）
+            case "A":
+                event.preventDefault();
+                window.pycmd("rev:autoAdvance");
+                return;
         }
 
         // 1..4 → 评分（对照 `reviewer.py:598-607` 的 `default_answer_keys`，默认就是 1..4）。

@@ -690,7 +690,7 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
   `state != "answer"`），免得手快把还没看的卡片评掉；
 - `e` 编辑当前卡片、`m` 更多菜单、`u` 撤销、`o` 牌组选项、`i` 卡片信息；
 - `*` 标记笔记、`=` 暂缓笔记、`-` 暂缓卡片、`!` 搁置笔记、`@` 搁置卡片；
-- `Ctrl+1..7` 设旗标、`Ctrl+Alt+N` 重置卡片、`Ctrl+Alt+E` 创建副本、`Ctrl+Alt+I` 上一张卡片信息、`Ctrl+Del` 删除笔记、
+- `Ctrl+1..7` 设旗标、`Ctrl+Alt+N` 重置卡片、`Ctrl+Alt+E` 创建副本、`Ctrl+Alt+I` 上一张卡片信息、`Shift+A` 自动前进开关、`Ctrl+Del` 删除笔记、
   `Ctrl+Shift+D` 设置到期日、`Ctrl+Z` 撤销、`Ctrl+P` 设置；
 - 主窗口的全局键在复习页同样有效：`a` 添加、`b` 浏览、`t`/`Shift+t` 统计、`d` 牌组列表、
   `s` 概览、`y` 同步。
@@ -701,7 +701,7 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 
 **没绑的**：`r`/`F5`（重播）、`5`/`6`/`7`（暂停、±5 秒）、`v`/`Shift+v`（录音与重播录音）——
 播放器没有 pause/seek、录音也没有入口（PARITY 2.3）；`Shift+A`（自动前进，2.4）；
-`Shift+A` 刻意不当作 `a`。复习页仍缺
+`Shift+A` 现在是自动前进开关（不再当作 `a`）。复习页仍缺
 `F11`/`Ctrl+E`/`Ctrl+Shift+Z`/缩放三键，两页都没有 `Ctrl+:`（调试控制台）。
 
 验证：`tauri/tools/reviewer-keys-check.mjs`（由 `verify-reviewer.ps1` 调用）。第 1 半把
@@ -709,6 +709,33 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 **31 组真实按键**断言 `pycmd` 收到的命令，含「输入框里不抢键」与「未实现的键不发命令」；
 第 2 半对着真外壳发桥接命令断言宿主守卫：问题面发 `ease3` 不把卡片答掉（日志
 `尚未显示答案`），`ans` 之后再发 `ease3` 才换下一张。
+
+### 自动前进（Shift+A）
+
+对照 `qt/aqt/reviewer.py:408-527` 与 `:1219-1231`：
+
+- **开关是运行时的**：`Session.auto_advance`，每次会话都是关的，只能用菜单里的
+  「自动前进」（带勾选态）或 `Shift+A` 打开 —— `qt/aqt` 里本来也没有读牌组配置
+  `autoAdvance` 的地方，牌组选项里那五个字段只是参数；
+- 显示问题面后按 `secondsToShowQuestion` 排定：到点按 `questionAction` 走
+  （`SHOW_ANSWER` 直接显示答案，`SHOW_REMINDER` 提示 `studying-question-time-elapsed`）；
+- 显示答案后按 `secondsToShowAnswer` 排定：到点按 `answerAction` 走
+  （重来 / 困难 / 良好 = `ease1..3`、`SHOW_REMINDER` 提示 `studying-answer-time-elapsed`、
+  其余 = 埋藏卡片）；
+- 计时器带一个"代"号：切卡、关掉开关、离开复习页都会换代，旧任务醒来发现代号不对就退出
+  （对应 Qt 的 `_clear_auto_advance_timers()` / `QTimer.deleteLater()`）；
+- `waitForAudio` 为真且**当前有音频在播**时不动作（`platform/audio.rs::is_playing()`）；
+- **窗口没有焦点就把自动前进关掉**（`reviewer.py:428-434`），日志里会写
+  「窗口失去焦点，自动前进已关闭」。自动化里终端才是前台窗口，所以验证脚本用
+  `ANKI_AUTO_ADVANCE_IGNORE_FOCUS=1` 让焦点判定通过（与 `ANKI_CONFIRM_YES` 同一套路，
+  必须在启动外壳**之前**设置）。
+
+差异：Qt 用原生 `tooltip()`，本外壳用复习页里的一个小浮层（`#anki-toast`）。
+
+验证：`tauri/tools/auto-advance-check.mjs`（由 `verify-reviewer.ps1` 调用）—— 把当前牌组的
+配置改成「问题面 1 秒显示答案 / 答案面 1 秒评良好」→ 没开开关时确认问题面不会自己翻 →
+`rev:autoAdvance` 打开后断言自动出现评分按钮、卡片 `reps` +1、日志有
+「到点显示答案」「到点评「良好」」→ 再关掉确认不再自动前进；收尾还原配置并删掉临时笔记。
 
 ### 时间盒
 
@@ -774,8 +801,8 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 （`reviewer.py:682-683` 的 `more` 链接 → `reviewer.py:998-1056` 的 `_contextMenu`）。
 菜单内容对照 Qt 的 `_contextMenu`：旗标子菜单（Ctrl+1..7、当前旗标打勾）、埋藏卡片、
 重置卡片…、设置到期日…、暂停卡片、选项、卡片信息、**上一张卡片信息**（`Ctrl+Alt+I`，会话里记着上一张，见 PARITY 2.2）、标记笔记、埋藏笔记、暂停笔记、
-创建副本…、删除笔记 —— 共 **12 项 + 旗标子菜单**（宿主 eval 出来的真实菜单是 13 个条目），已实现的项都带 Qt 的快捷键提示。
-**比 Qt 少 7 项**（Qt 是 19 项 + 旗标）：重播音频 `R`、
+创建副本…、删除笔记 —— 共 **13 项 + 旗标子菜单**（宿主 eval 出来的真实菜单是 14 个条目），已实现的项都带 Qt 的快捷键提示。
+**比 Qt 少 6 项**（Qt 是 19 项 + 旗标）：重播音频 `R`、
 暂停音频 `5`、`-5` 秒 `6`、`+5` 秒 `7`、录音 `Shift+V`、重播录音 `V`、自动前进 `Shift+A`
 （带勾选态）。另外旗标名写死 ftl 默认值，不读集合配置 `flagLabels`。
 
@@ -1691,9 +1718,11 @@ browserSearch：图表 → 浏览器搜索
 | `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
+| `auto-advance-check.mjs` | `verify-reviewer.ps1` 调用的自动前进检查：把牌组配置改成 1 秒 → 没开开关不会自己翻 → 打开后自动翻答案并自动评「良好」→ 关掉就停（收尾还原配置与临时笔记） |
+| `focus-window.ps1` | 把外壳的某个窗口切到前台（自动前进的焦点判定 / 需要真实焦点的场景用）；`-TitleLike` 选窗口 |
 | `close-window.ps1` | 给某个窗口发一次真正的 `WM_CLOSE`（与用户点标题栏 × 同一条 `CloseRequested` 路径），用来验证关窗契约；`-TitleLike` 选窗口，`-All` 全关 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
-| `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |
+| `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面）；顺手把「系统默认」的每日新卡上限抬到 ≥100（反复跑验证会把额度用光，新卡就不进队列了） |
 | `check-prefs21.mjs` | 验证配置端点确实读写了 `prefs21.db` |
 | `make-prefs21-fixture.py` | 造一份「桌面版写入的」`prefs21.db` 供上面那个脚本检查 |
 | `set-deck-timer.mjs` | 查看 / 开关测试牌组的计时器（**注意：它不在任何 verify 脚本里，卡片计时器本身仍没有自动断言**；时间盒另有 `verify-timebox.ps1`） |

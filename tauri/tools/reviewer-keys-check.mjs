@@ -292,7 +292,7 @@ try {
 
     // —— 尚未实现的按键不该乱发命令 ——
     // 音频（r / F5 / 5 / 6 / 7 / v / Shift+v）与自动前进（Shift+A）没有后端能力
-    await expect("Shift+A 不是 a（自动前进未实现）", ["Shift+KeyA"], []);
+    await expect("Shift+A → 自动前进开关（不是裸 a）", ["Shift+KeyA"], ["rev:autoAdvance"]);
     await expect("音频与录音键未绑定", ["KeyR", "Digit5", "Digit6", "Digit7", "KeyV", "Shift+KeyV"], []);
     const f5 = await expect("F5 不发命令", ["F5"], []);
     check("F5 被拦住（否则 WebView 会重载页面）", f5.prevented[0] === true, String(f5.prevented[0]));

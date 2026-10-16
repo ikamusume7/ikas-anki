@@ -6,11 +6,20 @@
 // note type 与牌组的 id 由接口查询得到，不硬编码 —— 新建集合里的内置 id
 // 并不一定是 1（实测 addNote 会报 "missing note type"）。
 //
+// 还会把「系统默认」那副牌组的每日新卡上限抬到至少 100：反复跑验证会让当天的新卡
+// 额度用光（共享测试集合），那时新卡**不进队列**，所有"补一张卡再让复习界面渲染"的
+// 脚本都会卡在"补卡片后复习界面仍未渲染"。测试集合是一次性的，这里不做还原。
+//
 // 用法：
 //   $env:ANKI_API_PORT="40001"; $env:ANKI_API_KEY="test-key-123"
 //   node tauri/tools/seed-card.mjs
 
-import { GetDeckNamesRequest, DeckNames } from "../../out/ts/lib/generated/anki/decks_pb.js";
+import {
+    DeckConfigsForUpdate,
+    UpdateDeckConfigsMode,
+    UpdateDeckConfigsRequest,
+} from "../../out/ts/lib/generated/anki/deck_config_pb.js";
+import { DeckId, GetDeckNamesRequest, DeckNames } from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
 import { AddNoteRequest, AddNoteResponse } from "../../out/ts/lib/generated/anki/notes_pb.js";
 import { NotetypeNames } from "../../out/ts/lib/generated/anki/notetypes_pb.js";
@@ -73,6 +82,35 @@ console.log(
     `集合中的 note type: ${notetypes.entries.map((e) => `${e.name}(${e.id})`).join(", ")}`,
 );
 console.log(`使用 note type: ${notetype.name}(${notetype.id}) / 牌组: ${deck.name}(${deck.id})`);
+
+// 抬高这副牌组的每日新卡上限（当天额度用光时新卡不进队列，见文件头注释）
+try {
+    const forUpdate = DeckConfigsForUpdate.fromBinary(
+        await call("getDeckConfigsForUpdate", new DeckId({ did: deck.id }).toBinary()),
+    );
+    const currentId = forUpdate.currentDeck?.configId ?? 0n;
+    const configs = forUpdate.allConfig
+        .map((entry) => entry.config)
+        .filter((config) => config !== undefined);
+    const current = configs.find((config) => config.id === currentId);
+    if (current && current.config && current.config.newPerDay < 100) {
+        const before = current.config.newPerDay;
+        current.config.newPerDay = 100;
+        await call(
+            "updateDeckConfigs",
+            new UpdateDeckConfigsRequest({
+                targetDeckId: deck.id,
+                configs,
+                removedConfigIds: [],
+                mode: UpdateDeckConfigsMode.NORMAL,
+            }).toBinary(),
+        );
+        console.log(`已把「${deck.name}」的每日新卡上限从 ${before} 抬到 100`);
+    }
+} catch (error) {
+    // 抬不动也继续：多数场景本来就不需要（新集合的额度是够的）
+    console.log(`抬高新卡上限失败（忽略）：${String(error)}`);
+}
 
 const fields = [
     frontArg ??

@@ -324,6 +324,19 @@ try {
         SearchResponse.fromBinary(
             await rpc("searchNotes", new SearchRequest({ search: "tag:marked" }).toBinary()),
         ).ids.length;
+    // 自愈：上一次失败的运行可能把 marked 标签留在这张卡的笔记上（`rev:mark` 是 toggle，
+    // 留着的话「加一次」的断言会变成「减一次」）。注意看的是**这张卡的笔记**，
+    // 不能看全集合的 marked 数量（别的笔记也会让它 > 0）
+    const noteMarked = async () =>
+        SearchResponse.fromBinary(
+            await rpc(
+                "searchNotes",
+                new SearchRequest({ search: `nid:${card.noteId} tag:marked` }).toBinary(),
+            ),
+        ).ids.length > 0;
+    if (await noteMarked()) {
+        await bridge("rev:mark");
+    }
     const before = await markedCount();
     await bridge("rev:mark");
     check("rev:mark 加了 marked 标签", (await markedCount()) === before + 1);
@@ -372,8 +385,8 @@ try {
         // 宿主侧拼出来的真实菜单项数（13 项 + 1 条分隔线），新增项就在里面
         await bridge("more");
         check(
-            "真实菜单是 13 项（含新增的「上一张卡片信息」）",
-            /打开复习菜单: .*共 13 项/.test(logOf()),
+            "真实菜单是 14 项（含「上一张卡片信息」与「自动前进」）",
+            /打开复习菜单: .*共 14 项/.test(logOf()),
             (logOf().match(/打开复习菜单: [^\n]*/) ?? ["（没有菜单日志）"]).at(-1),
         );
         await bridge("undo");

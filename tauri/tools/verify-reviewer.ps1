@@ -51,6 +51,10 @@ $env:ANKI_API_KEY = $ApiKey
 $env:ANKI_COLLECTION = (Join-Path $root $Collection)
 $env:ANKI_START_PAGE = "reviewer"
 $env:ANKI_LANG = $Lang
+# 自动前进的焦点判定：自动化里终端才是前台窗口，宿主会按 Qt 的规则自己把自动前进关掉，
+# 所以给它一个测试钩子（`ANKI_AUTO_ADVANCE_IGNORE_FOCUS`，与 `ANKI_CONFIRM_YES` 同一套路）。
+# 注意必须在 Start-Process 之前设 —— 环境变量是进程级的，起完外壳再改对它没用。
+$env:ANKI_AUTO_ADVANCE_IGNORE_FOCUS = "1"
 
 function Read-Log {
     param([string]$Path)
@@ -223,6 +227,13 @@ try {
     $env:ANKI_LOG = $logPath
     $env:SHOT_DIR = $OutDir
     node tauri/tools/congrats-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 自动前进（PARITY 2.4）：把牌组配置改成 1 秒，靠 `rev:autoAdvance` 开关驱动，
+    # 断言「没开不动 / 开了自动翻答案 / 自动评分 / 关掉就停」
+    Write-Host "检查自动前进（Shift+A / 牌组配置的秒数与动作）…"
+    $env:ANKI_LOG = $logPath
+    node tauri/tools/auto-advance-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red

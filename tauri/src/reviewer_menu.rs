@@ -106,6 +106,10 @@ pub async fn show(state: &AppState) {
             { "label": tr.translate("studying-suspend-note", None), "shortcut": "!", "action": "suspendNote" },
             { "label": with_ellipsis("actions-create-copy"), "shortcut": "Ctrl+Alt+E", "action": "copy" },
             { "label": tr.translate("studying-delete-note", None), "shortcut": "Ctrl+Del", "action": "deleteNote" },
+            serde_json::Value::Null,
+            // 自动前进（对照 `reviewer.py:1049-1054`）：带勾选态，`Shift+A` 是快捷键。
+            // 差的音频六项（重播/暂停/±5 秒/录音/重播录音）见 PARITY 2.3
+            { "label": tr.translate("actions-auto-advance", None), "shortcut": "Shift+A", "checked": state.reviewer.auto_advance_enabled(), "action": "autoAdvance" },
         ],
         "labels": {
             "cancel": tr.translate("actions-cancel", None),
@@ -149,6 +153,13 @@ pub async fn handle(state: &AppState, command: &str) {
             }
             None => tracing::warn!("还没有「上一张卡片」，忽略「上一张卡片信息」"),
         }
+        return;
+    }
+
+    // 自动前进的开关（对照 `reviewer.py:1219-1231` 的 `toggle_auto_advance`）：
+    // 不看当前卡片，菜单勾选态与 `rev:autoAdvance` 都要能在没有卡片时翻
+    if action == "autoAdvance" {
+        crate::reviewer::toggle_auto_advance(state).await;
         return;
     }
 
