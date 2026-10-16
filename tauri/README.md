@@ -11,8 +11,8 @@ rslib 后端的 Tauri v2 外壳。
 导入导出 / 自定义学习 / 统计 / 设置窗口）；M4 的**可分发目录已验证，安装器未生成**。
 
 > **2026-10-16 逐项代码核查**：用户可见差异的真实完成度是 **✅3 / ⚠️33 / ❌8（44 项）**，
-> 另有 **12 项清单原先没覆盖**的缺口（首选项真页面、多 profile、夜间模式 `standard_css`、
-> 界面语言、错误对话框、文件关联…）。权威清单与逐项证据见 `tauri/PARITY.md`；
+> 当时另有 **12 项清单原先没覆盖**的缺口（首选项真页面、多 profile、夜间模式 `standard_css`、
+界面语言、错误对话框、文件关联…）—— 其中**首选项真页面 / 多 profile / 夜间模式 / 界面语言 / 文件关联的 `fileAssociations` 与命令行打开**已在 2026-10-16 补齐（见 PARITY §10 第 1、5 项），权威清单仍以 `tauri/PARITY.md` 为准。
 > 本文档各节的「已验证 / 尚未实现 / 差异」都已按同一次核查对齐，剩余项见「尚未实现」。
 
 ## 设计要点
@@ -469,7 +469,7 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 | 已登录 → 同步 | `syncStatus` → `syncCollection`（`syncMedia` 取自 profile 的 `syncMedia`，默认 true）；服务端要求完整同步（`schema` 时间戳与本地不同，`rslib/src/sync/collection/meta.rs:68-74`）时弹「上传 / 下载」二选一 → `fullUploadOrDownload`（`/sync/upload` 或 `/sync/download`） |
 | 媒体同步 | 集合同步成功后（且 `syncMedia` 开着）`syncMedia` 在后台跑 + 轮询 `mediaSyncStatus`，把后端本地化好的「Checked / Added / Removed」显示出来（最多轮询 5 分钟） |
 | 取消 | 同步中再点一次「同步」→ `abortSync` + `abortMediaSync`（对照上游进度对话框的 Abort）；被取消的请求当作正常结束，显示「媒体同步已中止」 |
-| 自动同步（宿主侧） | `tauri/src/autosync.rs`：启动时整份同步一次（上游的 on-open；外壳没有优雅关闭钩子，所以没有 on-close）+ 之后每 5 分钟检查一次，距上次媒体同步超过 `autoSyncMediaMinutes`（默认 15）才做**媒体**同步。开关与凭据都读 profile 配置（`autoSync` / `syncKey` / `customSyncUrl` / `syncMedia`） |
+| 自动同步（宿主侧） | `tauri/src/autosync.rs`：启动时整份同步一次（上游的 on-open；外壳没有优雅关闭钩子，所以没有 on-close；**启动那一次从未被断言过** —— 测试集合启动时没有凭据，日志里只有「还没登录」，见 PARITY 6.1⑥）+ 之后每 5 分钟检查一次，距上次媒体同步超过 `autoSyncMediaMinutes`（默认 15）才做**媒体**同步。开关与凭据都读 profile 配置（`autoSync` / `syncKey` / `customSyncUrl` / `syncMedia`） |
 | 状态显示 | 按钮的 `data-sync-state`（off / idle / syncing / error）+ 列表下方的 `#sync-status` 文案（后端错误原文；个别情况下后端不带消息，页面上就只剩一个 `Error:` —— 已知小瑕疵） |
 | 复习界面的同步 | 顶部工具栏的「同步」链接（`reviewer-toolbar.js`）→ 宿主的 `sync` 命令（`pycmd.rs` → `autosync::sync_now`）：有凭据就跑一次集合 + 媒体同步、状态用 `window.__ankiSyncStatus()` 写进工具栏；没凭据就提示一句并跳到牌组列表页（登录框在那儿） |
 
@@ -955,7 +955,7 @@ seek，录音也还没有入口）、**自动前进**（`Shift+A`，含牌组里
 
 | 项 | Qt | 本外壳 |
 | --- | --- | --- |
-| 同步链接 | 有（状态色 + 旋转图标，`toolbar.py:410-418`） | 有（宿主的 `sync` 命令 + `window.__ankiSyncStatus()` 写回），但**只有文字**：没有状态色与旋转图标 |
+| 同步链接 | 有（状态色 + 旋转图标，`toolbar.py:410-418`） | 有（宿主的 `sync` 命令 + `window.__ankiSyncStatus()` 写回），**还是只有文字**：没有状态色与旋转图标；不过同步本身现在有**进度面板 + 日志 + Abort**（`#sync-dialog`，对照 `MediaSyncDialog`，见「同步」与 PARITY 8.9） |
 | 左右两个托盘 | add-ons 的挂载点（`_left_tray_content` / `_right_tray_content`） | 没有 |
 | 隐藏行为 | 全屏/鼠标离开时 `hide_if_allowed` 自动隐藏 | 常驻 |
 | 实现方式 | 独立 QWebEngineView（`TopWebView`） | 同页面里的固定条（宿主注入） |
@@ -1085,7 +1085,8 @@ Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第
 并点掉它）、**拖拽移动牌组**（拖到另一个牌组上 → 名字变成 `父::子`；拖到顶部那条 → 回顶层）、
 **菜单栏**（五个菜单渲染；文件→创建备份真的产出新 `.colpkg`、文件→导出… 与 `Ctrl+E` 打开
 导出对话框且范围默认当前牌组、视图→三档缩放与 `F11`、工具→检查数据库/检查媒体/空卡片
-各自调 RPC 并弹出报告、**工具→学习牌组**筛选框按空格分词匹配 + 选中后进该牌组概览 +
+各自调 RPC 并弹出报告（**空卡片报告里的 `[anki:nid:123]` 目前是字面量**，没有变成可点链接，
+见 PARITY 6.3①）、**工具→学习牌组**筛选框按空格分词匹配 + 选中后进该牌组概览 +
 「添加」新建后也进概览、**工具→创建筛选牌组**（快捷键 `F`）顺序下拉来自
 `filteredDeckOrderLabels`、构建后 `getDeck` 确认是筛选牌组且搜索条件落库、编辑→撤销发出
 `undo`、文件→导入… 发出 `import`、帮助→关于显示版本；退出与两个帮助链接只断言存在）、
@@ -1882,7 +1883,7 @@ browserSearch：图表 → 浏览器搜索
     **剩下的**（对照 `tauri/PARITY.md` 1.1/1.2）：概览计数的「埋藏差值」那一列、v1→v3 调度器
     升级提示条、导出建议文件名用**叶子名**（Qt 用完整名）、点整行即进概览（Qt 只点牌组名）；
     **复习界面整条菜单栏没有**（复习中导入/导出/备份/检查数据库/笔记类型都不可达）；菜单缺
-    Switch Profile / add-ons / 检查更新；同步链接只有文字（没有状态色与旋转图标）；「学习牌组」
+    Switch Profile / add-ons / 检查更新；同步链接只有文字（没有状态色与旋转图标；同步过程本身已有进度面板/日志/Abort）；「学习牌组」
     不列筛选牌组（注释却写"筛选牌组也在内"）。
   - ~~`edit`~~ —— **已实现**：打开「编辑当前卡片」窗口，见「编辑器」。
   - ~~添加卡片~~ —— **已实现**：裸 `a` → `pycmd("add")` → `editor/?mode=add` 窗口，

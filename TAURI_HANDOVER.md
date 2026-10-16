@@ -1694,15 +1694,22 @@ target/debug/anki-sync-server.exe      # /health 返回 200 即就绪
   `reviewer-keys-check.mjs`；`reviewer::start()` 清会话 + 回概览，概览改画 Congratulations，
   `congrats-check.mjs`；`startTimebox` / `timeboxReached` + 「继续 / 结束」框，
   `verify-timebox.ps1` + `timebox-check.mjs`）。另外
-  音频重播/暂停/±5 秒/录音，以及卡片**计时器**的断言也还没有（PARITY 2.2-2.4、2.6）。
-- **同步只验到「登录 / 取消 / 自动媒体同步请求」**：`syncCollection` 与媒体同步的成功路径、
-  冲突分支、关闭时同步、`restoring_backup` 守卫都没有覆盖（PARITY 6.1）。
-- **addon 与文件关联为零**（PARITY 6.6 / 6.7）：双击 `.apkg`、命令行带文件启动都不存在；
+  音频重播/暂停/±5 秒/录音**已在 §10 第 4 项补齐**（`audio-check.mjs`，含答案面不重播、播放按钮；录音的采集仍受"本机没有麦克风"限制），**还差**卡片**计时器**的断言（PARITY 2.6）。
+- **同步**：~~只验到「登录 / 取消 / 自动媒体同步请求」~~ → **2026-10-16 已用仓库自带的 `anki-sync-server` 补齐成功路径**：整份上传（服务器侧真的出现 `collection.anki2`）、「上传/下载」二选一 + 整份下载（第二个客户端独立目录，下载后集合与服务器侧大小一致且含第一份的卡）、媒体同步上传/下载、**增量同步**（`/sync/start`…`/sync/finish`）、同步进度面板/日志/Abort（`verify-sync.ps1` 18+ 项、`verify-decks.ps1` 里的面板断言，全绿）。**还没覆盖**：关闭时同步、`restoring_backup` 守卫、确定百分比（后端 `latestProgress` 在这条路上报 `none`，PARITY 8.9）。
+  冲突分支只有「上传/下载」二选一（已覆盖）与增量分支（已覆盖），服务端消息文本没有端到端断言。
+- **addon 仍为零**（PARITY 6.6）；~~文件关联~~ → **命令行带文件启动与 `fileAssociations` 已做**（`verify-cli-open.ps1`：真 `.apkg` 当命令行参数启动 → 打开同一个导入窗口；`tauri.conf.json` 里补了 apkg/colpkg/ankiaddon），**还差**「拖到主窗口导入」的端到端（导入页本身由 `import-check.mjs` 覆盖）与安装包里的注册（要 `tauri build`）。
   主窗口拖入导入只有单测，没有端到端。
-- **`prefs21.db` 的跨实现互操作只在手工脚本里验证过**（`check-prefs21.mjs` 没接进任何
+- **`prefs21.db` 的跨实现互操作**：~~写 JSON null 而不是删键~~ → **已改成删键**（`Prefs21::delete`，`verify-prefs.ps1` 用 pickle dump 断言键真的消失），所以"周期媒体同步被静默关掉"那条已经不存在；**还差** `check-prefs21.mjs` 没接进任何 `verify-*.ps1`（PARITY 6.8）。
   `verify-*.ps1`），而且写入侧是**写 JSON null 而不是删键** → 桌面版的
   `autoSyncMediaMinutes` 会读到 None 当 falsy，**周期媒体同步被静默关掉**（PARITY 6.8）。
 - **验证脚本自身的毛病**：`cards-check.mjs:175` 与 `reviewer-menu-check.mjs:310` 是恒真断言；
+- **§10 第 4、5 项这一轮补齐的块（2026-10-16）**：复习界面三块（上一张卡片信息 + `Ctrl+Alt+I`、
+  自动前进、音频显示与语义含播放按钮/重播/暂停/±5 秒/录音与重播录音）、同步（成功路径上传+下载+
+  媒体、`NORMAL_SYNC` 增量分支、进度面板/日志/Abort，并修掉"`NORMAL_SYNC` 误弹完整同步框"与
+  "媒体同步期间进度条早消失"两个页面 bug）、打包侧（`fileAssociations`、命令行带文件启动、
+  上游那份七尺寸应用图标、`capabilities`）、构建流程（`check-all.ps1` + `tauri/justfile` + CI）。
+  验证脚本：`verify-reviewer` / `verify-decks` / `verify-sync` / `verify-cli-open` / `verify-package`
+  等；`check-all.ps1` 是本地门禁的统一入口。**仍然没做/没覆盖**的都在上面各条里逐项写着。
   `visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移）；`drop-check.mjs`
   只测图片分支、`fields-check.mjs` / `notetypes-check.mjs` 只覆盖一半分支。完整清单见
   PARITY 第 9 节。
