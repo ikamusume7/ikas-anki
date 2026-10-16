@@ -1743,6 +1743,7 @@ browserSearch：图表 → 浏览器搜索
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `auto-advance-check.mjs` | `verify-reviewer.ps1` 调用的自动前进检查：把牌组配置改成 1 秒 → 没开开关不会自己翻 → 打开后自动翻答案并自动评「良好」→ 关掉就停（收尾还原配置与临时笔记） |
+| `sync-server.ps1` | 起/停一个**真的**本地同步服务器（仓库自带的 `anki-sync-server`，`SYNC_BASE`/`SYNC_HOST`/`SYNC_PORT`/`SYNC_USER1`）；`-Stop` 收尾。用于把同步的**成功路径**测起来（不依赖真 AnkiWeb 账号） |
 | `focus-window.ps1` | 把外壳的某个窗口切到前台（自动前进的焦点判定 / 需要真实焦点的场景用）；`-TitleLike` 选窗口 |
 | `close-window.ps1` | 给某个窗口发一次真正的 `WM_CLOSE`（与用户点标题栏 × 同一条 `CloseRequested` 路径），用来验证关窗契约；`-TitleLike` 选窗口，`-All` 全关 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
