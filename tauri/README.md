@@ -775,10 +775,15 @@ seek，录音也还没有入口）、**自动前进**（`Shift+A`，含牌组里
   成立**）。**还差**：Qt 对话框顶部有原生**牌组下拉**（换牌组 = 设当前牌组 + 刷新），这里
   只能在页面里换搜索词；没有 **Save PDF**（Qt 是原生按钮 + `printToPdf`）；窗口标题用的是
   `qt-misc-stats`（「统计」）而 Qt 用 `statistics-title`（「统计数据」）。
-- **设置**：**这个页面其实只是 Qt 偏好设置对话框里的 Labs 实验页**（只有一个 `LabItem`
-  开关）—— 语言、主题/夜间、复习上限与时间盒、下一日时间、自动备份份数、网络与自定义同步
-  服务器、自定义答案键、第三方服务**全都改不了**（Qt 是 8 个分页的对话框，见 PARITY 3.3 /
-  8.1）；对话框底部的 Close 与 Help 入口也没有。
+- **设置**：**已重写成真首选项页面**（`ts/routes/preferences/`）：七个分页照
+  `forms/preferences.ui`（显示 / 复习 / 编辑 / 同步 / 备份 / 第三方服务 / 实验功能）+ 底部的
+  **帮助**与**关闭**。语言（选项由宿主的 `languages` 命令给出，54 种）、主题（发 `theme:`
+  命令，宿主落库并广播到所有窗口）、界面缩放、上下工具栏隐藏、减少动效、极简模式、检查更新
+  两项、调度三项、reviewer 四项、`renderLatex`、编辑五项、同步五项（含 `customSyncUrl`
+  连带清 `currentSyncUrl`）、备份四项都已接通；验证见 `verify-prefs.ps1`。**还差**：AnkiWeb
+  登录/登出还在牌组列表工具栏、媒体同步日志窗口、自定义答案键（`answer_keys` 的整数键）、
+  重置窗口大小（需要 prefs21 删键端点）；「干扰项」与「检查更新」只落库、还没有消费方
+  （页面上已标注）。见 PARITY 3.3 / 8.1。
 
 未接的全局快捷键（`main.py:1189-1198`）：`Ctrl+:`（Python 调试控制台）完全没有；`y`（同步）
 只在牌组列表页接了，复习页没有；复习页另外还缺 `F11`、`Ctrl+E`、`Ctrl+Shift+Z` 与缩放三键。
@@ -1597,6 +1602,12 @@ browserSearch：图表 → 浏览器搜索
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
 | `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
 | `custom-study-check.mjs` | `verify-decks.ps1` 调用的自定义学习检查：六个选项 / cram 四选一 / 确定后建出筛选牌组并切成当前牌组（用 RPC 复查并还原） |
+| `verify-i18n.ps1` | 一键：界面语言（四个场景：`meta.defaultLang`=zh_CN / en_US、无 prefs21 跟随系统、`ANKI_LANG` 覆盖；每个都断言宿主生效语言 + `i18nResources` 下发的文案） |
+| `i18n-check.mjs` | 上面那个脚本调用的检查：调 `i18nResources` 断言主语言与 `actions` 模块的文案（响应是「主语言 + 英文回退」两个并行数组） |
+| `verify-theme.ps1` | 一键：主题 / 夜间模式（`meta theme=2` 启动 → 真实窗口平均亮度、发 `theme:1` 切浅色、切回深色、复习界面 legacy 页也验 → 跑 `theme-check.mjs`） |
+| `theme-check.mjs` | 上面那个脚本调用的页面级检查：`#night` 与宿主 document-start 注入两条通道下 `--canvas` 的取值，以及浅色基线 |
+| `verify-prefs.ps1` | 一键：首选项页面（隔离集合启动 → 打开首选项窗口 + 截图 → 跑 `prefs-check.mjs`） |
+| `prefs-check.mjs` | 上面那个脚本调用的检查：七个分页的结构 + 每个分页代表控件的「改 → RPC 复查 → 还原」（主题命令、语言、缩放、调度、reviewer、编辑、`customSyncUrl` 连带清 `currentSyncUrl`、备份份数…） |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |

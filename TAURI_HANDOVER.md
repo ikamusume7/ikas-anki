@@ -45,28 +45,31 @@
     它的子牌组，拖到顶部那条 `top-level-drag-row` → 回顶层，`reparentDecks`）。
   - 既有页面接入：牌组选项、统计（`t`）、设置（`Ctrl+P`）、导入、图像遮挡都已通；
     概览里还能开**自定义学习**（`C` → 新写的 `ts/routes/custom-study/`）。
-    **注意两个名不副实**：统计窗口虽然按当前牌组打开（页面默认 `deck:current`），但缺 Qt 的
-    牌组下拉与 Save PDF；`Ctrl+P` 打开的**只是 Qt 偏好设置对话框里的 Labs 实验页**，
-    语言/主题/复习上限/备份/网络等 8 个分页全没迁（PARITY 3.2 / 3.3）。
+    统计窗口按当前牌组打开（页面默认 `deck:current`，与 Qt 的 `_selectedDeck()` 同义），
+    仍缺 Qt 的牌组下拉与 Save PDF（PARITY 3.2）；**`Ctrl+P` 的首选项已重写成真页面**
+    （七个分页 + 帮助/关闭，约 30 个控件接通，见 `ts/routes/preferences/` 与 PARITY 3.3 / 8.1）。
   - 编辑器的两个对话框（「字段…」/「卡片…」，都是新写的页面）：`ts/routes/fields/`、
     `ts/routes/cards/`；**「管理笔记类型」对话框也已完成**（新写的
     `ts/routes/notetypes/`：列表 + 添加/重命名/删除/克隆 + 对指定笔记类型的
     「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为主窗口菜单栏画在
     牌组列表页、浏览器窗口自己没有菜单栏，见 PARITY 5.2）。
   - 未做：编辑已有筛选牌组（筛选牌组点「选项」会开到报错窗口）、Android、addon、
-    夜间模式/主题、多 profile 管理、真正的首选项对话框、文件关联（PARITY 第 8 节）
+    多 profile 管理、文件关联（PARITY 第 8 节）
 - **M4 进行中**：**Windows 可分发目录**已做并验证（`tauri/tools/package.ps1` +
   `verify-package.ps1`，`tauri/tauri.conf.json` 的 bundle 配置也写好了）——
   `tauri/PACKAGING.md` 里写了布局、与 `tauri build` 的差别、签名与 Android 的缺口。
   **安装器本身从未生成过**（本机没有 tauri-cli/NSIS/WiX），也没有签名与 `fileAssociations`。
 
-> **2026-10-16 逐项代码核查**：用户可见差异的真实完成度是 **✅3 / ⚠️33 / ❌8（44 项）**，
-> 另有 **12 项清单原先没覆盖**的缺口。`tauri/PARITY.md` 已按这次核查重新定级并新增第 8/9 节
-> （未覆盖缺口、验证体系缺口），`tauri/README.md` 同步；本文档 §6 / §7 / §9 也已对齐。
+> **2026-10-16 逐项代码核查**：用户可见差异的真实完成度是 **✅3 / ⚠️34 / ❌7（44 项）**，
+> 另有 **12 项清单原先没覆盖**的缺口（现状 ⚠️6 / ❌6）。`tauri/PARITY.md` 已按这次核查
+> 重新定级并新增第 8/9 节（未覆盖缺口、验证体系缺口），`tauri/README.md` 同步；
+> 本文档 §6 / §7 / §9 也已对齐。
 > 核查同时确认：**键盘答题整条链路没有**（复习页只绑了 8 个键）、**Congratulations 收尾不存在**、
-> **时间盒不存在**、**addon/文件关联/夜间模式/profile 管理为零**。
+> **时间盒不存在**、**addon/文件关联/多 profile 管理为零**。
+> 同一天接着补齐了第 8 节里的三块：**界面语言**（`i18n_lang.rs`）、**夜间模式/主题**
+> （`theme.rs`，三条注入通道 + 运行期广播）、**首选项真页面**（七个分页）。
 
-**当前可直接验证**（六个一键脚本，详见 §2.4）：
+**当前可直接验证**（九个一键脚本，详见 §2.4）：
 
 | 脚本 | 覆盖 |
 | --- | --- |
@@ -76,6 +79,9 @@
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
 | `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 管理笔记类型窗口（列表 / 增删改 / 克隆 / 两个对话框端点）→ 关闭连带 |
 | `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → **导入端到端**（造 `.apkg` 夹具 → 页面导入 → RPC 复查）→ `d`/`s`/`study` 切页 |
+| `tauri/tools/verify-i18n.ps1` | 界面语言：四个场景（`meta.defaultLang`=zh_CN / en_US、无 prefs21 跟随系统、`ANKI_LANG` 覆盖）各自断言宿主生效语言 + `i18nResources` 下发的文案 |
+| `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
+| `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
 
 ---
 
@@ -1609,7 +1615,7 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
 （「编辑当前卡片」「添加卡片」「浏览器」「牌组列表」，以及「字段…」「卡片…」
 「管理笔记类型」三个对话框，都有一键脚本）。建议：
 
-1. **先跑六个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
+1. **先跑九个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
    断言）、`verify-m2.ps1`（平台能力 + 多窗口命令归属，录音那项需要有麦克风）、
    `verify-editor.ps1`（编辑当前卡片 + 改字段保存）、`verify-addcards.ps1`
    （添加卡片 + 添加落库 + 关闭契约）、`verify-browser.ps1`（浏览器 + 表格 + 编辑区

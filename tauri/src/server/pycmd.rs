@@ -94,6 +94,17 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
         };
     }
 
+    // 语言列表（偏好设置 → 外观 → 语言下拉的选项）。rslib 没有暴露语言表，只有
+    // `pylib/anki/lang.py` 里那份硬编码清单，宿主已经嵌进 `crate::i18n_lang`，
+    // 这里把它交给页面（与窗口无关，任何窗口都能问）。
+    if command == "languages" {
+        let list: Vec<serde_json::Value> = crate::i18n_lang::all()
+            .iter()
+            .map(|lang| json!({ "name": lang.name, "code": lang.code }))
+            .collect();
+        return Some(serde_json::Value::Array(list).to_string());
+    }
+
     // 主题切换（偏好设置 → 外观 → 主题；对照 `preferences.py:420-421` → `mw.set_theme()`）。
     // 同样与窗口无关：设置页改了主题要立刻推给**所有**窗口（见 `crate::theme::broadcast`）。
     if let Some(value) = command.strip_prefix("theme:") {
