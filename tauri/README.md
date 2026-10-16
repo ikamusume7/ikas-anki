@@ -437,7 +437,12 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 分支），把 `customSyncUrl` 指向它，然后走「点同步 → 登录 → 完整同步二选一 → 点下载 →
 同步中取消」，并另外验证**自动同步**（`verify-decks.ps1` 把 `ANKI_SYNC_TICK_SECONDS`
 设成 2 秒，脚本在 profile 里放一份凭据 + `autoSyncMediaMinutes=0` → 断言几秒后宿主真的
-打到了 `/msync/begin`，日志里也有「自动同步: 开始媒体同步」）：
+打到了 `/msync/begin`，日志里也有「自动同步: 开始媒体同步」）。
+
+**成功路径**另有一条真服务器的端到端：`verify-sync.ps1` + `sync-check.mjs` 用仓库自带的
+`anki-sync-server`（本机可跑，不需要 AnkiWeb 账号）—— 登录打到真 `/sync/hostKey`、
+服务器没有集合时选「上传」、断言服务器侧真的出现 `collection.anki2`（约 147KB）且
+`hostKey`/`meta`/`upload` 整条链路 200：
 
 ```
 PASS  登录请求打到了同步服务器 — /sync/hostKey / /sync/meta
@@ -446,6 +451,19 @@ PASS  需要完整同步时弹出上传/下载二选一 — 上传到 AnkiWeb
 PASS  点「下载」打到了 /sync/download
 PASS  同步中按钮进入 syncing 状态 / 取消后回到 idle 状态
 PASS  自动同步定时器发起了媒体同步（/msync/…） — /msync/begin ×4
+```
+
+真服务器那条（`verify-sync.ps1`）的输出：
+
+```
+PASS  登录打到了真服务器的 /sync/hostKey
+PASS  登录后页面离开「未登录」状态 — idle
+PASS  服务器没有集合时弹出了「上传/下载」选择
+PASS  上传打到了真服务器的 /sync/upload
+PASS  服务器侧真的出现了集合（collection.anki2） — out/tauri-test/sync-server/tauri/collection.anki2
+PASS  服务器侧集合不是空文件 — 147456 字节
+PASS  同步状态回到非 error — idle
+PASS  服务器日志里整条链路都是 200（hostKey → meta → upload）
 ```
 
 **差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口与冲突文案）、进度条（只有文字
@@ -1739,10 +1757,12 @@ browserSearch：图表 → 浏览器搜索
 | `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
 | `audio-check.mjs` | `verify-reviewer.ps1` 调用的音频显示与语义检查：写一个真 WAV + 造带 `[sound:…]` 的卡 → 断言播放按钮注入、自动播放、答案面跳过问题面音频、`play:a:0` 与 `rev:replayAudio` 的播放日志（收尾清理） |
 | `export-guard-check.mjs` | `verify-decks.ps1`（第二段）调用的导出目录拦截检查：`ANKI_SAVE_PATH` 指进 profile 目录时 `saveFileDialog` 必须拒绝（返回空串）+ 日志有拒绝 + 文件没被写出来 |
+| `verify-sync.ps1` | 一键：同步的**成功路径**（PARITY 6.1 缺口①）。起仓库自带的真同步服务器（`anki-sync-server`）→ 用专用集合/profile 起外壳 → `sync-check.mjs`：登录打到真 `/sync/hostKey` → 服务器无集合时弹「上传/下载」→ 选上传 → 断言服务器侧真的出现 `collection.anki2`、服务器日志整条链路 200；收尾停服务器 |
 | `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `auto-advance-check.mjs` | `verify-reviewer.ps1` 调用的自动前进检查：把牌组配置改成 1 秒 → 没开开关不会自己翻 → 打开后自动翻答案并自动评「良好」→ 关掉就停（收尾还原配置与临时笔记） |
+| `sync-check.mjs` | 同步成功路径的页面级检查（由 `verify-sync.ps1` 调用）：登录 + 整份上传 + 服务器侧产物断言。**注意**：Playwright 加载的页面必须带 API 凭据与窗口身份的 fetch shim，否则页面自身的 `/_anki/*` 全 401（`has_api_access` 只认 `Authorization: Bearer <key>`） |
 | `sync-server.ps1` | 起/停一个**真的**本地同步服务器（仓库自带的 `anki-sync-server`，`SYNC_BASE`/`SYNC_HOST`/`SYNC_PORT`/`SYNC_USER1`）；`-Stop` 收尾。用于把同步的**成功路径**测起来（不依赖真 AnkiWeb 账号） |
 | `focus-window.ps1` | 把外壳的某个窗口切到前台（自动前进的焦点判定 / 需要真实焦点的场景用）；`-TitleLike` 选窗口 |
 | `close-window.ps1` | 给某个窗口发一次真正的 `WM_CLOSE`（与用户点标题栏 × 同一条 `CloseRequested` 路径），用来验证关窗契约；`-TitleLike` 选窗口，`-All` 全关 |

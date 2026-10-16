@@ -89,6 +89,7 @@
 | `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
 | `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
 | `tauri/tools/verify-profiles.ps1` | 多 profile：`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs`（列表/新建/非法名/重命名/删除）→ **真切换**（重启后的新进程打开 Second 并建出集合） |
+| `tauri/tools/verify-sync.ps1` | 同步成功路径：起仓库自带的真同步服务器（`anki-sync-server`）+ 专用集合/profile 的外壳 → `sync-check.mjs`（登录 `/sync/hostKey`、整份上传、服务器侧 `collection.anki2` 与链路 200 断言） |
 | `tauri/tools/verify-timebox.ps1` | 时间盒：**两次**启动外壳（`ANKI_TIMEBOX_CHOICE=finish` / `continue`）→ `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言「结束回牌组列表 / 继续重新渲染」+ 真实窗口截图） |
 
 ---
@@ -1129,6 +1130,34 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 3. 生成的类名与 `generic.proto` 的 message 同名：`generic.String` → **`String`**
    （导入时得 `import { String as GenericString }`），Rust 侧那边的别名才是
    `GenericString`。
+
+### 5.44 同步的**成功路径**用仓库自带的本地服务器测，不需要 AnkiWeb 账号
+
+`rslib/sync/main.rs` 就是一个可跑的同步服务器（workspace member `anki-sync-server`）：
+
+```
+cargo build -p anki-sync-server
+$env:SYNC_BASE="out/tauri-test/sync-server"; $env:SYNC_HOST="127.0.0.1"
+$env:SYNC_PORT="40011"; $env:SYNC_USER1="tauri:tauri-pass"
+target/debug/anki-sync-server.exe      # /health 返回 200 即就绪
+```
+
+（配置走 `envy` 的 `SYNC_` 前缀，见 `rslib/src/sync/http_server/mod.rs:270`；用户是
+`SYNC_USER1..N`，格式 `用户名:密码`。`tauri/tools/sync-server.ps1` 把起停与 pid 都管好了。）
+
+踩到的两条：
+
+1. **Playwright 加载的页面必须自己带 API 凭据与窗口身份**：`has_api_access`
+   （`tauri/src/server/api.rs:214-221`）只认 `Authorization: Bearer <api_key>`，真窗口由
+   宿主的注入脚本给，Playwright 没有 → 页面自己的 `/_anki/*` 全 401，表现是"点了同步按钮
+   什么都不发生、登录框不弹"。照 `decks-check.mjs` 的 `bridgeShim` 用
+   `page.addInitScript` 补 `fetch` 头即可。
+2. **服务器侧集合文件在服务器运行时被占着**：想重跑"服务器上没有集合 → 弹上传/下载"这条
+   分支，必须在**起服务器之前**删 `SYNC_BASE/<user>/collection.anki2*`（开着时删会
+   `EPERM`）。`verify-sync.ps1` 里先 `sync-server.ps1 -Stop` 再清，然后才起。
+3. 现在覆盖到：登录 → 真 `/sync/hostKey`、`/sync/meta`、整份上传 → 服务器侧
+   `collection.anki2`（147KB 的合法集合）与整条链路 200。**还没覆盖**：整份下载方向、
+   媒体同步成功路径、冲突分支。
 
 另外，同步的凭据（`syncKey` / `syncUser` / `customSyncUrl` / `syncMedia`）走 profile 配置，
 **不在集合里** —— 所以「还原备份」不会把它们清掉（与桌面版一致）。
