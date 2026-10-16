@@ -156,12 +156,37 @@ impl Prefs21 {
     }
 
     /// 写入某个配置项。对照 `mediasrv.set_setting_json(pm.profile.__setitem__)`。
+    ///
+    /// **值为 JSON `null` 时删键**，而不是写一个 `None` 进去 —— 桌面版的
+    /// `ProfileManager.set(key, None)` 走的是 `self.profile.pop(key, None)`
+    /// （`profiles.py:721-722`），写 `None` 会让桌面版把 `autoSyncMediaMinutes`
+    /// 这类键读成 falsy（周期媒体同步被静默关掉）。这也顺带给了偏好设置
+    /// 「重置窗口大小」需要的删键端点。
     pub fn set(&self, store: Store, key: &str, value: &Json) -> Result<(), String> {
+        if value.is_null() {
+            return self.delete(store, key).map(|_| ());
+        }
+        self.write(store, key, Some(value)).map(|_| ())
+    }
+
+    /// 删掉某个配置项；返回它之前是否存在。对照 `ProfileManager.set(key, None)`。
+    pub fn delete(&self, store: Store, key: &str) -> Result<bool, String> {
+        self.write(store, key, None)
+    }
+
+    /// `Some` = 写入，`None` = 删除。
+    fn write(&self, store: Store, key: &str, value: Option<&Json>) -> Result<bool, String> {
         let mut map = match self.read(store)? {
             Some(blob) => decode_dict(&blob)?,
             None => BTreeMap::new(),
         };
-        map.insert(HashableValue::String(key.to_owned()), from_json(value)?);
+        let removed = match value {
+            Some(value) => {
+                map.insert(HashableValue::String(key.to_owned()), from_json(value)?);
+                false
+            }
+            None => map.remove(&HashableValue::String(key.to_owned())).is_some(),
+        };
 
         let bytes = serde_pickle::value_to_vec(&Value::Dict(map), serde_pickle::SerOptions::new())
             .map_err(|error| format!("序列化 pickle 失败: {error}"))?;
@@ -185,7 +210,7 @@ impl Prefs21 {
                 )
                 .map_err(|error| format!("插入 profiles 失败: {error}"))?;
         }
-        Ok(())
+        Ok(removed)
     }
 
     fn read(&self, store: Store) -> Result<Option<Vec<u8>>, String> {

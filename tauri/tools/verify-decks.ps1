@@ -185,6 +185,9 @@ try {
     }
 
     Write-Host "跑 decks-check.mjs（Playwright）…"
+    # 牌组选项的 × 关窗契约要在检查里发 WM_CLOSE 并读宿主日志（`close-window.ps1` +
+    # `ANKI_LOG`），所以这里把日志路径递进去
+    $env:ANKI_LOG = $logPath
     node tauri/tools/decks-check.mjs
     if ($LASTEXITCODE -ne 0) {
         Write-Host "decks-check.mjs 有失败项" -ForegroundColor Red
@@ -309,6 +312,40 @@ try {
     }
     # 夹具是一次性的（import-check.mjs 刻意留着它，好让「导入文件」有东西可开）
     if (Test-Path $fixtureApkg) { Remove-Item $fixtureApkg -Force }
+}
+
+# 导出目录拦截（PARITY 5.9）：`ANKI_SAVE_PATH` 指向 **profile 目录内**时宿主必须拒绝。
+# 钩子的值只能在进程启动时给，所以单独起一次外壳（这次用 `ANKI_SAVE_PATH=<profile 目录>`，
+# 宿主会把建议文件名接在后面 → 得到 profile 目录内的路径）。
+$profileDir = Join-Path $root (Split-Path $Collection -Parent)
+$guardLog = Join-Path $OutDir "run-guard.log"
+if (Test-Path $guardLog) { Remove-Item $guardLog -Force }
+Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force
+Write-Host ""
+Write-Host "== 导出目录拦截（ANKI_SAVE_PATH 指进 profile 目录）==" -ForegroundColor Cyan
+$env:ANKI_SAVE_PATH = $profileDir
+$env:ANKI_LOG = $guardLog
+$guardProc = Start-Process -FilePath $exePath -WorkingDirectory $root `
+    -RedirectStandardOutput $guardLog -RedirectStandardError (Join-Path $OutDir "run-guard.err") `
+    -NoNewWindow -PassThru
+try {
+    # `Wait-LogPattern` / `Read-Log` 读的是脚本级的 `$logPath`，这一段临时指向新日志
+    $mainLogPath = $logPath
+    $logPath = $guardLog
+    if (-not (Wait-LogPattern "bridge 命令\[main\]: domDone" 30)) {
+        Write-Host "第二次启动的外壳没有就绪（详见 $guardLog）" -ForegroundColor Red
+        $passed = $false
+    } else {
+        $env:ANKI_PROFILE_DIR = $profileDir
+        node tauri/tools/export-guard-check.mjs
+        if ($LASTEXITCODE -ne 0) { $passed = $false }
+    }
+} finally {
+    $logPath = $mainLogPath
+    Get-Process -Id $guardProc.Id -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process -Name "anki-tauri" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Remove-Item Env:ANKI_SAVE_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:ANKI_PROFILE_DIR -ErrorAction SilentlyContinue
 }
 
 Write-Host ""

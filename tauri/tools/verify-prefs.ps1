@@ -97,6 +97,23 @@ try {
     node tauri/tools/prefs-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 
+    # 6.8：写 JSON null 必须**从 pickle 里删掉键**（不是写一个 None 进去）。
+    # 直接 dump `_global` 那一行来验：临时键不在、而别的键还在（对照
+    # `profiles.py:721-722` 的 `profile.pop(key, None)`）。这一步只能在这里做 ——
+    # RPC 读回 null 区分不出"删了"与"写了 null"。
+    # 注意要把输出拼成一个字符串再匹配：`-notmatch` 对**数组**是"过滤"，只要有一行不匹配
+    # 整个条件就为真（第一次写就踩了这个坑）
+    $dumpText = (& py tauri/tools/make-prefs21-fixture.py show (Join-Path $baseDir "prefs21.db") "_global" 2>&1 | Out-String)
+    if ($dumpText -match "tauriNullProbe") {
+        Write-Host "写 null 之后键还留在 prefs21.db 里（应该删掉）" -ForegroundColor Red
+        $passed = $false
+    } elseif ($dumpText -notmatch '"defaultLang"') {
+        Write-Host "dump 里看不到对照键，无法确认 dump 有效：$dumpText" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "写 null = 删键（prefs21.db 里已经没有那个键）" -ForegroundColor Green
+    }
+
     if ((Read-Log) -match "ERROR") {
         Write-Host "运行日志里有 ERROR（见 $logPath）" -ForegroundColor Red
         $passed = $false

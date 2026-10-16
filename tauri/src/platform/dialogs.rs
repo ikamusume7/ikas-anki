@@ -102,7 +102,7 @@ pub fn pick_file_in(
 /// 测试钩子：设了 `ANKI_SAVE_PATH` 就直接返回它，不弹框 —— 原生对话框没法自动点
 /// （对照外壳已有的 `ANKI_*` 环境变量用法）。指向**已存在的目录**时，返回
 /// `<该目录>/<建议文件名>`，这样一个测试里可以连着导出多个文件。
-pub fn save_file_dialog(body: &[u8]) -> HandlerResult {
+pub fn save_file_dialog(state: &AppState, body: &[u8]) -> HandlerResult {
     let request = OpenFilePickerRequest::decode(body).map_err(|e| e.to_string())?;
     let extension = request.extensions.first().cloned().unwrap_or_default();
     let suggested = if request.key.is_empty() {
@@ -126,31 +126,96 @@ pub fn save_file_dialog(body: &[u8]) -> HandlerResult {
                 hook
             };
             tracing::info!("ANKI_SAVE_PATH 生效，跳过保存对话框: {path}");
+            // 钩子也一样过导出目录守卫：自动化里没法重弹对话框，所以直接拒绝（返回空串），
+            // 让「导出到 profile 目录」这条路径可以被端到端断言。
+            if in_profile_dir(state, &path) {
+                tracing::warn!("导出路径在 profile 目录内，拒绝并要求重选: {path}");
+                return Ok(GenericString { val: String::new() }.encode_to_vec());
+            }
             return Ok(GenericString { val: path }.encode_to_vec());
         }
     }
 
-    let mut dialog = rfd::FileDialog::new().set_file_name(&suggested);
-    if !request.title.is_empty() {
-        dialog = dialog.set_title(&request.title);
-    }
-    if !request.extensions.is_empty() {
-        let extensions: Vec<&str> = request.extensions.iter().map(String::as_str).collect();
-        let label = if request.filter_description.is_empty() {
-            "Files"
-        } else {
-            &request.filter_description
-        };
-        dialog = dialog.add_filter(label, &extensions);
-    }
+    // 对照 `exporting.py:119-140` 的 `get_out_path()`：`while True` 里弹保存框，
+    // 选到 profile 目录内就提示换个位置再来一次。上游判的是 `pm.base` 整棵树，
+    // 这里判**当前 profile 目录**（`collection.anki2` 所在处）—— 外壳的测试集合就在
+    // 仓库的 `out/` 下面，用 base 会把所有测试导出路径一起拒掉，见 `tauri/PARITY.md` 5.9。
+    loop {
+        let mut dialog = rfd::FileDialog::new().set_file_name(&suggested);
+        if !request.title.is_empty() {
+            dialog = dialog.set_title(&request.title);
+        }
+        if !request.extensions.is_empty() {
+            let extensions: Vec<&str> = request.extensions.iter().map(String::as_str).collect();
+            let label = if request.filter_description.is_empty() {
+                "Files"
+            } else {
+                &request.filter_description
+            };
+            dialog = dialog.add_filter(label, &extensions);
+        }
 
-    let picked = dialog.save_file();
-    let val = picked
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    tracing::info!("保存对话框返回: {val}");
+        let picked = dialog.save_file();
+        let val = picked
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        tracing::info!("保存对话框返回: {val}");
+        if val.is_empty() || !in_profile_dir(state, &val) {
+            return Ok(GenericString { val }.encode_to_vec());
+        }
+        tracing::warn!("导出路径在 profile 目录内，提示换个位置: {val}");
+        // 上游是硬编码英文（`exporting.py:137`），这里保持一致
+        warn("Please choose a different export location.");
+    }
+}
 
-    Ok(GenericString { val }.encode_to_vec())
+/// 路径是不是落在当前 profile 目录里（导出目录守卫，对照 `exporting.py:132-138`）。
+fn in_profile_dir(state: &AppState, path: &str) -> bool {
+    path_in_dir(path, state.profile_dir.as_path())
+}
+
+/// 同上，纯函数版（便于单测）：两边都做一次 `canonicalize`，文件可能还不存在
+/// （保存对话框返回的是未来路径），那时退化成"规范化过的字面比较"（Windows 上大小写不敏感）。
+fn path_in_dir(path: &str, dir: &std::path::Path) -> bool {
+    let normalize = |p: &std::path::Path| {
+        let text = std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .replace('/', "\\");
+        // Windows 的 `canonicalize` 返回带 `\\?\` 前缀的 verbatim 路径；不去掉它，
+        // 拿用户给的字面路径永远比不中（这个坑是 `verify-decks` 的导出拦截断言抓出来的）
+        let text = text.strip_prefix(r"\\?\").unwrap_or(&text).to_string();
+        text.trim_end_matches('\\').to_lowercase()
+    };
+    let target = normalize(std::path::Path::new(path));
+    let dir = normalize(dir);
+    target == dir || target.starts_with(&format!("{dir}\\"))
+}
+
+#[cfg(test)]
+mod test {
+    use super::path_in_dir;
+
+    #[test]
+    fn export_guard_matches_profile_dir_only() {
+        let dir = std::path::Path::new("C:\\Anki2\\User 1");
+        // profile 目录内的都拒绝（含大小写与分隔符差异、未来才存在的文件）
+        assert!(path_in_dir("C:\\Anki2\\User 1\\out.colpkg", dir));
+        assert!(path_in_dir("c:/anki2/user 1/sub/out.apkg", dir));
+        assert!(path_in_dir("C:\\Anki2\\User 1", dir));
+        // 目录本身之外的同级/上级路径放行（上游拒的是整个 base，本外壳只拒 profile 目录）
+        assert!(!path_in_dir("C:\\Anki2\\User 2\\out.colpkg", dir));
+        assert!(!path_in_dir("C:\\Anki2\\out.colpkg", dir));
+        assert!(!path_in_dir("D:\\exports\\out.colpkg", dir));
+        // 前缀相同但不是子目录（`User 1x`）不能误判
+        assert!(!path_in_dir("C:\\Anki2\\User 1x\\out.colpkg", dir));
+
+        // 真实存在的目录会走 `canonicalize` 分支：Windows 上它返回 `\\?\` 前缀的
+        // verbatim 路径，必须剥掉才能和字面路径比中（不然守卫永远不生效）
+        let tmp = std::env::temp_dir();
+        let inside = tmp.join("anki-export-guard-probe.colpkg");
+        assert!(path_in_dir(&inside.to_string_lossy(), &tmp));
+    }
 }
 
 /// 对应 mediasrv 的 `ask_user`：是/否确认框。

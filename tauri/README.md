@@ -1687,6 +1687,7 @@ browserSearch：图表 → 浏览器搜索
 | `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
 | `reviewer-keys-check.mjs` | `verify-reviewer.ps1` 调用的复习键盘检查：第 1 半加载 `assets/reviewer-keys.js` 按 **31 组真实按键**断言桥接命令（含焦点档、空格评分开关、输入框不抢键、未实现的键不发命令），第 2 半对真外壳断言「问题面不许评分」的宿主守卫 |
 | `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
+| `export-guard-check.mjs` | `verify-decks.ps1`（第二段）调用的导出目录拦截检查：`ANKI_SAVE_PATH` 指进 profile 目录时 `saveFileDialog` 必须拒绝（返回空串）+ 日志有拒绝 + 文件没被写出来 |
 | `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |

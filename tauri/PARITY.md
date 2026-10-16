@@ -20,8 +20,9 @@
 核对当次跑通的回归：`eslint --max-warnings=0`（0）、`svelte-check`（0 errors / 0 warnings）、
 `verify-decks.ps1`、`verify-reviewer.ps1`、`verify-browser.ps1`（**单独跑**均通过）。
 
-**结论：第 1–7 节的 44 项里 ✅ 3 / ⚠️ 34 / ❌ 7**（首次核查时是 ✅ 3 / ⚠️ 33 / ❌ 8；本轮把
-3.3「偏好设置」补成 ⚠️）。第 8 节那 12 项现在 **⚠️ 7 / ❌ 5**（8.2 多 profile、8.3 夜间模式、
+**结论：第 1–7 节的 44 项里 ✅ 4 / ⚠️ 33 / ❌ 6**（首次核查时是 ✅ 3 / ⚠️ 33 / ❌ 8；
+2026-10-16 先补了 3.3「偏好设置」→ ⚠️，同一轮的「数据安全三项」把 5.9 从 ❌ 做到 ✅）。
+第 8 节那 12 项现在 **⚠️ 7 / ❌ 5**（8.2 多 profile、8.3 夜间模式、
 8.4 界面语言已落地）。
 另外第 8 节列了 12 项清单完全没覆盖的用户可见缺口。
 
@@ -64,7 +65,7 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② ~~**× 关窗丢改动**~~ → **宿主已补拦截**（`windows::DECK_OPTIONS_CLOSE_REQUEST_JS`：`CloseRequested` 时 `prevent_close` + 让页面跑 `anki.deckOptionsPendingChanges()`；页面里的确认框改成走宿主 `askUser`，测试钩子 `ANKI_CONFIRM_YES` 才管用）——**断言待补**：`verify-decks.ps1` 目前跑不到那一步（见 §9「decks-check 的夹具前提」）；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
+| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② ~~**× 关窗丢改动**~~ → **宿主已补拦截并断言**（`windows::DECK_OPTIONS_CLOSE_REQUEST_JS`：`CloseRequested` 时 `prevent_close` + 让页面跑 `anki.deckOptionsPendingChanges()`；页面里的确认框改成走宿主 `askUser`，测试钩子 `ANKI_CONFIRM_YES` 才管用）——`decks-check.mjs` 用 `close-window.ps1` 真发 WM_CLOSE，断言「交给页面判定 + 窗口关掉」；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
 | 3.2 | ⚠️ | **统计图** | 入口两处都有（牌组列表工具栏「统计」、复习页 `t`/`Shift+t`），页面 `graphs/` 默认 `initialSearch="deck:current"`（等于 Qt 的 `_selectedDeck()`，**按当前牌组打开已经成立**）。**还差**：① Qt 的 NewDeckStats 顶部有**牌组下拉**（换牌组 = 设当前牌组 + 刷新），这里换牌组只能靠页面里的「牌组/集合/自定义搜索」；② 没有 **Save PDF**（Qt 是原生按钮 + `printToPdf`）；③ 窗口标题用 `qt-misc-stats`（「统计」），Qt 用 `statistics-title`（「统计数据」）；④ 没有"请先选一个牌组"的兜底 | `qt/aqt/stats.py:52-66,95-123`、`forms/stats.ui:14` |
 | 3.3 | ⚠️ | **偏好设置** | **已重写成真首选项页面**（`ts/routes/preferences/`）：七个分页照 `forms/preferences.ui`（显示 / 复习 / 编辑 / 同步 / 备份 / 第三方服务 / 实验功能）+ 底部的**帮助**与**关闭**；纯前端就能落库的都接了 —— 语言（`meta.defaultLang`，选项来自宿主 `languages` 命令，54 种）、主题（发 `theme:` 命令，宿主落库 + 广播）、界面缩放、上下工具栏隐藏、减少动效、极简模式、检查更新两项（只落库）、调度三项（`rollover`/`learnAheadSecs`/`timeLim`）、reviewer 四项、`renderLatex`、编辑五项、同步五项（含 `customSyncUrl` 连带清 `currentSyncUrl`）、备份四项。**还差**：AnkiWeb 的登录/登出还留在牌组列表工具栏（没搬进来）、「媒体同步日志」窗口、`answer_keys` 自定义答案键（pickle 字典键是整数，现有端点读不出来）、`resetWindowSizes`（需要 prefs21 删键端点）、视频驱动（WebView2 无此概念）、AnkiHub（addon 系统已移除）；「干扰项」这几项目前只落库、外壳还没消费。验证：`verify-prefs.ps1` + `prefs-check.mjs`（七页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
 | 3.4 | ⚠️ | **导入** | 三条入口都通（牌组列表底部「导入文件」、主窗口拖入、`ANKI_OPEN_PATH` 顶掉对话框），扩展名分流正确，`.apkg` 有端到端断言（造夹具 → 页面导入 → RPC 复查牌组与笔记回来 → `importDone`）。**还差**：`.csv/.tsv/.txt` → `import-csv` 只有单测，没有页面级/落库断言；「拖到主窗口导入」只有 `drop_path` 单测，没有合成 `DragDropEvent` 的端到端；`.colpkg`/`collection.apkg`/`backup-*.apkg` 与 Mnemosyne `.db` 仍只提示不支持（见 6.7） | `qt/aqt/import_export/importing.py`、`qt/aqt/main.py:112-137` |
@@ -98,7 +99,7 @@
 | 5.6 | ⚠️ | 加标签对话框 | 纯输入框，**没有补全、没有最近标签**（上游用 QCompleter + 最近标签列表）；标签分隔/校验规则也没对齐 | `qt/aqt/tagedit.py` |
 | 5.7 | ⚠️ | 列设置的存储位置 | 列宽/顺序存在**外壳自己的 profile 配置**里（`tauriBrowserColumnWidths`，JSON），Qt 存 QHeaderView 的二进制状态 → 两边交替使用不通用（显示哪些列走集合配置，与 Qt 同键）。断言覆盖拖动换序/写回/不错位/卡片与笔记各一份，但**没有"重启后还在"的持久化断言** | `qt/aqt/utils.py:849-852` |
 | 5.8 | ⚠️ | 立即评分 / 查找替换 / 取消暂停埋藏 | 立即评分拆成 4 个菜单项（有断言）；查找替换**缺字段下拉、缺"只看选中笔记"、缺历史**；取消暂停会顺带恢复埋藏（`restoreBuriedAndSuspendedCards` vs Qt 的 `unsuspend_cards`） | `qt/aqt/browser/browser.py` 对应段落 |
-| 5.9 | ❌ | 导出到 profile 目录的拦截 | **零实现**：保存对话框只回路径，`exporting.ts` 也没有前缀校验；上游会拒绝并提示换个位置。**验证也没有对应用例** | `qt/aqt/import_export/exporting.py:132-138` |
+| 5.9 | ✅ | 导出到 profile 目录的拦截 | **已实现**：保存对话框那条路（`saveFileDialog`）在选到 profile 目录内时提示「Please choose a different export location.」并**重新弹框**（对照 `exporting.py:119-140` 的 `while True`）；`ANKI_SAVE_PATH` 钩子下直接拒绝（返回空串）并记日志，所以这条路径能端到端断言（`export-guard-check.mjs` + 单元测试）。**与上游的差异**：上游拒的是 `pm.base` 整棵树，这里拒**当前 profile 目录**（`collection.anki2` 所在处）—— 外壳的测试集合就在仓库 `out/` 下，用 base 会把所有测试导出路径一起拒掉 | `qt/aqt/import_export/exporting.py:119-140` |
 
 验收：`tauri/tools/verify-browser.ps1` + `browser-check.mjs`，每项都要有真集合断言。
 **现状**：浏览器主流程（列/排序/多选/笔记模式/批量动作/导出/查找重复/预览）断言很扎实，
@@ -115,7 +116,7 @@
 | 6.5 | ✅ | 原生取色器 | Windows 上用系统取色对话框（`ChooseColorW`，与 Qt 在 Windows 上用的是同一个），16 个自定义色槽写进 `customColorPickerPalette`（与上游同一把键）；页面侧 `<input type="color">` 的点击改走 `pickColour:<当前颜色>`，老宿主没有能力标记时照旧用自带取色器；端点与调色板落库都有断言。**注**：真正的 `ChooseColorW` 从未被自动触发（检查里用 `ANKI_PICK_COLOUR` 短路），只能手工点一次；非 Windows 没有等价实现（见 6.5 备注） | `qt/aqt/mediasrv.py:1122-1128` |
 | 6.6 | ❌ | **addon（插件）支持** | 完全没有：`tauri/src` 里没有 addon 加载、没有 `gui_hooks`（只有 CSP 里留了 `_addons/` 前缀）。装了插件的用户会明显觉得不一样 | `qt/aqt/addons.py` |
 | 6.7 | ❌ | 文件关联 | **名不副实**：① 双击 `.apkg` = 不存在（`tauri.conf.json` 没有 `fileAssociations`，上游 NSIS 会注册 apkg/colpkg/anki/addon）；② 命令行带文件启动 = 不存在（`tauri/src` 里没有 `env::args()`，只有 `ANKI_*` 环境变量）；③ 「拖到主窗口导入」只有 `drop_path` 单测，**没有任何端到端** | `qt/aqt/main.py` 命令行处理、`qt/installer/app/pyproject.toml:94-99` |
-| 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（与桌面版同一批键，`syncKey`/`syncUser` 落库有断言）。**还差**：① 唯一的跨实现验证（`make-prefs21-fixture.py` + `check-prefs21.mjs`）**没接进任何 `verify-*.ps1`**，纯手工；② **写的是 JSON null 而不是删键** → 桌面版的 `autoSyncMediaMinutes` 等读到 None 会当 falsy，**周期媒体同步被静默关掉**（当前产物里就是 `None`）；③ `meta.defaultLang` 从未被读（语言只看 `ANKI_LANG`，见 8.4） | `qt/aqt/profiles.py:721-722` |
+| 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（与桌面版同一批键，`syncKey`/`syncUser` 落库有断言）。**还差**：① 唯一的跨实现验证（`make-prefs21-fixture.py` + `check-prefs21.mjs`）**没接进任何 `verify-*.ps1`**，纯手工；② ~~**写的是 JSON null 而不是删键**~~ → **已改成删键**（`Prefs21::set` 遇到 `null` 走 `delete`，对照 `profiles.py:721-722` 的 `profile.pop(key, None)`；`verify-prefs.ps1` 用 `make-prefs21-fixture.py show` dump `_global` 断言键真的从 pickle 里消失）。**还差**：③ `meta.defaultLang` 从未被读（语言只看 `ANKI_LANG`，见 8.4） | `qt/aqt/profiles.py:721-722` |
 
 验收：需要真机/真账号（同步）；其余可用 RPC + 界面断言。
 **现状**：备份/还原、检查三项、取色器是真的；同步只验到"登录 + 取消 + 自动媒体同步请求"；
@@ -173,12 +174,11 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
 另外两处**测试自身**的问题：`visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移、
 且把 maxTime 写死 0）；`verify-*.ps1` 与 `*-check.mjs` 共用同一份集合，脚本间有顺序依赖。
 
-**2026-10-16 新发现（关窗契约那一轮）**：`decks-check.mjs` 的概览断言**有状态前提** —— 它断言
+**2026-10-16 关窗契约那一轮发现并已修**：`decks-check.mjs` 的概览断言**有状态前提** —— 它断言
 概览里有「学习」按钮，但概览在「今天没有可学卡片」时画的是 Congratulations（PARITY 1.6），
-没有那个按钮。集合里没有到期卡片时 `verify-decks.ps1` 会从这一项开始连锁失败（本轮实测：
-概览学习按钮 → 齿轮选项没开窗 → 导出没走钩子 → 导入/还原备份/自动同步全挂）。修法是让
-`decks-check.mjs` 先给要打开的牌组补一张到期卡片（同 `verify-reviewer.ps1` 的补卡思路），
-或者把断言改成「学习按钮 XOR Congratulations 面板」。
+没有那个按钮。集合里没有到期卡片时 `verify-decks.ps1` 会从这一项开始连锁失败（实测：概览学习
+按钮 → 齿轮选项没开窗 → 导出没走钩子 → 导入/还原备份/自动同步全挂）。**修法**：`decks-check.mjs`
+给要打开概览的子牌组补一张新卡片（新卡今天到期）；`verify-decks.ps1` 现已全绿。
 
 ## 10. 推进顺序（建议）
 
@@ -194,8 +194,11 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    （`reviewer-keys-check.mjs`）；队列空了清会话 + 回概览，概览改画 Congratulations
    （`congrats-check.mjs`）；时间盒（`startTimebox` / `timeboxReached` + 「继续 / 结束」框，
    `verify-timebox.ps1` + `timebox-check.mjs` 两种选择各验一次）。剩下的尾巴记在 1.4 / 1.6 / 2.6。
-3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
-   筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
+3. **数据安全三项**：~~关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）~~、
+   ~~导出目录拦截（5.9）~~、~~6.8 的写 null 改成删键~~ —— **2026-10-16 已做**（关窗契约：
+   `close-window.ps1` 真发 WM_CLOSE，`verify-editor` / `verify-browser` / `decks-check` 各自断言；
+   导出拦截：`saveFileDialog` 的守卫 + `export-guard-check.mjs`；写 null → 删键：
+   `Prefs21::delete` + `verify-prefs.ps1` 的 pickle dump 断言）。**还差**：筛选牌组「选项」（下面那条）
 4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**
 5. **同步成功率路径与冲突分支、进度条（6.1/8.9）**；**打包** fileAssociations + 签名 + 图标
    （7.1/7.4）；`just` + CI（7.3）；Android（7.2）

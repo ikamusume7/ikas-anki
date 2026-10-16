@@ -46,6 +46,7 @@ const noteMarkers = [
     "TauriProbe",
     "TauriBrowser",
     "TauriDecks 补的卡片",
+    "TauriDecks 子牌组卡片",
     "TauriFiltered",
     // `congrats-check.mjs` 造的那张（卡片正面文本）
     "TauriCongrats",

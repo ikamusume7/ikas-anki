@@ -293,6 +293,16 @@ try {
     // ⑧ 底部：帮助 + 关闭 ###################################################
     await page.locator("#prefs-help").click();
     await page.waitForTimeout(300);
+    // 6.8：写 JSON null = **删键**（对照 `profiles.py:721-722` 的
+    // `pm.set(key, None)` → `profile.pop(key, None)`）。写一个 `None` 进去的话，
+    // 桌面版会把 `autoSyncMediaMinutes` 这类键读成 falsy，周期媒体同步被静默关掉。
+    // 这里用一个临时键验：写值 → 读得到；写 null → 读到 null，且**键从 pickle 里消失**
+    // （后者由 `verify-prefs.ps1` 的 dump 断言兜底）。
+    await putMeta("tauriNullProbe", "probe");
+    check("临时 meta 键可写入", (await getMeta("tauriNullProbe")) === "probe");
+    await putMeta("tauriNullProbe", null);
+    check("写 null 之后读回来是 null", (await getMeta("tauriNullProbe")) === null);
+
     await page.locator("#prefs-close").click();
     await page.waitForTimeout(300);
     check("点「关闭」发出 close", (await bridgeCalls()).includes("close"));

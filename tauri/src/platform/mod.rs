@@ -62,7 +62,7 @@ pub fn dispatch(method: &str, state: &AppState, body: &[u8]) -> Option<HandlerRe
         "convertPastedImage" => media::convert_pasted_image(body),
         "openFilePicker" => dialogs::open_file_picker(body),
         // 外壳新增：网页里的导出对话框要问宿主一个保存路径（见 `dialogs::save_file_dialog`）
-        "saveFileDialog" => dialogs::save_file_dialog(body),
+        "saveFileDialog" => dialogs::save_file_dialog(state, body),
         "openMedia" => media::open_media(state, body),
         "showInMediaFolder" => media::show_in_media_folder(state, body),
 

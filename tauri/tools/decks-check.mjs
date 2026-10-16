@@ -20,6 +20,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import zlib from "node:zlib";
+import { spawnSync } from "node:child_process";
 
 import { chromium } from "playwright";
 
@@ -191,6 +192,32 @@ const parentId = await addDeck(parentName);
 // `addDeck` 走上游的 `col.decks.id(name)`：`::` 里的祖先牌组会被顺带建出来
 const childId = await addDeck(childName);
 
+// 给子牌组补一张新卡片：概览只在「今天有可学卡片」时才画计数表与「学习」按钮，
+// 否则画的是 Congratulations（PARITY 1.6）—— 没有卡片就没法断言「概览有学习按钮」，
+// 也没法断言点它真的切到复习页。新卡片是今天到期的，所以补一张就够了。
+{
+    const names = NotetypeNames.fromBinary(
+        await rpc("getNotetypeNames", new Empty({}).toBinary()),
+    );
+    const pick =
+        names.entries.find((entry) => /^(Basic|问答题)$/i.test(entry.name)) ?? names.entries[0];
+    const notetype = Notetype.fromBinary(
+        await rpc("getNotetype", new NotetypeId({ ntid: pick.id }).toBinary()),
+    );
+    await rpc(
+        "addNote",
+        new AddNoteRequest({
+            note: new Note({
+                notetypeId: notetype.id,
+                fields: notetype.fields.map((field, index) =>
+                    index === 0 ? `TauriDecks 子牌组卡片${stamp}` : field.name,
+                ),
+            }),
+            deckId: childId,
+        }).toBinary(),
+    );
+}
+
 console.log(
     `临时牌组 ${parentName}（${parentId}）/ 子牌组（${childId}）/ 原当前牌组 ${originalDeck}`,
 );
@@ -308,6 +335,61 @@ try {
         (await bridgeCalls()).includes(`opts:${parentId}`),
         `opts:${parentId}`,
     );
+
+    // 5a. 关窗契约（PARITY 3.1）：真发标题栏 ×（WM_CLOSE）→ 宿主必须把判定交给页面的
+    //     `anki.deckOptionsPendingChanges()`，没有改动时页面直接请求关闭。
+    //     对照 `deckoptions.py:62-68` 的 `closeEvent → web.eval(...)`。
+    //     窗口是刚开的、`parentId` 还在，所以这里能稳定复现（宿主那侧由
+    //     `windows::DECK_OPTIONS_CLOSE_REQUEST_JS` 注入）。
+    if (process.env.ANKI_LOG) {
+        const logOf = () => {
+            try {
+                return fs.readFileSync(process.env.ANKI_LOG, "utf8");
+            } catch {
+                return "";
+            }
+        };
+        const countOf = (pattern) => logOf().split(pattern).length - 1;
+        const waitFor = async (pattern, minimum, timeoutMs = 20_000) => {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline && countOf(pattern) < minimum) {
+                await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+            return countOf(pattern) >= minimum;
+        };
+        const title = (process.env.ANKI_LANG ?? "").startsWith("zh") ? "选项" : "Options";
+        const handoffs = countOf("deck-options 收到关闭请求");
+        const closes = countOf("关闭窗口: deck-options");
+        // 本轮第一次开牌组选项窗口：日志里出现这一行就说明宿主已经开窗了
+        // （`ps1` 每次运行都会删日志，所以不用做差量）
+        check(
+            "牌组选项窗口已就绪",
+            await waitFor("打开窗口: deck-options ->", 1),
+        );
+        const sent = spawnSync(
+            "pwsh",
+            [
+                "-File",
+                "tauri/tools/close-window.ps1",
+                "-ProcessName",
+                "anki-tauri",
+                "-TitleLike",
+                title,
+            ],
+            { stdio: "inherit" },
+        );
+        check("向牌组选项窗口发出了 WM_CLOSE", sent.status === 0, `exit=${sent.status}`);
+        check(
+            "× 交给了页面判定未保存改动",
+            await waitFor("deck-options 收到关闭请求", handoffs + 1),
+        );
+        check(
+            "× 之后牌组选项窗口关掉了",
+            await waitFor("关闭窗口: deck-options", closes + 1),
+        );
+    } else {
+        console.log("没有 ANKI_LOG，跳过牌组选项的 × 关窗契约");
+    }
 
     const renamed = `TauriRenamed${stamp}`;
     await gearAction(parentId, "rename");
