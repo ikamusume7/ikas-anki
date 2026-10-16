@@ -24,7 +24,7 @@ param(
     [string]$ApiKey = "test-key-123",
     [string]$Collection = "out/tauri-test/collection-sync.anki2",
     [string]$ProfileDir = "out/tauri-test/profile-sync",
-    [string]$Collection2 = "out/tauri-test/collection-sync2.anki2",
+    [string]$Collection2 = "out/tauri-test/sync-client2/collection.anki2",
     [string]$ProfileDir2 = "out/tauri-test/profile-sync2",
     [string]$SyncBase = "out/tauri-test/sync-server",
     [string]$Lang = "zh-CN",
@@ -65,11 +65,18 @@ Get-ChildItem (Join-Path $root "$Collection-*") -ErrorAction SilentlyContinue |
 foreach ($path in @($ProfileDir, $ProfileDir2)) {
     if (Test-Path (Join-Path $root $path)) { Remove-Item (Join-Path $root $path) -Recurse -Force }
 }
-foreach ($path in @($Collection2)) {
-    if (Test-Path (Join-Path $root $path)) { Remove-Item (Join-Path $root $path) -Force }
-    Get-ChildItem (Join-Path $root "$path-*") -ErrorAction SilentlyContinue |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-}
+# 服务器侧的**整个用户目录**（集合 + 媒体 + 媒体 db）都清掉：只删文件不删 db 会留下"db 说有、
+# 磁盘上没有"的不一致状态 —— 实测表现为 `addMediaFile` 不再写文件、`/msync/downloadFiles`
+# 一律 409（`requested a file that doesn't exist`）。
+if (Test-Path $syncUserDir) { Remove-Item $syncUserDir -Recurse -Force -ErrorAction SilentlyContinue }
+# 客户端这边同理：删夹具不够，`collection.media.db2` 里那条记录也要一起清
+Get-ChildItem (Join-Path $root "out/tauri-test/collection.media/tauri-sync-check*") -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem (Join-Path $root "out/tauri-test/collection.media.db2*") -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+$collection2Dir = Split-Path -Parent (Join-Path $root $Collection2)
+if (Test-Path $collection2Dir) { Remove-Item $collection2Dir -Recurse -Force }
+New-Item -ItemType Directory -Force -Path $collection2Dir | Out-Null
 
 # 1. 先起真同步服务器（它是独立的进程，与外壳无关）
 Write-Host "启动本地同步服务器（端口 $SyncPort，数据 $SyncBase）…"
@@ -138,10 +145,16 @@ try {
     if (-not $secondUp) { throw "第二个客户端没起来（详见 $logPath2）" }
     Write-Host "第二个客户端已就绪（端口 $Port2，空集合）" -ForegroundColor Green
 
+    # 检查脚本要分别操作两个外壳：端口显式传，`ANKI_API_PORT` 也恢复成第一个 —— 之前忘了恢复，
+    # 结果检查里的"第一个客户端"其实一直是第二个（两个客户端的断言会退化成自证）。
+    $env:ANKI_API_PORT = "$Port"
+    $env:FIRST_API_PORT = "$Port"
+    $env:SECOND_API_PORT = "$Port2"
     $env:ANKI_LOG = $logPath
     $env:ANKI_API_PORT2 = "$Port2"
     $env:ANKI_LOG2 = $logPath2
     $env:SECOND_COLLECTION = (Join-Path $root $Collection2)
+    $env:FIRST_COLLECTION = (Join-Path $root $Collection)
     $env:SYNC_PORT = "$SyncPort"
     $env:SYNC_BASE = (Join-Path $root $SyncBase)
     $env:SYNC_LOG = $syncLogPath

@@ -41,9 +41,10 @@ import {
     NotetypeNames,
 } from "../../out/ts/lib/generated/anki/notetypes_pb.js";
 import { Deck } from "../../out/ts/lib/generated/anki/decks_pb.js";
+import { AddMediaFileRequest } from "../../out/ts/lib/generated/anki/media_pb.js";
 
-const port = process.env.ANKI_API_PORT ?? "40001";
-const port2 = process.env.ANKI_API_PORT2 ?? "";
+const port = process.env.FIRST_API_PORT ?? process.env.ANKI_API_PORT ?? "40001";
+const port2 = process.env.SECOND_API_PORT ?? process.env.ANKI_API_PORT2 ?? "";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
 const logPath = process.env.ANKI_LOG ?? "";
 const syncPort = process.env.SYNC_PORT ?? "40011";
@@ -55,6 +56,7 @@ const base2 = port2 ? `http://127.0.0.1:${port2}` : "";
 const endpoint = `http://127.0.0.1:${syncPort}/`;
 const serverLog = process.env.SYNC_LOG ?? "";
 const collection2 = process.env.SECOND_COLLECTION ?? "";
+const collection1 = process.env.FIRST_COLLECTION ?? "";
 const failures = [];
 
 function check(name, ok, detail = "") {
@@ -76,6 +78,9 @@ function readLog(file) {
 
 const hostLog = () => readLog(logPath);
 const syncLog = () => readLog(serverLog);
+
+/** 媒体夹：集合所在目录下的 `collection.media`（与桌面版同一套命名）。 */
+const mediaDirOf = (collectionPath) => path.join(path.dirname(collectionPath), "collection.media");
 
 async function waitFor(name, predicate, timeoutMs = 60_000, intervalMs = 500) {
     const deadline = Date.now() + timeoutMs;
@@ -165,6 +170,7 @@ function bridgeShim(config) {
     };
 }
 let browser = null;
+let page2 = null;
 
 try {
     if (!logPath) {
@@ -317,7 +323,7 @@ try {
             );
         }
 
-        const page2 = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+        page2 = await browser.newPage({ viewport: { width: 1200, height: 800 } });
         await page2.addInitScript(bridgeShim, { key: apiKey, window: "main" });
         await page2.goto(`${base2}/decks/`, { waitUntil: "load" });
         await page2.waitForSelector("table.list tbody tr", { timeout: 15_000 });
@@ -368,6 +374,54 @@ try {
                 60_000,
             ),
             marker,
+        );
+    }
+    // 5. **媒体同步**的成功路径：client1 加一个媒体文件 → 同步 → 服务器媒体夹里出现它，
+    //    client2 再同步 → 它的媒体夹里也出现（`/msync/*` 一整条）
+    const mediaName = "tauri-sync-check.txt";
+    const storedName = GenericString.fromBinary(
+        await rpc(
+            "addMediaFile",
+            new AddMediaFileRequest({
+                desiredName: mediaName,
+                data: new TextEncoder().encode(`tauri sync media ${Date.now()}`),
+            }).toBinary(),
+        ),
+    ).val;
+    check(
+        "第一个客户端加了媒体文件（返回真实存下的名字）",
+        typeof storedName === "string" && storedName.length > 0,
+        storedName,
+    );
+    // 再点一次同步：这次集合同步没有变化，媒体同步会把新文件推上去
+    await page.locator("#sync").click();
+    const client1Media = collection1 ? path.join(mediaDirOf(collection1), storedName) : "";
+    check(
+        "第一个客户端的媒体夹里有它",
+        client1Media
+            ? await waitFor("client1 media", () => fs.existsSync(client1Media), 30_000)
+            : false,
+        client1Media || "（没有 FIRST_COLLECTION）",
+    );
+    const serverMedia = path.join(syncBase, syncUser, "media", storedName);
+    check(
+        "服务器媒体夹里出现了这个文件",
+        await waitFor("server media", () => fs.existsSync(serverMedia), 90_000),
+        serverMedia,
+    );
+    check(
+        "服务器日志里有 /msync/ 请求",
+        /"\/msync\/[a-zA-Z]+"/.test(syncLog()),
+        (syncLog().match(/"\/msync\/[a-zA-Z]+"/g) ?? []).slice(0, 4).join(" / "),
+    );
+
+    if (port2) {
+        const client2Media = path.join(mediaDirOf(collection2), storedName);
+        await page2.locator("#sync").click();
+        check(
+            "第二个客户端也拿到了这个媒体文件",
+            await waitFor("client2 media", () => fs.existsSync(client2Media), 90_000),
+            client2Media,
         );
     }
 } catch (error) {

@@ -1162,9 +1162,18 @@ target/debug/anki-sync-server.exe      # /health 返回 200 即就绪
 4. **`/sync/download` 不会进服务器日志**：那是流式响应，`with_logging_layer` 不会为它写
    `finished` 行（实测只有 `meta`/`hostKey`/`upload` 有）。所以下载方向只能靠**产物**断言
    （集合大小/内容），不能靠日志。
-5. 第二个客户端点同步时**没有**弹「上传/下载」：`syncStatus` 判定不需要完整同步，随后的
-   正常同步就把服务器那份拉下来了 —— 想稳定测"弹框 → 点下载"这条 UI 分支，得让两边
-   `scm` 都不同且服务器侧有更新（`scm` 造不同见 §5.43）。
+5. **两个客户端的端口必须显式传**：`verify-sync.ps1` 为了起第二个外壳会把
+   `ANKI_API_PORT` 改成第二个的端口，如果忘了恢复，检查里的"第一个客户端"其实一直是第二个 ——
+   于是"第二个客户端下载到了第一个客户端的卡/集合大小一致"这类断言会**自己证明自己**
+   （跑出来全绿但毫无意义）。现在检查用显式的 `FIRST_API_PORT` / `SECOND_API_PORT`。
+   改用真双客户端之后，「上传/下载」二选一这条 UI 分支**确实会弹**（第二个客户端是全新集合），
+   点「下载」后它的集合与服务器侧大小一致、里面有第一个客户端那张卡；媒体也真走
+   `/msync/uploadChanges` → `/msync/downloadFiles`。
+6. **媒体夹具要连媒体 db 一起清**：只删 `collection.media/xxx` 而留着 `collection.media.db2`
+   会造出"db 说有、磁盘上没有"的状态，表现为 `addMediaFile` 不再落盘、
+   `/msync/downloadFiles` 一律 409（`requested a file that doesn't exist`）。
+   `verify-sync.ps1` 现在把服务器侧整个用户目录（集合 + 媒体 + `media.db`）和客户端的
+   `collection.media.db2*` 一起清。
 
 另外，同步的凭据（`syncKey` / `syncUser` / `customSyncUrl` / `syncMedia`）走 profile 配置，
 **不在集合里** —— 所以「还原备份」不会把它们清掉（与桌面版一致）。

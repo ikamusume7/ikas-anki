@@ -465,13 +465,19 @@ PASS  服务器侧集合不是空文件 — 147456 字节
 PASS  同步状态回到非 error — idle
 PASS  服务器日志里整条链路都是 200（hostKey → meta → upload）
 PASS  拿到第一个客户端的 host key — "ed178d…"
-PASS  第二个客户端没有弹框（后端直接判定为下载） — 媒体同步完成。
-PASS  第二个客户端的集合变成了服务器上那份（大小一致） — collection-sync2.anki2 vs 服务器侧
-PASS  第二个客户端真的拿到了第一个客户端的那张卡 — TauriSync 797695
+PASS  第二个客户端弹出了「上传/下载」选择
+PASS  第二个客户端的集合变成了服务器上那份（大小一致） — sync-client2/collection.anki2 vs 服务器侧
+PASS  第二个客户端真的拿到了第一个客户端的那张卡 — TauriSync 430415
+PASS  第一个客户端加了媒体文件（返回真实存下的名字） — tauri-sync-check.txt
+PASS  第一个客户端的媒体夹里有它
+PASS  服务器媒体夹里出现了这个文件 — sync-server/tauri/media/tauri-sync-check.txt
+PASS  服务器日志里有 /msync/ 请求 — /msync/uploadChanges ×3 / /msync/mediaSanity
+PASS  第二个客户端也拿到了这个媒体文件 — sync-client2/collection.media/tauri-sync-check.txt
 ```
-（第二个客户端由 `verify-sync.ps1` 一起起：空集合 + 自己的 profile，然后检查把第一个客户端的
-host key 通过它的平台端点写进去 —— 这条覆盖了**整份下载**方向。注意 `/sync/download` 是流式
-响应、服务器日志里没有它的 `finished` 行，所以下载只能靠产物断言。）
+（第二个客户端由 `verify-sync.ps1` 一起起：**独立目录**下的空集合 + 自己的 profile，然后检查把
+第一个客户端的 host key 通过它的平台端点写进去 —— 覆盖**整份下载**方向与「上传/下载」二选一这条
+UI 分支；媒体那几步覆盖 `/msync/*` 的上传与下载。注意 `/sync/download` 是流式响应、服务器日志里
+没有它的 `finished` 行，所以下载只能靠产物断言。）
 
 **差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口与冲突文案）、进度条（只有文字
 状态）、关闭时同步（没有优雅关闭钩子）；媒体同步的 **happy path** 与
