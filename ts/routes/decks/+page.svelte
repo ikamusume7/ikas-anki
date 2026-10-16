@@ -725,9 +725,22 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
      * 没有「搜索」按钮（那是浏览器的搜索编辑器）；FSRS 专用排序（可提取性升/降序）也不列。
      */
     async function askFilteredDeck(): Promise<void> {
+        await openFilteredEditor(0n);
+    }
+
+    /**
+     * 打开筛选牌组编辑器：`deckId` 为 0 是新建（工具 → 创建筛选牌组），非 0 是编辑已有的
+     * —— 对照 `filtered_deck.py` 的 `FilteredDeckConfigDialog(deck_id=...)`：从
+     * `deckoptions.py:133-134` 的「选项」点到筛选牌组时，Qt 开的就是这个对话框。
+     *
+     * 草稿来自 `getOrCreateFilteredDeck(DeckId(id))`：传已有 id 时后端返回它的当前配置，
+     * 所以两条路共用同一套表单字段（宿主用 `decks/?filtered=<id>` 打开这个页面，
+     * 见 `main_window::open_deck_options`）。
+     */
+    async function openFilteredEditor(deckId: bigint): Promise<void> {
         busy = true;
         try {
-            const draft = await getOrCreateFilteredDeck(new DeckId({ did: 0n }));
+            const draft = await getOrCreateFilteredDeck(new DeckId({ did: deckId }));
             const term = draft.config?.searchTerms[0];
             filteredId = draft.id;
             filteredConfig = draft.config ?? null;
@@ -1430,6 +1443,13 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         });
         await reload();
         await loadSyncState();
+        // 筛选牌组的「选项」：宿主开的是 `decks/?filtered=<id>`（对照
+        // `deckoptions.py:133-134` 的 `FilteredDeckConfigDialog`），这里预填并弹出编辑器
+        const filtered = new URLSearchParams(window.location.search).get("filtered");
+        if (filtered) {
+            await openFilteredEditor(BigInt(filtered));
+            return;
+        }
         // 概览面板：`?deck=<id>` 或 `?deck=current`（宿主 `s` 用后者）
         const wanted = new URLSearchParams(window.location.search).get("deck");
         if (wanted) {

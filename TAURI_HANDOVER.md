@@ -84,7 +84,7 @@
 | `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **拖入文件**（合成 drop → 媒体落库）→ **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
 | `tauri/tools/verify-browser.ps1` | 浏览器：`browse` 开窗 → 截图 → 侧栏 / 表格 / 双击开编辑器 → `searchInBrowser` 复用路径 → 管理笔记类型窗口（列表 / 增删改 / 克隆 / 两个对话框端点）→ 关闭连带 |
-| `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单 / 新建删除 → **导入端到端**（造 `.apkg` 夹具 → 页面导入 → RPC 复查）→ `d`/`s`/`study` 切页 → **导出目录拦截**（第二段：`ANKI_SAVE_PATH` 指进 profile 目录 → `export-guard-check.mjs`） |
+| `tauri/tools/verify-decks.ps1` | 牌组列表（启动默认页）：截图 → 折叠 / 概览 / 齿轮菜单（含**牌组选项的 × 关窗契约**）/ 新建删除 → **导入端到端**（造 `.apkg` 夹具 → 页面导入 → RPC 复查）→ `d`/`s`/`study` 切页 → **筛选牌组「选项」**（宿主开 `filtered-deck` 窗口 + 页面预填）→ **导出目录拦截**（第二段：`ANKI_SAVE_PATH` 指进 profile 目录 → `export-guard-check.mjs`） |
 | `tauri/tools/verify-i18n.ps1` | 界面语言：四个场景（`meta.defaultLang`=zh_CN / en_US、无 prefs21 跟随系统、`ANKI_LANG` 覆盖）各自断言宿主生效语言 + `i18nResources` 下发的文案 |
 | `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
 | `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
@@ -1553,6 +1553,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `profiles.rs` + 「切换配置」都落地，`verify-prefs` / `verify-theme` / `verify-i18n` /
   `verify-profiles` 四个一键脚本全绿；剩下的尾巴（媒体同步日志窗口、`answer_keys` 自定义答案键、
   `resetWindowSizes`、「干扰项」的消费方）记在 PARITY 3.3 / 8.1-8.4。
+- **数据安全三项（PARITY §10 第 3 项）2026-10-16 已完成**：关窗契约（编辑当前 / 浏览器编辑区 / 牌组选项的 × 先落库或先问页面，`close-window.ps1` 真发 WM_CLOSE 断言）、筛选牌组「选项」（宿主按牌组类型分流到 `filtered-deck` 窗口）、导出目录拦截（`saveFileDialog` 拒 profile 目录内路径）、`prefs21` 写 null 改成删键（`Prefs21::delete`，顺手给了 `resetWindowSizes` 需要的删键端点）。
 - **复习界面的三块缺口**：~~键盘答题（只绑了 8 个键）~~、~~答完队列的 Congratulations 收尾~~、
   ~~时间盒~~ → **2026-10-16 均已补齐**（`assets/reviewer-keys.js` + 宿主 `answer_shown` 守卫 +
   `reviewer-keys-check.mjs`；`reviewer::start()` 清会话 + 回概览，概览改画 Congratulations，

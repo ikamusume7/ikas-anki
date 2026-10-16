@@ -208,7 +208,7 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
         command if command.starts_with("opts:") => {
             match command.trim_start_matches("opts:").parse::<i64>() {
                 Ok(deck_id) => {
-                    if let Err(error) = main_window::open_deck_options(state, deck_id) {
+                    if let Err(error) = main_window::open_deck_options(state, deck_id).await {
                         tracing::warn!("打开牌组选项失败: {error:#}");
                     }
                 }

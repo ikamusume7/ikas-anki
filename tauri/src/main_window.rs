@@ -28,7 +28,11 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use anyhow::Result;
+use prost::Message as _;
 use tauri::Manager as _;
+
+use anki_proto::decks::deck;
+use anki_proto::decks::Deck;
 
 use crate::legacy;
 use crate::state::AppState;
@@ -103,10 +107,36 @@ pub fn start_study(state: &AppState) -> Result<()> {
     Ok(())
 }
 
-/// 打开牌组选项窗口（牌组列表的齿轮菜单 → `opts:<did>`）。
+/// 打开牌组选项窗口（牌组列表的齿轮菜单 → `opts:<did>`，复习菜单的「选项」也走这里）。
 ///
-/// 与复习菜单里的「选项」是同一个页面（`deck-options/<did>`），见 `reviewer_menu.rs`。
-pub fn open_deck_options(state: &AppState, deck_id: i64) -> Result<()> {
+/// **筛选牌组走另一个对话框**：对照 `deckoptions.py:125-134` 的
+/// `display_options_for_deck()`，dyn 牌组开的是 `FilteredDeckConfigDialog`，而不是牌组选项
+/// 页（rslib 对筛选牌组的 `deck-options` 会直接报错，用户既看不到筛选条件也改不了）。
+/// 本外壳复用牌组列表页里的筛选牌组编辑器：开一个 `?filtered=<id>` 的窗口，页面预填并弹出。
+pub async fn open_deck_options(state: &AppState, deck_id: i64) -> Result<()> {
+    let deck = read_deck(state, deck_id).await;
+    let filtered = deck
+        .as_ref()
+        .and_then(|deck| deck.kind.as_ref())
+        .map(|kind| matches!(kind, deck::Kind::Filtered(_)))
+        .unwrap_or(false);
+    let name = deck.map(|deck| deck.name).unwrap_or_default();
+
+    if filtered {
+        // 标题与上游一致：`actions-options-for(val=牌组名)`（`filtered_deck.py:192-193`）
+        let title = state.backend.i18n().translate(
+            "actions-options-for",
+            Some(anki_i18n::tr_args! { "val" => name.clone() }),
+        );
+        tracing::info!("打开筛选牌组选项: deck={deck_id}（{name}）");
+        return windows::open(
+            state,
+            &WindowSpec::new(windows::FILTERED_DECK, &format!("decks/?filtered={deck_id}"))
+                .title(title)
+                .size(720.0, 780.0),
+        );
+    }
+
     tracing::info!("打开牌组选项: deck={deck_id}");
     windows::open(
         state,
@@ -114,6 +144,28 @@ pub fn open_deck_options(state: &AppState, deck_id: i64) -> Result<()> {
             .title(state.backend.i18n().translate("actions-options", None))
             .size(900.0, 700.0),
     )
+}
+
+/// 读一个牌组（`getDeck`）。失败时返回 `None` —— 调用方按"不是筛选牌组"处理。
+async fn read_deck(state: &AppState, deck_id: i64) -> Option<Deck> {
+    let request = anki_proto::decks::DeckId { did: deck_id };
+    match state
+        .backend
+        .call("getDeck", prost::Message::encode_to_vec(&request))
+        .await
+    {
+        Ok(bytes) => match Deck::decode(bytes.as_slice()) {
+            Ok(deck) => Some(deck),
+            Err(error) => {
+                tracing::warn!("解析 getDeck 结果失败: {error}");
+                None
+            }
+        },
+        Err(error) => {
+            tracing::warn!("读牌组失败（按普通牌组处理）: {error}");
+            None
+        }
+    }
 }
 
 /// 打开「自定义学习」窗口（概览里的「自定义学习」，对照 Qt 的 `customstudy.py`）。

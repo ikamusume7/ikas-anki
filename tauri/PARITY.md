@@ -65,7 +65,7 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② ~~**× 关窗丢改动**~~ → **宿主已补拦截并断言**（`windows::DECK_OPTIONS_CLOSE_REQUEST_JS`：`CloseRequested` 时 `prevent_close` + 让页面跑 `anki.deckOptionsPendingChanges()`；页面里的确认框改成走宿主 `askUser`，测试钩子 `ANKI_CONFIRM_YES` 才管用）——`decks-check.mjs` 用 `close-window.ps1` 真发 WM_CLOSE，断言「交给页面判定 + 窗口关掉」；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
+| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① ~~**筛选牌组点「选项」会开到报错窗口**~~ → **已修**（宿主的 `main_window::open_deck_options` 先查牌组类型，dyn 时开 `filtered-deck` 窗口 = 牌组列表页的 `?filtered=<id>`，复用那里的筛选牌组编辑器并预填；复习菜单那条入口也改成走同一个函数，否则会漏掉这条分支）；② ~~**× 关窗丢改动**~~ → **宿主已补拦截并断言**（`windows::DECK_OPTIONS_CLOSE_REQUEST_JS`：`CloseRequested` 时 `prevent_close` + 让页面跑 `anki.deckOptionsPendingChanges()`；页面里的确认框改成走宿主 `askUser`，测试钩子 `ANKI_CONFIRM_YES` 才管用）——`decks-check.mjs` 用 `close-window.ps1` 真发 WM_CLOSE，断言「交给页面判定 + 窗口关掉」；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 普通牌组仍只有「开窗」级断言（筛选牌组那条已有页面级断言：?filtered=<id> 预填名字/搜索词） | `qt/aqt/deckoptions.py:62-67,125-134` |
 | 3.2 | ⚠️ | **统计图** | 入口两处都有（牌组列表工具栏「统计」、复习页 `t`/`Shift+t`），页面 `graphs/` 默认 `initialSearch="deck:current"`（等于 Qt 的 `_selectedDeck()`，**按当前牌组打开已经成立**）。**还差**：① Qt 的 NewDeckStats 顶部有**牌组下拉**（换牌组 = 设当前牌组 + 刷新），这里换牌组只能靠页面里的「牌组/集合/自定义搜索」；② 没有 **Save PDF**（Qt 是原生按钮 + `printToPdf`）；③ 窗口标题用 `qt-misc-stats`（「统计」），Qt 用 `statistics-title`（「统计数据」）；④ 没有"请先选一个牌组"的兜底 | `qt/aqt/stats.py:52-66,95-123`、`forms/stats.ui:14` |
 | 3.3 | ⚠️ | **偏好设置** | **已重写成真首选项页面**（`ts/routes/preferences/`）：七个分页照 `forms/preferences.ui`（显示 / 复习 / 编辑 / 同步 / 备份 / 第三方服务 / 实验功能）+ 底部的**帮助**与**关闭**；纯前端就能落库的都接了 —— 语言（`meta.defaultLang`，选项来自宿主 `languages` 命令，54 种）、主题（发 `theme:` 命令，宿主落库 + 广播）、界面缩放、上下工具栏隐藏、减少动效、极简模式、检查更新两项（只落库）、调度三项（`rollover`/`learnAheadSecs`/`timeLim`）、reviewer 四项、`renderLatex`、编辑五项、同步五项（含 `customSyncUrl` 连带清 `currentSyncUrl`）、备份四项。**还差**：AnkiWeb 的登录/登出还留在牌组列表工具栏（没搬进来）、「媒体同步日志」窗口、`answer_keys` 自定义答案键（pickle 字典键是整数，现有端点读不出来）、`resetWindowSizes`（需要 prefs21 删键端点）、视频驱动（WebView2 无此概念）、AnkiHub（addon 系统已移除）；「干扰项」这几项目前只落库、外壳还没消费。验证：`verify-prefs.ps1` + `prefs-check.mjs`（七页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
 | 3.4 | ⚠️ | **导入** | 三条入口都通（牌组列表底部「导入文件」、主窗口拖入、`ANKI_OPEN_PATH` 顶掉对话框），扩展名分流正确，`.apkg` 有端到端断言（造夹具 → 页面导入 → RPC 复查牌组与笔记回来 → `importDone`）。**还差**：`.csv/.tsv/.txt` → `import-csv` 只有单测，没有页面级/落库断言；「拖到主窗口导入」只有 `drop_path` 单测，没有合成 `DragDropEvent` 的端到端；`.colpkg`/`collection.apkg`/`backup-*.apkg` 与 Mnemosyne `.db` 仍只提示不支持（见 6.7） | `qt/aqt/import_export/importing.py`、`qt/aqt/main.py:112-137` |
@@ -194,11 +194,14 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    （`reviewer-keys-check.mjs`）；队列空了清会话 + 回概览，概览改画 Congratulations
    （`congrats-check.mjs`）；时间盒（`startTimebox` / `timeboxReached` + 「继续 / 结束」框，
    `verify-timebox.ps1` + `timebox-check.mjs` 两种选择各验一次）。剩下的尾巴记在 1.4 / 1.6 / 2.6。
-3. **数据安全三项**：~~关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）~~、
-   ~~导出目录拦截（5.9）~~、~~6.8 的写 null 改成删键~~ —— **2026-10-16 已做**（关窗契约：
-   `close-window.ps1` 真发 WM_CLOSE，`verify-editor` / `verify-browser` / `decks-check` 各自断言；
+3. **~~数据安全三项~~**：~~关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）~~、
+   ~~筛选牌组「选项」（3.1）~~、~~导出目录拦截（5.9）~~、~~6.8 的写 null 改成删键~~
+   —— **2026-10-16 全部做完**（关窗契约：`close-window.ps1` 真发 WM_CLOSE，
+   `verify-editor` / `verify-browser` / `decks-check` 各自断言；筛选牌组「选项」：宿主按
+   牌组类型分流到 `filtered-deck` 窗口，`custom-study-check.mjs` 断言窗口 + 页面预填；
    导出拦截：`saveFileDialog` 的守卫 + `export-guard-check.mjs`；写 null → 删键：
-   `Prefs21::delete` + `verify-prefs.ps1` 的 pickle dump 断言）。**还差**：筛选牌组「选项」（下面那条）
+   `Prefs21::delete` + `verify-prefs.ps1` 的 pickle dump 断言）。
+   `verify-decks` / `verify-prefs` / `verify-editor` / `verify-browser` / `verify-reviewer` 全绿。
 4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**
 5. **同步成功率路径与冲突分支、进度条（6.1/8.9）**；**打包** fileAssociations + 签名 + 图标
    （7.1/7.4）；`just` + CI（7.3）；Android（7.2）

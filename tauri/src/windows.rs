@@ -88,6 +88,10 @@ pub const CARDS: &str = "cards";
 pub const NOTETYPES: &str = "notetypes";
 /// 牌组选项（Qt 的 `DeckOptionsDialog`）。
 pub const DECK_OPTIONS: &str = "deck-options";
+
+/// 筛选牌组的「选项」（Qt 的 `FilteredDeckConfigDialog`）。页面是牌组列表页的
+/// `?filtered=<id>`（复用那里的筛选牌组编辑器），见 `main_window::open_deck_options`。
+pub const FILTERED_DECK: &str = "filtered-deck";
 /// 导入（Qt 的 `ImportDialog`）。
 pub const IMPORT: &str = "import";
 /// 录音对话框（Qt 的 `RecordDialog`）。

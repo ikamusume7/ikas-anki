@@ -58,6 +58,21 @@ async function rpc(method, body) {
     return new Uint8Array(await response.arrayBuffer());
 }
 
+/** 发一条桥接命令（模拟页面里的 `pycmd`；`X-Anki-Window` 默认主窗口）。 */
+async function sendBridge(command, window = "main") {
+    const response = await fetch(`${base}/_anki/pycmd`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "text/plain",
+            Authorization: `Bearer ${apiKey}`,
+            "X-Anki-Window": window,
+            Connection: "close",
+        },
+        body: command,
+    });
+    return response.status;
+}
+
 function bridgeShim(config) {
     const originalFetch = window.fetch.bind(window);
     window.fetch = (input, init) => {
@@ -229,6 +244,56 @@ try {
         await page.keyboard.press("r");
         await page.waitForTimeout(1500);
         check("按 `r` 重建筛选牌组", (await cardsInDeck()) > 0, `${await cardsInDeck()} 张`);
+
+        // 4c. 筛选牌组的「选项」（PARITY 3.1）：对照 `deckoptions.py:125-134`，dyn 牌组的
+        //     「选项」开的是 `FilteredDeckConfigDialog`，**不是**牌组选项页（后者对筛选牌组
+        //     会直接报错）。宿主应开 `filtered-deck` 窗口，页面用 `?filtered=<id>` 预填编辑器。
+        if (process.env.ANKI_LOG) {
+            const logOf = () => {
+                try {
+                    return fs.readFileSync(process.env.ANKI_LOG, "utf8");
+                } catch {
+                    return "";
+                }
+            };
+            const countOf = (pattern) => logOf().split(pattern).length - 1;
+            const deckOptionsBefore = countOf("打开窗口: deck-options ->");
+            const filteredBefore = countOf("打开窗口: filtered-deck ->");
+            const status = await sendBridge(`opts:${filtered.deckId}`);
+            check("opts:<筛选牌组> 被接受", status === 200, `HTTP ${status}`);
+            const deadline = Date.now() + 20_000;
+            while (
+                Date.now() < deadline &&
+                countOf("打开窗口: filtered-deck ->") <= filteredBefore
+            ) {
+                await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+            check(
+                "筛选牌组的「选项」开的是 filtered-deck 窗口",
+                countOf("打开窗口: filtered-deck ->") > filteredBefore,
+            );
+            check(
+                "没有误开牌组选项页",
+                countOf("打开窗口: deck-options ->") === deckOptionsBefore,
+            );
+        } else {
+            console.log("没有 ANKI_LOG，跳过筛选牌组「选项」的宿主断言");
+        }
+        // 页面侧：`?filtered=<id>` 打开时要预填这个名字与搜索词
+        await page.goto(`${base}/decks/?filtered=${filtered.deckId}`, { waitUntil: "load" });
+        await page.waitForSelector(".modal.show #filtered-name", { timeout: 20_000 });
+        const prefilledName = await page.locator(".modal.show #filtered-name").inputValue();
+        const prefilledSearch = await page.locator(".modal.show #filtered-search").inputValue();
+        check(
+            "筛选牌组编辑器预填了名字",
+            prefilledName.length > 0,
+            `名字「${prefilledName}」`,
+        );
+        check(
+            "筛选牌组编辑器预填了搜索词",
+            prefilledSearch.length > 0,
+            `搜索「${prefilledSearch}」`,
+        );
 
         await rpc("removeDecks", new DeckIds({ dids: [filtered.deckId] }).toBinary());
         await rpc("setCurrentDeck", new DeckId({ did: originalDeckId }).toBinary());

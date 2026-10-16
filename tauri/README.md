@@ -1676,7 +1676,7 @@ browserSearch：图表 → 浏览器搜索
 | `decks-check.mjs` | 上面那个脚本调用的检查：Playwright 真的点齿轮、在弹框里输入、导出笔记纯文本并读回文件断言牌组范围，并用 RPC 复查当前牌组/牌组是否真的建删 |
 | `cleanup-test-decks.mjs` | 清掉检查脚本**中途失败**留下的临时牌组（`TauriTemp*` / `TauriDecks*` 等） |
 | `occlusion-check.mjs` | `verify-editor.ps1` 调用的图像遮挡检查：遮挡按钮 → 图片选择器 → 宿主 `/openFilePicker`（`ANKI_OPEN_PATH`）→ 媒体拷贝 → 掩码编辑器渲染出图片 |
-| `custom-study-check.mjs` | `verify-decks.ps1` 调用的自定义学习检查：六个选项 / cram 四选一 / 确定后建出筛选牌组并切成当前牌组（用 RPC 复查并还原） |
+| `custom-study-check.mjs` | `verify-decks.ps1` 调用的自定义学习检查：六个选项 / cram 四选一 / 确定后建出筛选牌组并切成当前牌组（用 RPC 复查并还原）→ **筛选牌组的「选项」**（宿主开 `filtered-deck` 窗口而不是报错的牌组选项页，`?filtered=<id>` 页面预填名字与搜索词） |
 | `verify-i18n.ps1` | 一键：界面语言（四个场景：`meta.defaultLang`=zh_CN / en_US、无 prefs21 跟随系统、`ANKI_LANG` 覆盖；每个都断言宿主生效语言 + `i18nResources` 下发的文案） |
 | `i18n-check.mjs` | 上面那个脚本调用的检查：调 `i18nResources` 断言主语言与 `actions` 模块的文案（响应是「主语言 + 英文回退」两个并行数组） |
 | `verify-theme.ps1` | 一键：主题 / 夜间模式（`meta theme=2` 启动 → 真实窗口平均亮度、发 `theme:1` 切浅色、切回深色、复习界面 legacy 页也验 → 跑 `theme-check.mjs`） |

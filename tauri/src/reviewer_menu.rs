@@ -259,7 +259,7 @@ pub async fn handle(state: &AppState, command: &str) {
         }
         // 牌组选项：开既有的 `deck-options/<deckId>` 路由（对照 `reviewer.py:1090-1092`）
         "options" => {
-            if let Err(error) = open_deck_options(state, card.deck_id) {
+            if let Err(error) = open_deck_options(state, card.deck_id).await {
                 tracing::warn!("打开牌组选项失败: {error:#}");
             }
         }
@@ -375,18 +375,12 @@ async fn note_is_marked(state: &AppState, note_id: i64) -> bool {
     }
 }
 
-/// 打开牌组选项窗口（`ts/routes/deck-options/`，已有页面）。
+/// 打开牌组选项窗口。
 ///
-/// 对照 `qt/aqt/deckoptions.py`：标题取 `actions_options()`；窗口关窗前页面会请求
-/// `deckOptionsRequireClose`（那条端点已经实现）。
-fn open_deck_options(state: &AppState, deck_id: i64) -> anyhow::Result<()> {
-    tracing::info!("打开牌组选项: deck={deck_id}");
-    windows::open(
-        state,
-        &windows::WindowSpec::new(windows::DECK_OPTIONS, &format!("deck-options/{deck_id}"))
-            .title(state.backend.i18n().translate("actions-options", None))
-            .size(900.0, 700.0),
-    )
+/// 直接复用 `main_window::open_deck_options`：**筛选牌组的卡片**要开筛选牌组编辑器
+/// （对照 `deckoptions.py:125-134`），这里再写一份就会漏掉那条分支。
+async fn open_deck_options(state: &AppState, deck_id: i64) -> anyhow::Result<()> {
+    crate::main_window::open_deck_options(state, deck_id).await
 }
 
 /// 注入到复习页面的菜单与表单。
