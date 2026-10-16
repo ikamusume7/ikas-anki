@@ -290,6 +290,20 @@ pub fn open_stats(state: &AppState) -> Result<()> {
     )
 }
 
+/// 打开「切换配置」窗口（Qt 的 `ProfileManager`，`main.py:321-345`）。
+///
+/// 标题用 `profiles-profiles`（Qt 的 `forms/profiles.ui` 是 "Anki"，
+/// 但窗口列表里叫 Profiles 更好认，差异记在 PARITY 8.2）。
+pub fn open_profiles(state: &AppState) -> Result<()> {
+    tracing::info!("打开切换配置窗口");
+    windows::open(
+        state,
+        &WindowSpec::new(windows::PROFILES, "profiles/")
+            .title(state.backend.i18n().translate("profiles-profiles", None))
+            .size(520.0, 480.0),
+    )
+}
+
 /// 打开偏好设置窗口（`Ctrl+P` → `onPrefs()`，`main.py:1459` → `Preferences` 对话框）。
 pub fn open_preferences(state: &AppState) -> Result<()> {
     tracing::info!("打开偏好设置窗口");

@@ -799,6 +799,13 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 label: qtAccel("qt-accel-file"),
                 items: [
                     {
+                        // 切换配置（`main.py:1432-1434` 的 `actionSwitchProfile`，`Ctrl+Shift+P`）
+                        label: qtAccel("qt-accel-switch-profile"),
+                        action: "switchProfile",
+                        shortcut: "Ctrl+Shift+P",
+                        run: () => bridgeCommand("switchProfile"),
+                    },
+                    {
                         label: qtAccel("qt-accel-import"),
                         action: "import",
                         run: () => bridgeCommand("import"),
@@ -1261,7 +1268,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 void undoLast(event.shiftKey ? "redo" : "undo");
             } else if (key === "p") {
                 event.preventDefault();
-                bridgeCommand("preferences");
+                // Ctrl+P = 首选项，Ctrl+Shift+P = 切换配置（对照 `qt-accel-switch-profile`）
+                bridgeCommand(event.shiftKey ? "switchProfile" : "preferences");
             } else if (key === "=" || key === "+") {
                 event.preventDefault();
                 zoomView("in");

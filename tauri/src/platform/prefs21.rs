@@ -68,6 +68,80 @@ impl Prefs21 {
         })
     }
 
+    /// 只按 base 目录定位，profile 名留空 —— **只用于 `_global` 行（meta）的读写**
+    /// （例如启动时要先读 `last_loaded_profile_name` / `defaultLang`，
+    /// 那时候还不知道要打开哪个 profile）。
+    pub fn for_meta(base: &Path) -> Self {
+        Self {
+            path: base.join("prefs21.db"),
+            profile: String::new(),
+        }
+    }
+
+    /// 列出全部 profile 名（排除 `_global`）。对照 `ProfileManager.profiles()`。
+    pub fn list_names(&self) -> Result<Vec<String>, String> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connect()?;
+        let mut statement = connection
+            .prepare("select name from profiles where name != '_global' order by name collate nocase")
+            .map_err(|error| format!("查询 profile 列表失败: {error}"))?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("读取 profile 列表失败: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("读取 profile 列表失败: {error}"))
+    }
+
+    /// 新建 profile：**只插一行，不建目录**（对照 `profiles.py:241-250` 的
+    /// `insert or ignore` + `defaultProfile`）。重名时返回 `false`。
+    pub fn create_row(&self, name: &str) -> Result<bool, String> {
+        let connection = self.connect()?;
+        let blob = serde_pickle::value_to_vec(
+            &Value::Dict(BTreeMap::new()),
+            serde_pickle::SerOptions::new(),
+        )
+        .map_err(|error| format!("序列化默认 profile 失败: {error}"))?;
+        let inserted = connection
+            .execute(
+                "insert or ignore into profiles(name, data) values (?, ?)",
+                rusqlite::params![name, blob],
+            )
+            .map_err(|error| format!("新建 profile 失败: {error}"))?;
+        Ok(inserted > 0)
+    }
+
+    /// 重命名 profile 行。没有这一行时返回 `false`。
+    pub fn rename_row(&self, from: &str, to: &str) -> Result<bool, String> {
+        let connection = self.connect()?;
+        let updated = connection
+            .execute(
+                "update profiles set name = ? where name = ? collate nocase",
+                rusqlite::params![to, from],
+            )
+            .map_err(|error| format!("重命名 profile 失败: {error}"))?;
+        Ok(updated > 0)
+    }
+
+    /// 删除 profile 行。
+    pub fn delete_row(&self, name: &str) -> Result<(), String> {
+        let connection = self.connect()?;
+        connection
+            .execute(
+                "delete from profiles where name = ? collate nocase and name != '_global'",
+                rusqlite::params![name],
+            )
+            .map_err(|error| format!("删除 profile 失败: {error}"))?;
+        Ok(())
+    }
+
+    /// 数据库路径（诊断用）。
+    #[allow(dead_code)]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// 读取某个配置项。对照 `mediasrv.get_setting_json(pm.profile.get)`：
     /// 项不存在时返回 `None`（前端会看到 `null`）。
     pub fn get(&self, store: Store, key: &str) -> Result<Option<Json>, String> {

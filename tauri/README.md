@@ -62,11 +62,15 @@ tauri/
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `ANKI_API_PORT` | `0`（随机） | 本地服务端口，便于调试与 e2e |
-| `ANKI_COLLECTION` | `%APPDATA%/Anki2/User 1/collection.anki2` | 要打开（或创建）的集合 |
+| `ANKI_BASE` | `%APPDATA%/Anki2` | 用户数据目录（`prefs21.db` + 各 profile 目录）。对照 aqt 的 `--base`；**用它隔离 base**，别用 `ANKI_COLLECTION`（后者优先级更高，会钉死集合） |
+| `ANKI_COLLECTION` | `<base>/<profile>/collection.anki2` | 要打开（或创建）的集合；设了它就忽略 profile 选择 |
+| `ANKI_PROFILE` | 空 | 指定 profile 名（次优先于 `ANKI_COLLECTION`，高于 `meta["last_loaded_profile_name"]`） |
 | `ANKI_START_PAGE` | `decks` | 窗口加载的 SvelteKit 页面（`decks` = 牌组列表，与 Qt 的启动状态一致；`reviewer` 是 legacy 复习页） |
 | `ANKI_OPEN_PATH` | 空 | 测试钩子：设了它，「打开文件」对话框（`openFilePicker`）直接返回这个路径。原生对话框没法自动点，图像遮挡的「选图片」靠它跑端到端（`occlusion-check.mjs`） |
 | `ANKI_API_KEY` | 随机生成 | 固定本机 API 密钥，仅用于调试与 e2e |
-| `ANKI_LANG` | `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式） |
+| `ANKI_LANG` | `meta["defaultLang"]` → 系统语言 → `en-US` | 界面语言；接受 `zh_CN` 或 `zh-CN`（统一转成 FTL 的连字符形式）。这是**测试钩子**，优先级最高 |
+| `ANKI_CONFIRM_YES` | 空 | 测试钩子：`askUser` 确认框直接返回「是」（原生模态框点不了），profile 删除的端到端检查靠它 |
+| `ANKI_NO_RESTART` | 空 | 测试钩子：切换 profile 时只写 `last_loaded_profile_name`、**不重启进程**（重启会换掉整个进程，自动化里没法继续断言） |
 | `ANKI_BACKUP_NOW` | 空 | 测试钩子：启动时**强制**备份一次并等它写完（默认间隔 30 分钟，脚本等不起），见「自动备份」 |
 | `ANKI_RESTORE_PATH` | 空 | 测试钩子：路径，或 `newest`（= 备份目录里最新的 `backup-*.colpkg`）。设了它，「文件 → 还原备份」跳过原生文件对话框与确认框 |
 | `ANKI_PICK_COLOUR` | 空 | 测试钩子：设了它，原生取色器不弹对话框、直接当用户选了这个 `#rrggbb`（见「原生取色器」） |
@@ -1608,6 +1612,8 @@ browserSearch：图表 → 浏览器搜索
 | `theme-check.mjs` | 上面那个脚本调用的页面级检查：`#night` 与宿主 document-start 注入两条通道下 `--canvas` 的取值，以及浅色基线 |
 | `verify-prefs.ps1` | 一键：首选项页面（隔离集合启动 → 打开首选项窗口 + 截图 → 跑 `prefs-check.mjs`） |
 | `prefs-check.mjs` | 上面那个脚本调用的检查：七个分页的结构 + 每个分页代表控件的「改 → RPC 复查 → 还原」（主题命令、语言、缩放、调度、reviewer、编辑、`customSyncUrl` 连带清 `currentSyncUrl`、备份份数…） |
+| `verify-profiles.ps1` | 一键：多 profile（`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs` → **真切换**：发 `profile:{"action":"switch"}` 后等重启出来的新进程日志 + 新 profile 的集合） |
+| `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |

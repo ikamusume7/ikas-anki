@@ -13,6 +13,9 @@ use anyhow::Result;
 use tauri::AppHandle;
 use tauri::Manager as _;
 
+use crate::platform::prefs21::Prefs21;
+use crate::platform::prefs21::Store;
+
 /// 资源根目录与用户数据目录。
 #[derive(Clone, Debug)]
 pub struct AppPaths {
@@ -69,12 +72,26 @@ impl AppPaths {
         Ok(Self::for_resource_dir(resource_dir))
     }
 
+    /// 用户数据目录（`<base>`）。`ANKI_BASE` 可以覆盖它 —— 对照 aqt 的 `--base`，
+    /// 用来把整个 base（`prefs21.db` + 各 profile 目录）挪到隔离位置，
+    /// 这样**不设 `ANKI_COLLECTION`** 也能测「按 `last_loaded_profile_name` 选 profile」
+    /// （`ANKI_COLLECTION` 的优先级更高，会把子进程钉在同一个集合上，见 `profile()`）。
+    fn user_data_dir() -> PathBuf {
+        match std::env::var("ANKI_BASE") {
+            Ok(base) if !base.is_empty() => {
+                tracing::info!("ANKI_BASE 生效，用户数据目录: {base}");
+                PathBuf::from(base)
+            }
+            _ => default_user_data_dir(),
+        }
+    }
+
     fn for_repo(root: PathBuf) -> Self {
         Self {
             web: root.join("qt/_aqt/data/web"),
             web_source: Some(root.join("qt/aqt/data/web")),
             sveltekit: root.join("out/sveltekit"),
-            user_data: default_user_data_dir(),
+            user_data: Self::user_data_dir(),
         }
     }
 
@@ -84,25 +101,55 @@ impl AppPaths {
             web: root.join("web"),
             web_source: None,
             sveltekit: root.join("sveltekit"),
-            user_data: default_user_data_dir(),
+            user_data: Self::user_data_dir(),
         }
     }
 
     /// 解析要打开的集合路径。
     ///
-    /// 可通过 `ANKI_COLLECTION` 指定；否则使用 `Anki2/User 1/collection.anki2`。
+    /// 优先级（对照 `main.py:296-319` 的 `setupProfile()`）：
+    /// 1. `ANKI_COLLECTION` —— 直接指定集合文件（测试常用），profile 目录取它的父目录；
+    /// 2. `ANKI_PROFILE` —— 指定 profile 名（测试用，避免动 `prefs21.db`）；
+    /// 3. `prefs21.db` 的 `meta["last_loaded_profile_name"]` —— 桌面版/上次用的那个；
+    /// 4. `User 1`。
+    ///
     /// 若集合文件不存在，rslib 会创建一个空集合。
     pub fn profile(&self) -> ProfilePaths {
-        let default_dir = self.user_data.join("User 1");
-        let collection = match std::env::var("ANKI_COLLECTION") {
-            Ok(path) if !path.is_empty() => PathBuf::from(path),
-            _ => default_dir.join("collection.anki2"),
-        };
-        let dir = collection
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or(default_dir);
-        ProfilePaths {
+        if let Ok(path) = std::env::var("ANKI_COLLECTION") {
+            if !path.is_empty() {
+                let collection = PathBuf::from(path);
+                let dir = collection
+                    .parent()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| self.user_data.clone());
+                return ProfilePaths::in_dir(dir, collection);
+            }
+        }
+
+        let name = std::env::var("ANKI_PROFILE")
+            .ok()
+            .filter(|name| !name.trim().is_empty())
+            .or_else(|| self.stored_profile_name())
+            .unwrap_or_else(|| "User 1".to_owned());
+        let dir = self.user_data.join(name);
+        let collection = dir.join("collection.anki2");
+        ProfilePaths::in_dir(dir, collection)
+    }
+
+    /// `meta["last_loaded_profile_name"]`（`ProfileManager` 记的「上次用的配置」）。
+    fn stored_profile_name(&self) -> Option<String> {
+        let prefs = Prefs21::for_meta(&self.user_data);
+        match prefs.get(Store::Meta, "last_loaded_profile_name") {
+            Ok(Some(serde_json::Value::String(name))) if !name.trim().is_empty() => Some(name),
+            _ => None,
+        }
+    }
+}
+
+impl ProfilePaths {
+    /// 由 profile 目录推出集合 / 媒体路径。
+    fn in_dir(dir: PathBuf, collection: PathBuf) -> Self {
+        Self {
             media_folder: dir.join("collection.media"),
             media_db: dir.join("collection.media.db2"),
             collection,

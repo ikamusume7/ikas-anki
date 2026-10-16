@@ -23,6 +23,7 @@ mod method_table;
 mod paths;
 mod platform;
 mod preview;
+mod profiles;
 mod reviewer;
 mod reviewer_menu;
 mod restore;
@@ -71,6 +72,15 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
         .context("初始化 rslib 后端失败")?;
 
     let profile = paths.profile();
+    tracing::info!(
+        "配置: {}（目录 {}）",
+        profile
+            .dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        profile.dir.display()
+    );
     tracing::info!("集合路径: {}", profile.collection.display());
     if let Some(parent) = profile.collection.parent() {
         std::fs::create_dir_all(parent)

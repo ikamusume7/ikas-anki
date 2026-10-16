@@ -76,6 +76,8 @@ pub const CHANGE_NOTETYPE: &str = "change-notetype";
 pub const STATS: &str = "stats";
 /// 偏好设置（Qt 的 `Preferences` 对话框）。
 pub const PREFERENCES: &str = "preferences";
+/// 切换配置（Qt 的 `ProfileManager` 窗口）。
+pub const PROFILES: &str = "profiles";
 /// 自定义学习（Qt 的 `CustomStudy` 对话框）。
 pub const CUSTOM_STUDY: &str = "custom-study";
 /// 字段对话框（Qt 的 `FieldDialog`，`qt/aqt/fields.py`）。

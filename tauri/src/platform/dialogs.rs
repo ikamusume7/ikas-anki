@@ -154,8 +154,16 @@ pub fn save_file_dialog(body: &[u8]) -> HandlerResult {
 }
 
 /// 对应 mediasrv 的 `ask_user`：是/否确认框。
+///
+/// 测试钩子：`ANKI_CONFIRM_YES=1` 时直接返回「是」—— 原生模态框点不了，
+/// 与 `ANKI_SAVE_PATH` / `ANKI_RESTORE_PATH` 同一套办法（见 `tauri/README.md`）。
 pub fn ask_user(body: &[u8]) -> HandlerResult {
     let request = AskUserRequest::decode(body).map_err(|e| e.to_string())?;
+
+    if std::env::var("ANKI_CONFIRM_YES").is_ok_and(|value| !value.is_empty() && value != "0") {
+        tracing::info!("ANKI_CONFIRM_YES 生效，确认框直接返回「是」: {}", request.text);
+        return Ok(Bool { val: true }.encode_to_vec());
+    }
 
     let mut dialog = rfd::MessageDialog::new()
         .set_description(&request.text)

@@ -49,6 +49,8 @@ const SVELTEKIT_ROUTES: &[&str] = &[
     "cards",
     // 「管理笔记类型」对话框（上游是 Qt 的 Models 对话框）
     "notetypes",
+    // 「切换配置」窗口（上游是 Qt 的 ProfileManager 窗口），见 `crate::profiles`
+    "profiles",
 ];
 
 /// 展示用户内容的路由，需要更严格的 CSP（对照 mediasrv 的

@@ -94,6 +94,15 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
         };
     }
 
+    // 多 profile（PARITY 8.2）：列表与增删改查都走这两条命令。
+    // 与窗口无关：切换配置窗口、主窗口、菜单都可能发。
+    if command == "profiles" {
+        return Some(crate::profiles::list_json(state));
+    }
+    if let Some(payload) = command.strip_prefix("profile:") {
+        return Some(crate::profiles::handle_command(state, payload));
+    }
+
     // 语言列表（偏好设置 → 外观 → 语言下拉的选项）。rslib 没有暴露语言表，只有
     // `pylib/anki/lang.py` 里那份硬编码清单，宿主已经嵌进 `crate::i18n_lang`，
     // 这里把它交给页面（与窗口无关，任何窗口都能问）。
@@ -290,6 +299,13 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             })
             .to_string(),
         ),
+        // 切换配置（对照 Qt 主窗口菜单的「切换配置」，`main.py:1432-1434` → ProfileManager）
+        "switchProfile" => {
+            if let Err(error) = main_window::open_profiles(state) {
+                tracing::warn!("打开切换配置窗口失败: {error:#}");
+            }
+            None
+        }
         // 统计图（对照 Qt 主窗口的全局快捷键 `t` / `Shift+t` → `onStats()`，
         // `main.py:1185`），页面是既有的 `graphs/`
         "stats" => {

@@ -65,11 +65,13 @@
 > 重新定级并新增第 8/9 节（未覆盖缺口、验证体系缺口），`tauri/README.md` 同步；
 > 本文档 §6 / §7 / §9 也已对齐。
 > 核查同时确认：**键盘答题整条链路没有**（复习页只绑了 8 个键）、**Congratulations 收尾不存在**、
-> **时间盒不存在**、**addon/文件关联/多 profile 管理为零**。
-> 同一天接着补齐了第 8 节里的三块：**界面语言**（`i18n_lang.rs`）、**夜间模式/主题**
-> （`theme.rs`，三条注入通道 + 运行期广播）、**首选项真页面**（七个分页）。
+> **时间盒不存在**、**addon/文件关联为零**。
+> 同一天接着补齐了第 8 节里的四块：**界面语言**（`i18n_lang.rs`）、**夜间模式/主题**
+> （`theme.rs`，三条注入通道 + 运行期广播）、**首选项真页面**（七个分页）、
+> **多 profile 管理**（`profiles.rs` + `ts/routes/profiles/`，入口 文件 → 切换配置
+> `Ctrl+Shift+P`；切换靠重启进程，与 Qt 的「关集合 + 重开」等价）。
 
-**当前可直接验证**（九个一键脚本，详见 §2.4）：
+**当前可直接验证**（十一个一键脚本，详见 §2.4）：
 
 | 脚本 | 覆盖 |
 | --- | --- |
@@ -82,6 +84,7 @@
 | `tauri/tools/verify-i18n.ps1` | 界面语言：四个场景（`meta.defaultLang`=zh_CN / en_US、无 prefs21 跟随系统、`ANKI_LANG` 覆盖）各自断言宿主生效语言 + `i18nResources` 下发的文案 |
 | `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
 | `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
+| `tauri/tools/verify-profiles.ps1` | 多 profile：`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs`（列表/新建/非法名/重命名/删除）→ **真切换**（重启后的新进程打开 Second 并建出集合） |
 
 ---
 
@@ -1615,7 +1618,7 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
 （「编辑当前卡片」「添加卡片」「浏览器」「牌组列表」，以及「字段…」「卡片…」
 「管理笔记类型」三个对话框，都有一键脚本）。建议：
 
-1. **先跑九个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
+1. **先跑十一个一键脚本确认现状**：`tauri/tools/verify-reviewer.ps1`（复习界面 + 布局
    断言）、`verify-m2.ps1`（平台能力 + 多窗口命令归属，录音那项需要有麦克风）、
    `verify-editor.ps1`（编辑当前卡片 + 改字段保存）、`verify-addcards.ps1`
    （添加卡片 + 添加落库 + 关闭契约）、`verify-browser.ps1`（浏览器 + 表格 + 编辑区
