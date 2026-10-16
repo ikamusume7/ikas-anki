@@ -53,7 +53,7 @@
 | 2.3 | ⚠️ | 音频操作 | 队列播放/自动播放已实现（TTS 合成成 WAV 再入队、`extractAvTags` 有断言）。**还差**：卡面**不画播放按钮**（宿主从不把 `extractAvTags` 结果写回显示文本，也没有 `play:q:N`），卡上的 `[sound:x.mp3]` / `[anki:tts …]` **原样显示、点不了**；**答案面会把问题面音频再播一遍**（`partial_render:false` 让 FrontSide 的 `[sound:]` 留在答案 HTML 里），所以 `replayq` 无效、日志多一次「播放音频」；重播/暂停/前进后退 5 秒/录音 `Shift+V`/重播录音 `V` 全无（`Command` 只有 `Play`，没有 pause/seek） | `qt/aqt/reviewer.py:1043-1048`、`qt/aqt/sound.py:906-932` |
 | 2.4 | ❌ | 自动前进 | 没有：`autoAdvance` / `secondsToShowQuestion` / `secondsToShowAnswer` / `questionAction` / `answerAction` / `waitForAudio` 在 `tauri/src` 里 0 引用（只有 rslib 的牌组配置定义）。缺 `Shift+A`、目标牌组秒数与动作、`waitForAudio`、焦点不在窗口时自动失效、tooltip | `qt/aqt/reviewer.py:408-527,1049-1054` |
 | 2.5 | ❌ | `current_caller` | 音频队列只有「播放」，没有 caller 概念，也没有 `stop_and_clear_queue_if_caller` 的等价物。影响：编辑器关窗不会停掉自己发起的播放、播放来源不可区分（纯鼠标用户感知较弱） | `qt/aqt/sound.py:171-173`、`qt/aqt/editor.py:479` |
-| 2.6 | ⚠️ | 计时器 / 时间盒 | 计时器与"下次间隔"已接（`show_timer` → `maxTime`、答后停表），但**无任何自动断言**（`set-deck-timer.mjs` 不被任何脚本调用，`visual-check.mjs` 把 maxTime 写死 0）。**时间盒整块不存在 = ❌**：没有 `timeboxReached`/`startTimebox`，没有「N 分钟学习了 M 张：继续 / 结束」对话框 | `qt/aqt/reviewer.py:975-992`、`qt/aqt/overview.py:98` |
+| 2.6 | ⚠️ | 计时器 / 时间盒 | 计时器与"下次间隔"已接（`show_timer` → `maxTime`、答后停表）；**时间盒已实现**：`Reviewer` 里存「开始时刻 + 已答卡片数」（对照 `collection.py:1239-1251` 的 `startTimebox()` / `timeboxReached()`），进入概览（`overview.py:98`）与开始复习（`main.py:1242`）时重新计时，每答一张与 `Preferences.reviewing.time_limit_secs`（对照 `col.conf["timeLim"]`，0 = 关闭）比较（按 Qt 的浮点语义：实际用时 > 上限），到点弹原生「继续 / 结束」框（`studying-continue` / `studying-finish`）——选「结束」回牌组列表（对照 `moveToState("deckBrowser")`），选「继续」重新计时（`reviewer.py:973-992`）。**还差**：计时器仍**没有任何自动断言**（`set-deck-timer.mjs` 不在任何 verify 脚本里，`visual-check.mjs` 把 maxTime 写死 0）；到点的原生框在自动化里靠 `ANKI_TIMEBOX_CHOICE` 钩子跳过，真对话框只能手工点一次。验证：`verify-timebox.ps1` + `timebox-check.mjs`（两种选择各起一次外壳） | `qt/aqt/reviewer.py:975-992`、`qt/aqt/overview.py:98`、`pylib/anki/collection.py:1239-1251` |
 
 验收：`tauri/tools/verify-reviewer.ps1` 逐项断言；菜单项逐条点一遍并检查集合状态。
 **注意**：`visual-check.mjs` 里的底栏 HTML 是手抄副本，会与 `reviewer.rs` 漂移。
@@ -165,7 +165,7 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    "没人用"的删除分支；`browser-check.mjs` 对侧栏只验"有默认牌组"。
 3. **靠钩子顶掉原生交互**：`ANKI_SAVE_PATH`/`ANKI_PICK_COLOUR`/`ANKI_RESTORE_PATH`/`ANKI_BACKUP_NOW`
    → 真对话框（保存、确认、取色、还原）路径全靠手工。
-4. **0 断言的主要功能**：计时器与时间盒、上一张卡片信息、
+4. **0 断言的主要功能**：计时器（时间盒已有 `timebox-check.mjs`）、上一张卡片信息、
    音频的重播·暂停·±5 秒·录音、埋藏/暂停/重置/副本/删除笔记的**按键与菜单路径**
    （`rev:` 动作只有旗标·标记·到期日有断言）、同步成功路径、TTS 播放链路、
    `prefs21` 桌面版↔外壳互操作、文件关联与命令行、`just`/CI（根本没有）。
@@ -181,11 +181,12 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    `tauri/src/theme.rs`、`tauri/src/i18n_lang.rs`；四个一键脚本 `verify-prefs` /
    `verify-profiles` / `verify-theme` / `verify-i18n` 全绿。剩下的尾巴记在 3.3 / 8.1 / 8.2
    （媒体日志窗口、`answer_keys`、`resetWindowSizes`、「干扰项」的消费方等）
-2. **~~复习键盘（空格/回车/1–4 等，2.x 附）~~ + ~~Congratulations 收尾~~（1.6）+ 时间盒（2.6）**
-   —— **前两块已落地**（2026-10-16）：`tauri/assets/reviewer-keys.js` 照 `_shortcutKeys()`
-   绑完整张可用表、宿主加 `answer_shown` 守卫、`meta.spacebar_rates_card` 生效
-   （`reviewer-keys-check.mjs`）；队列空了会清会话 + 回概览，概览改画 Congratulations
-   （`congrats-check.mjs`）；两块都接进 `verify-reviewer.ps1`。**只剩时间盒**。
+2. ~~**复习键盘（空格/回车/1–4 等，2.x 附）+ Congratulations 收尾（1.6）+ 时间盒（2.6）**~~
+   —— **本轮已做**（2026-10-16，三个提交）：`tauri/assets/reviewer-keys.js` 照
+   `_shortcutKeys()` 绑完整张可用表 + 宿主 `answer_shown` 守卫 + `meta.spacebar_rates_card`
+   （`reviewer-keys-check.mjs`）；队列空了清会话 + 回概览，概览改画 Congratulations
+   （`congrats-check.mjs`）；时间盒（`startTimebox` / `timeboxReached` + 「继续 / 结束」框，
+   `verify-timebox.ps1` + `timebox-check.mjs` 两种选择各验一次）。剩下的尾巴记在 1.4 / 1.6 / 2.6。
 3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
    筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
 4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**

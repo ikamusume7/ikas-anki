@@ -76,6 +76,8 @@ pub fn show_decks(state: &AppState) -> Result<()> {
 ///
 /// 页面自己去问 `getCurrentDeck`（宿主不查，省一次 RPC）。
 pub fn show_overview(state: &AppState) -> Result<()> {
+    // 对照 `overview.py:98`：显示概览就重新开始计时（时间盒的起点在这里）
+    state.reviewer.start_timebox();
     show_decks_page(state, Some("current".to_string()))
 }
 
@@ -93,6 +95,8 @@ fn show_decks_page(state: &AppState, deck: Option<String>) -> Result<()> {
 
 /// 开始复习（Qt 的 Overview「Study Now」/ `onStudyKey` 在概览里 → `moveToState("review")`）。
 pub fn start_study(state: &AppState) -> Result<()> {
+    // 对照 `main.py:1242` / `toolbar.py:447`：开始复习时重新计时
+    state.reviewer.start_timebox();
     state.reviewer_active.store(true, Ordering::SeqCst);
     let url = reviewer_url(state);
     navigate(state, &url);

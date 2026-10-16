@@ -49,6 +49,8 @@ const noteMarkers = [
     "TauriFiltered",
     // `congrats-check.mjs` 造的那张（卡片正面文本）
     "TauriCongrats",
+    // `timebox-check.mjs` 造的那张
+    "TauriTimebox",
 ];
 
 const noteIds = async () => {

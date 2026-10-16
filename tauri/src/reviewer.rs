@@ -7,14 +7,13 @@
 //! 与 Qt 保持同一个约定：卡片 HTML 交给 `js/reviewer.js` 提供的
 //! `_showQuestion(q, a, bodyclass)` / `_showAnswer(a, bodyclass)` 全局函数。
 //!
-//! 当前实现的是主链路（显示问题 → 显示答案 → 四档评分 → 下一张），以及计时器、
-//! 撤销、自动播放与音频队列、类型作答（`type:`）、队列计数显示、
-//! `getSchedulingStatesWithContext` 界面状态同步、顶部/底部工具栏、「更多」菜单，
-//! 以及键盘答题（`assets/reviewer-keys.js`）。
+//! 当前实现的是主链路（显示问题 → 显示答案 → 四档评分 → 下一张），以及计时器与
+//! **时间盒**、撤销、自动播放与音频队列、类型作答（`type:`）、队列计数显示、
+//! `getSchedulingStatesWithContext` 界面状态同步、顶部/底部工具栏、「更多」菜单、
+//! 键盘答题（`assets/reviewer-keys.js`），以及队列空时的收尾（清会话 + 回概览画
+//! Congratulations）。
 //!
 //! **未实现**（见 `tauri/PARITY.md`）：
-//! - **答完队列的收尾**：只注入一句提示，没有 Congratulations 页与概览跳转；
-//! - **时间盒**（`timeboxReached` 与「继续 / 结束」对话框）；
 //! - **音频**：卡面不画播放按钮（没有 `play:q:N`）、没有重播 / 暂停 / ±5 秒 / 录音，
 //!   答案面还会把问题面音频再播一遍（`partial_render` 的差异）。因此 `_shortcutKeys()`
 //!   里的 `r`/`F5`（重播）、`5`/`6`/`7`（暂停、±5 秒）、`v`/`Shift+v`（录音与重播录音）
@@ -70,6 +69,18 @@ use crate::state::AppState;
 #[derive(Default)]
 pub struct Reviewer {
     inner: Mutex<Session>,
+    /// 时间盒：进入概览 / 开始复习时重新开始（对照 `Collection.startTimebox()`）
+    timebox: Mutex<Option<Timebox>>,
+}
+
+/// 时间盒的运行时状态（对照 `collection.py:1239-1251` 的 `_startTime` / `_startReps`）。
+///
+/// Qt 把它挂在 Collection 上；本外壳挂在 `Reviewer` 上（同一个进程里只有一份复习会话）。
+/// `cards` 就是 `sched.reps - _startReps`：本外壳自己数这段时间里答过几张卡。
+#[derive(Clone, Copy)]
+struct Timebox {
+    started_at: std::time::Instant,
+    cards: u32,
 }
 
 #[derive(Default)]
@@ -118,14 +129,16 @@ struct TypeAnswer {
     size: u32,
 }
 
-/// 对照 `col.conf` 里控制复习界面显示的两项配置。
+/// 对照 `col.conf` 里控制复习界面显示的两项配置，外加时间盒的上限。
 ///
-/// 手写 `Default`：Anki 的默认值是两项都开启（`dueCounts` / `estTimes`），
-/// 读取失败时应当按默认显示，而不是静默隐藏。
+/// 手写 `Default`：Anki 的默认值是剩余计数与按钮间隔都开启（`dueCounts` / `estTimes`），
+/// 读取失败时应当按默认显示，而不是静默隐藏；时间盒默认关闭（`timeLim` 为 0）。
 #[derive(Clone, Copy)]
 struct ReviewerUi {
     show_remaining_counts: bool,
     show_intervals: bool,
+    /// 时间盒上限（秒）；0 = 关闭（对照 `col.conf["timeLim"]`）
+    time_limit_secs: u32,
 }
 
 impl Default for ReviewerUi {
@@ -133,6 +146,7 @@ impl Default for ReviewerUi {
         Self {
             show_remaining_counts: true,
             show_intervals: true,
+            time_limit_secs: 0,
         }
     }
 }
@@ -147,6 +161,36 @@ impl Reviewer {
     /// `crate::editor` 用它实现「编辑当前卡片」（对照 Qt 的 `mw.reviewer.card`）。
     pub(crate) fn current_card(&self) -> Option<Card> {
         self.session().card.clone()
+    }
+
+    /// 重新开始计时（对照 `col.startTimebox()`）。
+    ///
+    /// 调用点与 Qt 一致：显示概览（`overview.py:98`）与开始复习（`main.py:1242`）。
+    pub(crate) fn start_timebox(&self) {
+        *self.timebox.lock().expect("时间盒已中毒") = Some(Timebox {
+            started_at: std::time::Instant::now(),
+            cards: 0,
+        });
+    }
+
+    /// 本段计时里答过一张卡（`sched.reps` 的等价计数）。
+    fn count_timebox_card(&self) {
+        if let Ok(mut guard) = self.timebox.lock() {
+            if let Some(timebox) = guard.as_mut() {
+                timebox.cards += 1;
+            }
+        }
+    }
+
+    /// 时间盒的 (已用时间, 已答卡片数)；没有在计时时为 `None`。
+    ///
+    /// 返回 `Duration` 而不是整秒：Qt 用浮点数比 `time.time() - _startTime > timeLim`
+    /// （`collection.py:1248-1249`），边界上"1.5 秒 > 1 秒"要算到点。
+    fn timebox_progress(&self) -> Option<(std::time::Duration, u32)> {
+        self.timebox
+            .lock()
+            .ok()?
+            .map(|timebox| (timebox.started_at.elapsed(), timebox.cards))
     }
 }
 
@@ -292,6 +336,66 @@ fn clear_session(state: &AppState) {
     session.queue_index = 0;
     session.answer_shown = false;
     session.shown_at = None;
+}
+
+/// 时间盒到点了吗？到点就弹「继续 / 结束」（对照 `reviewer.py:973-992` 的
+/// `check_timebox()`）。
+///
+/// 返回 `true` 表示**结束**：调用方不要再显示下一张卡（Qt 此时
+/// `moveToState("deckBrowser")`，本外壳回牌组列表）。
+/// 「继续」则重新计时（对照 `reviewer.py:991` 的 `col.startTimebox()`）。
+async fn check_timebox(state: &AppState) -> bool {
+    // 0 = 关闭（偏好设置的「复习」分页 →「时间盒」秒数，对照 `col.conf["timeLim"]`）
+    let limit = state.reviewer.session().ui.time_limit_secs;
+    if limit == 0 {
+        tracing::debug!("时间盒未开启（timeLim=0）");
+        return false;
+    }
+    let Some((elapsed, cards)) = state.reviewer.timebox_progress() else {
+        return false;
+    };
+    // 与 Qt 一样用"实际已用时间 > 上限"比较（不是四舍五入后的秒数）
+    if elapsed <= std::time::Duration::from_secs(u64::from(limit)) {
+        tracing::debug!(
+            "时间盒: 已用 {:.1} 秒 / 上限 {limit} 秒 / 已答 {cards} 张",
+            elapsed.as_secs_f64()
+        );
+        return false;
+    }
+
+    // 对照 `reviewer.py:979`：用的是**上限**而不是实际用时
+    let minutes = ((limit as f64) / 60.0).round() as u32;
+    tracing::info!("时间盒到点: 已答 {cards} 张 / 约 {minutes} 分钟（上限 {limit} 秒）");
+    let (message, continue_label, finish_label) = {
+        let tr = state.backend.i18n();
+        (
+            // `minutes` 要的是 `impl Into<String>`（ftl 里是变量替换，不做数字格式化）
+            tr.studying_card_studied_in_minute(cards, minutes.to_string())
+                .to_string(),
+            tr.studying_continue().to_string(),
+            tr.studying_finish().to_string(),
+        )
+    };
+    let message_for_log = message.clone();
+    let proceed = tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::dialogs::ask_timebox(&message, &continue_label, &finish_label)
+    })
+    .await
+    .unwrap_or(false);
+    tracing::debug!("时间盒对话框: {message_for_log}");
+
+    if proceed {
+        tracing::info!("时间盒到点：继续（重新计时）");
+        state.reviewer.start_timebox();
+        return false;
+    }
+
+    tracing::info!("时间盒到点：结束（回牌组列表）");
+    clear_session(state);
+    if let Err(error) = crate::main_window::show_decks(state) {
+        tracing::warn!("时间盒结束后回牌组列表失败: {error:#}");
+    }
+    true
 }
 
 /// 撤销上一次操作（对照 Qt 的 `mw.undo()` → `operations/collection.py:undo()`）。
@@ -505,6 +609,13 @@ pub async fn answer(state: &AppState, ease: u32) {
 
     if let Err(error) = call::<_, OpChanges>(state, "answerCard", &answer).await {
         tracing::error!("评分失败: {error:#}");
+        return;
+    }
+
+    // 对照 `reviewer.py:566-570` 的 `_after_answering()`：先记一次时间盒的卡片数，
+    // 再看时间盒是否到点（到点且选「结束」时不再显示下一张）
+    state.reviewer.count_timebox_card();
+    if check_timebox(state).await {
         return;
     }
 
@@ -888,13 +999,15 @@ fn ease_buttons(tr: &I18n, next_intervals: &[String], show_intervals: bool) -> S
     out
 }
 
-/// 读复习界面的显示开关（对照 `col.conf` 的 `dueCounts` / `estTimes`）。
+/// 读复习界面的显示开关（对照 `col.conf` 的 `dueCounts` / `estTimes`）与时间盒上限。
 async fn read_reviewer_ui(state: &AppState) -> anyhow::Result<ReviewerUi> {
     let prefs: Preferences = call(state, "getPreferences", &Empty {}).await?;
     let reviewing = prefs.reviewing.unwrap_or_default();
     Ok(ReviewerUi {
         show_remaining_counts: reviewing.show_remaining_due_counts,
         show_intervals: reviewing.show_intervals_on_buttons,
+        // 偏好设置「复习」分页的「时间盒」（分钟 → 秒由前端换算，这里就是秒）
+        time_limit_secs: reviewing.time_limit_secs,
     })
 }
 

@@ -710,6 +710,32 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 第 2 半对着真外壳发桥接命令断言宿主守卫：问题面发 `ease3` 不把卡片答掉（日志
 `尚未显示答案`），`ans` 之后再发 `ease3` 才换下一张。
 
+### 时间盒
+
+对照 `pylib/anki/collection.py:1239-1251` 的 `startTimebox()` / `timeboxReached()` 与
+`qt/aqt/reviewer.py:973-992` 的 `check_timebox()`：
+
+- `Reviewer` 里存一份「开始时刻 + 已答卡片数」（Qt 把它挂在 Collection 上，用的是
+  `sched.reps - _startReps`，本外壳自己数）；
+- **重新计时的时机与 Qt 一致**：显示概览（`overview.py:98`）与开始复习（`main.py:1242`）；
+- 每答一张卡后比较「实际已用时间 > 上限」——上限取偏好设置「复习」分页的
+  **时间盒**（`Preferences.reviewing.time_limit_secs`，对照 `col.conf["timeLim"]`，
+  0 = 关闭），比较用的是浮点语义（1.5 秒 > 1 秒算到点），不是四舍五入后的整秒；
+- 到点弹原生对话框（`studying-card-studied-in-minute` 的消息 +
+  `studying-continue` / `studying-finish` 两个按钮，走 `rfd` 的 `OkCancelCustom`）：
+  选「结束」回**牌组列表**（对照 `moveToState("deckBrowser")`，并且清掉复习会话），
+  选「继续」重新计时再显示下一张（`reviewer.py:991`）。
+
+自动化里那个原生框由测试钩子 `ANKI_TIMEBOX_CHOICE=continue|finish` 跳过（与
+`ANKI_CONFIRM_YES` 同一套路）——真对话框只能手工点一次。
+
+验证：`tauri/tools/verify-timebox.ps1`（**两次**启动外壳，分别用两个钩子值跑
+`timebox-check.mjs`）：把时间盒设成 1 秒 → 造一张卡 → `study` → 显示答案 → 评分，
+断言到点日志、评分仍然落库、以及两种选择的可见结果（「结束」→ 日志记结束 + 导航到
+`/decks/` + 不再渲染下一张；「继续」→ 记继续 + 重新渲染下一张），收尾还原偏好设置与
+临时笔记，并留两张真实窗口截图。上限只有 1 秒，所以检查里会显式等过 1.5 秒再评分，
+免得「取卡 + 等日志」这几步恰好不到上限。
+
 ### 答完队列的收尾（Congratulations）
 
 答完最后一张（或点「学习」时队列本来就是空的）时，对照 Qt 的
@@ -1661,12 +1687,14 @@ browserSearch：图表 → 浏览器搜索
 | `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
 | `reviewer-keys-check.mjs` | `verify-reviewer.ps1` 调用的复习键盘检查：第 1 半加载 `assets/reviewer-keys.js` 按 **31 组真实按键**断言桥接命令（含焦点档、空格评分开关、输入框不抢键、未实现的键不发命令），第 2 半对真外壳断言「问题面不许评分」的宿主守卫 |
 | `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
+| `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
+| `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |
 | `check-prefs21.mjs` | 验证配置端点确实读写了 `prefs21.db` |
 | `make-prefs21-fixture.py` | 造一份「桌面版写入的」`prefs21.db` 供上面那个脚本检查 |
-| `set-deck-timer.mjs` | 查看 / 开关测试牌组的计时器（**注意：它不在任何 verify 脚本里，计时器与时间盒目前没有自动断言**） |
+| `set-deck-timer.mjs` | 查看 / 开关测试牌组的计时器（**注意：它不在任何 verify 脚本里，卡片计时器本身仍没有自动断言**；时间盒另有 `verify-timebox.ps1`） |
 | `set-state-customizer.mjs` | 设置 / 清除 `cardStateCustomizer`（验证状态同步） |
 | `set-tts-template.mjs` | 往 Basic 正面模板插入 / 移除 `{{tts en_US:…}}`（验证 TTS 链路，用完请 `remove` 还原） |
 

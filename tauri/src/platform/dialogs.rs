@@ -213,6 +213,35 @@ pub fn confirm(message: &str) -> bool {
     )
 }
 
+/// 时间盒到点的「继续 / 结束」框（对照 `reviewer.py:983-988` 的 `askUserDialog`）。
+///
+/// 返回 `true` = 继续（Qt 里选「继续」会重新计时，选「结束」回牌组列表）。
+/// 按钮文案来自 ftl（`studying-continue` / `studying-finish`）；Windows 上走
+/// `OkCancelCustom` —— rfd 0.15 没有 `YesNoCustom`，而 OK/Cancel 分别返回
+/// `Custom(第一个文案)` / `Custom(第二个文案)`（`rfd` 的 win_cid 后端如此映射）。
+///
+/// `ANKI_TIMEBOX_CHOICE=continue|finish` 可以跳过对话框（供端到端脚本用，
+/// 与 `ANKI_CONFIRM_YES` 同一套路）。
+pub fn ask_timebox(message: &str, continue_label: &str, finish_label: &str) -> bool {
+    if let Ok(choice) = std::env::var("ANKI_TIMEBOX_CHOICE") {
+        let proceed = !choice.eq_ignore_ascii_case("finish");
+        let label = if proceed { continue_label } else { finish_label };
+        tracing::info!("ANKI_TIMEBOX_CHOICE={choice} 生效，时间盒对话框返回「{label}」");
+        return proceed;
+    }
+
+    let result = rfd::MessageDialog::new()
+        .set_title("Anki")
+        .set_description(message)
+        .set_level(rfd::MessageLevel::Info)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            continue_label.to_owned(),
+            finish_label.to_owned(),
+        ))
+        .show();
+    matches!(result, rfd::MessageDialogResult::Custom(label) if label == continue_label)
+}
+
 /// 「放弃当前输入？」确认框，返回 `true` 表示放弃。
 ///
 /// 对照 `qt/aqt/addcards.py:118-127`：关窗前宿主弹框，用户选 Discard 才真的关窗。
