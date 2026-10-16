@@ -27,6 +27,8 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 import { SetSettingJsonRequest } from "../../out/ts/lib/generated/anki/frontend_pb.js";
+import { Json, String as GenericString } from "../../out/ts/lib/generated/anki/generic_pb.js";
+import { SearchRequest, SearchResponse } from "../../out/ts/lib/generated/anki/search_pb.js";
 import { Empty } from "../../out/ts/lib/generated/anki/generic_pb.js";
 import {
     AddNoteRequest,
@@ -41,6 +43,7 @@ import {
 import { Deck } from "../../out/ts/lib/generated/anki/decks_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40001";
+const port2 = process.env.ANKI_API_PORT2 ?? "";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
 const logPath = process.env.ANKI_LOG ?? "";
 const syncPort = process.env.SYNC_PORT ?? "40011";
@@ -48,8 +51,10 @@ const syncBase = process.env.SYNC_BASE ?? "";
 const syncUser = process.env.SYNC_USER ?? "tauri";
 const syncPassword = process.env.SYNC_PASSWORD ?? "tauri-pass";
 const base = `http://127.0.0.1:${port}`;
+const base2 = port2 ? `http://127.0.0.1:${port2}` : "";
 const endpoint = `http://127.0.0.1:${syncPort}/`;
 const serverLog = process.env.SYNC_LOG ?? "";
+const collection2 = process.env.SECOND_COLLECTION ?? "";
 const failures = [];
 
 function check(name, ok, detail = "") {
@@ -88,8 +93,8 @@ async function waitFor(name, predicate, timeoutMs = 60_000, intervalMs = 500) {
     return false;
 }
 
-async function rpc(method, body) {
-    const response = await fetch(`${base}/_anki/${method}`, {
+async function rpcOn(target, method, body) {
+    const response = await fetch(`${target}/_anki/${method}`, {
         method: "POST",
         headers: {
             "Content-Type": "application/binary",
@@ -112,6 +117,8 @@ const setProfile = (key, value) =>
             valueJson: new TextEncoder().encode(JSON.stringify(value)),
         }).toBinary(),
     );
+
+const rpc = (method, body) => rpcOn(base, method, body);
 
 /** 服务器侧那份集合（上传成功后才有）。 */
 const serverCollection = path.join(syncBase, syncUser, "collection.anki2");
@@ -279,6 +286,90 @@ try {
             /"\/sync\/upload"[^\n]*httpstatus=200/.test(syncLog()),
         (syncLog().match(/"\/sync\/[a-zA-Z]+"[^\n]*httpstatus=\d+/g) ?? []).join(" / "),
     );
+    // 4. 整份**下载**方向：第二个客户端（空集合、同一个 host key）从服务器拉回同一份集合
+    if (port2) {
+        // 同一台机器上"已经登录过"的场景：把第一个客户端的 host key 搬进第二个 profile
+        const keyJson = new TextDecoder().decode(
+            Json.fromBinary(
+                await rpc(
+                    "getProfileConfigJson",
+                    new GenericString({ val: "syncKey" }).toBinary(),
+                ),
+            ).json,
+        ).trim();
+        const hostKey = JSON.parse(keyJson);
+        check(
+            "拿到第一个客户端的 host key",
+            typeof hostKey === "string" && hostKey.length > 0,
+            JSON.stringify(hostKey),
+        );
+        for (const [key, value] of [
+            ["customSyncUrl", endpoint],
+            ["syncKey", hostKey],
+        ]) {
+            await rpcOn(
+                base2,
+                "setProfileConfigJson",
+                new SetSettingJsonRequest({
+                    key,
+                    valueJson: new TextEncoder().encode(JSON.stringify(value)),
+                }).toBinary(),
+            );
+        }
+
+        const page2 = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+        await page2.addInitScript(bridgeShim, { key: apiKey, window: "main" });
+        await page2.goto(`${base2}/decks/`, { waitUntil: "load" });
+        await page2.waitForSelector("table.list tbody tr", { timeout: 15_000 });
+        const downloadsBefore = syncLog().split("/sync/download").length - 1;
+        await page2.locator("#sync").click();
+        // 第二个客户端的集合是新建的、服务器有数据：上游会先 `syncStatus`，需要整份同步时
+        // 弹「上传/下载」。两种结果都接受 —— 弹框就点「下载」，不弹就说明后端直接判定了下载。
+        const downloadDialog = await page2
+            .waitForSelector("#sync-download", { state: "visible", timeout: 30_000 })
+            .catch(() => null);
+        if (downloadDialog) {
+            check("第二个客户端弹出了「上传/下载」选择", true);
+            await page2.locator("#sync-download").click();
+        } else {
+            check(
+                "第二个客户端没有弹框（后端直接判定为下载）",
+                true,
+                await page2.locator("#sync-status").innerText().catch(() => "（没有状态文字）"),
+            );
+        }
+        // 下载方向**不能**靠服务器日志断言：`/sync/download` 是流式响应，服务器的日志层不会
+        // 为它写 "finished" 行（实测只有 meta/hostKey/upload 有）。改用产物：第二个客户端的
+        // 集合大小与服务器上那份**完全一致**（新建集合只有 4KB 左右），且里面有那张卡。
+        check(
+            "第二个客户端的集合变成了服务器上那份（大小一致）",
+            await waitFor(
+                "downloaded collection",
+                () =>
+                    fs.existsSync(collection2) &&
+                    fs.existsSync(serverCollection) &&
+                    fs.statSync(collection2).size === fs.statSync(serverCollection).size,
+                60_000,
+            ),
+            `${collection2} vs ${serverCollection}`,
+        );
+        check(
+            "第二个客户端真的拿到了第一个客户端的那张卡",
+            await waitFor(
+                "marker note",
+                async () =>
+                    SearchResponse.fromBinary(
+                        await rpcOn(
+                            base2,
+                            "searchNotes",
+                            new SearchRequest({ search: marker }).toBinary(),
+                        ),
+                    ).ids.length > 0,
+                60_000,
+            ),
+            marker,
+        );
+    }
 } catch (error) {
     check("同步检查", false, String(error));
 } finally {

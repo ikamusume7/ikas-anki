@@ -464,7 +464,14 @@ PASS  服务器侧真的出现了集合（collection.anki2） — out/tauri-test
 PASS  服务器侧集合不是空文件 — 147456 字节
 PASS  同步状态回到非 error — idle
 PASS  服务器日志里整条链路都是 200（hostKey → meta → upload）
+PASS  拿到第一个客户端的 host key — "ed178d…"
+PASS  第二个客户端没有弹框（后端直接判定为下载） — 媒体同步完成。
+PASS  第二个客户端的集合变成了服务器上那份（大小一致） — collection-sync2.anki2 vs 服务器侧
+PASS  第二个客户端真的拿到了第一个客户端的那张卡 — TauriSync 797695
 ```
+（第二个客户端由 `verify-sync.ps1` 一起起：空集合 + 自己的 profile，然后检查把第一个客户端的
+host key 通过它的平台端点写进去 —— 这条覆盖了**整份下载**方向。注意 `/sync/download` 是流式
+响应、服务器日志里没有它的 `finished` 行，所以下载只能靠产物断言。）
 
 **差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口与冲突文案）、进度条（只有文字
 状态）、关闭时同步（没有优雅关闭钩子）；媒体同步的 **happy path** 与
@@ -1757,7 +1764,7 @@ browserSearch：图表 → 浏览器搜索
 | `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
 | `audio-check.mjs` | `verify-reviewer.ps1` 调用的音频显示与语义检查：写一个真 WAV + 造带 `[sound:…]` 的卡 → 断言播放按钮注入、自动播放、答案面跳过问题面音频、`play:a:0` 与 `rev:replayAudio` 的播放日志（收尾清理） |
 | `export-guard-check.mjs` | `verify-decks.ps1`（第二段）调用的导出目录拦截检查：`ANKI_SAVE_PATH` 指进 profile 目录时 `saveFileDialog` 必须拒绝（返回空串）+ 日志有拒绝 + 文件没被写出来 |
-| `verify-sync.ps1` | 一键：同步的**成功路径**（PARITY 6.1 缺口①）。起仓库自带的真同步服务器（`anki-sync-server`）→ 用专用集合/profile 起外壳 → `sync-check.mjs`：登录打到真 `/sync/hostKey` → 服务器无集合时弹「上传/下载」→ 选上传 → 断言服务器侧真的出现 `collection.anki2`、服务器日志整条链路 200；收尾停服务器 |
+| `verify-sync.ps1` | 一键：同步的**成功路径**（PARITY 6.1 缺口①）。起仓库自带的真同步服务器（`anki-sync-server`）→ 用专用集合/profile 起**两个**外壳 → `sync-check.mjs`：登录打到真 `/sync/hostKey` → 服务器无集合时弹「上传/下载」→ 选上传 → 断言服务器侧真的出现 `collection.anki2`；再让第二个客户端（空集合 + 搬过去的 host key）同步 → 断言它的集合与服务器侧**大小一致**且含第一个客户端的卡；收尾停服务器 |
 | `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |

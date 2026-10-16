@@ -19,10 +19,13 @@
 param(
     [string]$Exe = "tauri/target/debug/anki-tauri.exe",
     [int]$Port = 40041,
+    [int]$Port2 = 40042,
     [int]$SyncPort = 40011,
     [string]$ApiKey = "test-key-123",
     [string]$Collection = "out/tauri-test/collection-sync.anki2",
     [string]$ProfileDir = "out/tauri-test/profile-sync",
+    [string]$Collection2 = "out/tauri-test/collection-sync2.anki2",
+    [string]$ProfileDir2 = "out/tauri-test/profile-sync2",
     [string]$SyncBase = "out/tauri-test/sync-server",
     [string]$Lang = "zh-CN",
     [string]$OutDir = "out/sync-check",
@@ -59,7 +62,14 @@ Get-ChildItem (Join-Path $syncUserDir "collection.anki2*") -ErrorAction Silently
 if (Test-Path (Join-Path $root $Collection)) { Remove-Item (Join-Path $root $Collection) -Force }
 Get-ChildItem (Join-Path $root "$Collection-*") -ErrorAction SilentlyContinue |
     Remove-Item -Force -ErrorAction SilentlyContinue
-if (Test-Path (Join-Path $root $ProfileDir)) { Remove-Item (Join-Path $root $ProfileDir) -Recurse -Force }
+foreach ($path in @($ProfileDir, $ProfileDir2)) {
+    if (Test-Path (Join-Path $root $path)) { Remove-Item (Join-Path $root $path) -Recurse -Force }
+}
+foreach ($path in @($Collection2)) {
+    if (Test-Path (Join-Path $root $path)) { Remove-Item (Join-Path $root $path) -Force }
+    Get-ChildItem (Join-Path $root "$path-*") -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+}
 
 # 1. 先起真同步服务器（它是独立的进程，与外壳无关）
 Write-Host "启动本地同步服务器（端口 $SyncPort，数据 $SyncBase）…"
@@ -92,6 +102,7 @@ function Wait-LogPattern {
 }
 
 $proc = $null
+$proc2 = $null
 $passed = $true
 try {
     Write-Host "启动 $Exe（端口 $Port，集合 $Collection，profile $ProfileDir）…"
@@ -106,7 +117,31 @@ try {
     }
     Write-Host "牌组列表已渲染" -ForegroundColor Green
 
+    # 第二个客户端：空集合 + 自己的 profile（同一个同步服务器、同一个 host key 由检查写入）
+    $logPath2 = Join-Path $OutDir "run2.log"
+    $errPath2 = Join-Path $OutDir "run2.err"
+    foreach ($path in @($logPath2, $errPath2)) {
+        if (Test-Path $path) { Remove-Item $path -Force }
+    }
+    $env:ANKI_API_PORT = "$Port2"
+    $env:ANKI_COLLECTION = (Join-Path $root $Collection2)
+    $env:ANKI_PROFILE_DIR = (Join-Path $root $ProfileDir2)
+    $proc2 = Start-Process -FilePath $exePath -WorkingDirectory $root `
+        -RedirectStandardOutput $logPath2 -RedirectStandardError $errPath2 -NoNewWindow -PassThru
+    $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
+    $secondUp = $false
+    while ((Get-Date) -lt $deadline) {
+        $text = try { Get-Content $logPath2 -Raw -Encoding utf8 -ErrorAction Stop } catch { "" }
+        if ($text -match "bridge 命令\[main\]: domDone") { $secondUp = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $secondUp) { throw "第二个客户端没起来（详见 $logPath2）" }
+    Write-Host "第二个客户端已就绪（端口 $Port2，空集合）" -ForegroundColor Green
+
     $env:ANKI_LOG = $logPath
+    $env:ANKI_API_PORT2 = "$Port2"
+    $env:ANKI_LOG2 = $logPath2
+    $env:SECOND_COLLECTION = (Join-Path $root $Collection2)
     $env:SYNC_PORT = "$SyncPort"
     $env:SYNC_BASE = (Join-Path $root $SyncBase)
     $env:SYNC_LOG = $syncLogPath
@@ -121,6 +156,9 @@ try {
 } finally {
     if ($proc -and -not $proc.HasExited) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+    if ($proc2 -and -not $proc2.HasExited) {
+        Stop-Process -Id $proc2.Id -Force -ErrorAction SilentlyContinue
     }
     & pwsh -File (Join-Path $root "tauri/tools/sync-server.ps1") -Stop | Out-Host
 }

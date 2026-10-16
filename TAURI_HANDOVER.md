@@ -1156,8 +1156,15 @@ target/debug/anki-sync-server.exe      # /health 返回 200 即就绪
    分支，必须在**起服务器之前**删 `SYNC_BASE/<user>/collection.anki2*`（开着时删会
    `EPERM`）。`verify-sync.ps1` 里先 `sync-server.ps1 -Stop` 再清，然后才起。
 3. 现在覆盖到：登录 → 真 `/sync/hostKey`、`/sync/meta`、整份上传 → 服务器侧
-   `collection.anki2`（147KB 的合法集合）与整条链路 200。**还没覆盖**：整份下载方向、
-   媒体同步成功路径、冲突分支。
+   `collection.anki2`（147456 字节的合法集合）与整条链路 200；**下载方向**用第二个客户端
+   （空集合 + 同一个 host key）验：点同步 → 它的集合大小与服务器上那份**一致**、且里面有
+   第一个客户端的那张卡。**还没覆盖**：媒体同步成功路径、冲突分支、进度条。
+4. **`/sync/download` 不会进服务器日志**：那是流式响应，`with_logging_layer` 不会为它写
+   `finished` 行（实测只有 `meta`/`hostKey`/`upload` 有）。所以下载方向只能靠**产物**断言
+   （集合大小/内容），不能靠日志。
+5. 第二个客户端点同步时**没有**弹「上传/下载」：`syncStatus` 判定不需要完整同步，随后的
+   正常同步就把服务器那份拉下来了 —— 想稳定测"弹框 → 点下载"这条 UI 分支，得让两边
+   `scm` 都不同且服务器侧有更新（`scm` 造不同见 §5.43）。
 
 另外，同步的凭据（`syncKey` / `syncUser` / `customSyncUrl` / `syncMedia`）走 profile 配置，
 **不在集合里** —— 所以「还原备份」不会把它们清掉（与桌面版一致）。
