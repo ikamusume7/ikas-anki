@@ -1185,6 +1185,22 @@ pub(crate) async fn play_clicked_audio(state: &AppState, question_side: bool, in
     }
 }
 
+/// 暂停 / 继续音频（`5` / 菜单「暂停音频」；对照 `reviewer.py:644-646` 的 `on_pause_audio`）。
+pub(crate) fn pause_audio() {
+    match crate::platform::audio::toggle_pause() {
+        Ok(()) => tracing::info!("音频: 暂停/继续（对照 av_player.toggle_pause）"),
+        Err(error) => tracing::warn!("音频暂停失败: {error}"),
+    }
+}
+
+/// 前后跳 5 秒（`6` / `7` / 菜单里的两项；对照 `reviewer.py:648-656`）。
+pub(crate) fn seek_relative(seconds: f32) {
+    match crate::platform::audio::seek_relative(seconds) {
+        Ok(()) => tracing::info!("音频: 跳到 {seconds:+.0} 秒"),
+        Err(error) => tracing::warn!("音频跳转失败: {error}"),
+    }
+}
+
 /// 重播当前这一面的音频（`r` / `F5` / 菜单里的「重播音频」）。
 ///
 /// 对照 `reviewer.py:1043-1044` 的 `replayAudio`：问题面重播问题面的，答案面重播答案面的。

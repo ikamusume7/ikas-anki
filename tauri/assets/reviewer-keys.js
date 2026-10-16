@@ -140,6 +140,13 @@
                 return;
         }
 
+        // 5 / 6 / 7 → 暂停音频 / -5 秒 / +5 秒（`reviewer.py:637-639`）
+        if (key === "5" || key === "6" || key === "7") {
+            event.preventDefault();
+            window.pycmd(key === "5" ? "rev:pauseAudio" : key === "6" ? "rev:seekBack" : "rev:seekForward");
+            return;
+        }
+
         // 1..4 → 评分（对照 `reviewer.py:598-607` 的 `default_answer_keys`，默认就是 1..4）。
         // 答案面之外不评分，与 `_answerCard()` 的 `self.state != "answer"` 守卫一致。
         if (/^[1-4]$/.test(key)) {

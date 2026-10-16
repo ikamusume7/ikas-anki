@@ -208,6 +208,20 @@ try {
         (readLog().match(/播放点击的音频[^\n]*/) ?? ["（没有日志）"]).at(-1),
     );
 
+    // 4b. 暂停 / ±5 秒（`5`/`6`/`7` 与菜单里的三项）：宿主把命令交到播放器
+    const pauses = countLog("音频: 暂停/继续");
+    await bridge("rev:pauseAudio");
+    check("rev:pauseAudio 发了暂停/继续", await waitLogAbove("音频: 暂停/继续", pauses), logPath);
+    const seeks = countLog("音频: 跳到");
+    await bridge("rev:seekForward");
+    await bridge("rev:seekBack");
+    check("rev:seekForward/seekBack 发了 ±5 秒", await waitLogAbove("音频: 跳到", seeks + 1), logPath);
+    check(
+        "日志里带正负偏移",
+        readLog().includes("音频: 跳到 +5 秒") && readLog().includes("音频: 跳到 -5 秒"),
+        (readLog().match(/音频: 跳到[^\n]*/g) ?? ["（没有日志）"]).slice(-2).join(" / "),
+    );
+
     // 5. `r`/F5/菜单的「重播音频」：重播当前这一面
     const replays = countLog("重播音频（");
     await bridge("rev:replayAudio");

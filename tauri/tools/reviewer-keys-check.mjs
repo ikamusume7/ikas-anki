@@ -294,7 +294,8 @@ try {
     // 音频（r / F5 / 5 / 6 / 7 / v / Shift+v）与自动前进（Shift+A）没有后端能力
     await expect("Shift+A → 自动前进开关（不是裸 a）", ["Shift+KeyA"], ["rev:autoAdvance"]);
     await expect("r → 重播音频", ["KeyR"], ["rev:replayAudio"]);
-    await expect("暂停 / ±5 秒 / 录音键仍未绑定（PARITY 2.3 的剩余项）", ["Digit5", "Digit6", "Digit7", "KeyV", "Shift+KeyV"], []);
+    await expect("5 / 6 / 7 → 暂停 / -5 秒 / +5 秒", ["Digit5", "Digit6", "Digit7"], ["rev:pauseAudio", "rev:seekBack", "rev:seekForward"]);
+    await expect("录音键仍未绑定（PARITY 2.3 的剩余项）", ["KeyV", "Shift+KeyV"], []);
     const f5 = await expect("F5 → 重播音频", ["F5"], ["rev:replayAudio"]);
     check("F5 被拦住（否则 WebView 会重载页面）", f5.prevented[0] === true, String(f5.prevented[0]));
 

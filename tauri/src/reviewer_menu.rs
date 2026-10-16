@@ -38,6 +38,9 @@ use crate::windows;
 /// 标记用的标签名（对照 `pylib/anki/tags.py` 的 `MARKED_TAG`）。
 const MARKED_TAG: &str = "marked";
 
+/// 前后跳的秒数（对照 `reviewer.py:648` 的 `seek_secs = 5`）。
+const SEEK_SECS: f32 = 5.0;
+
 /// 把菜单的样式与交互注入复习页面（与 `install_reviewer_shortcuts` 同时机）。
 pub fn install(state: &AppState) {
     windows::eval(state, windows::MAIN, MENU_JS);
@@ -110,6 +113,9 @@ pub async fn show(state: &AppState) {
             // 重播当前这一面的音频（对照 `reviewer.py:1043`，快捷键 `R`）。
             // 暂停 / ±5 秒 / 录音 / 重播录音还没做（播放器要加 pause/seek，见 PARITY 2.3）
             { "label": tr.translate("actions-replay-audio", None), "shortcut": "R", "action": "replayAudio" },
+            { "label": tr.translate("studying-pause-audio", None), "shortcut": "5", "action": "pauseAudio" },
+            { "label": tr.translate("studying-audio-5s", None), "shortcut": "6", "action": "seekBack" },
+            { "label": tr.translate("studying-audio-and5s", None), "shortcut": "7", "action": "seekForward" },
             // 自动前进（对照 `reviewer.py:1049-1054`）：带勾选态，`Shift+A` 是快捷键。
             // 差的音频六项（重播/暂停/±5 秒/录音/重播录音）见 PARITY 2.3
             { "label": tr.translate("actions-auto-advance", None), "shortcut": "Shift+A", "checked": state.reviewer.auto_advance_enabled(), "action": "autoAdvance" },
@@ -162,6 +168,19 @@ pub async fn handle(state: &AppState, command: &str) {
     // 重播音频：不依赖当前卡片（标签在会话里）
     if action == "replayAudio" {
         crate::reviewer::replay_audio(state).await;
+        return;
+    }
+    // 音频的暂停 / ±5 秒（对照 `reviewer.py:644-656`）：同样不依赖当前卡片
+    if action == "pauseAudio" {
+        crate::reviewer::pause_audio();
+        return;
+    }
+    if action == "seekBack" {
+        crate::reviewer::seek_relative(-SEEK_SECS);
+        return;
+    }
+    if action == "seekForward" {
+        crate::reviewer::seek_relative(SEEK_SECS);
         return;
     }
 

@@ -40,14 +40,19 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// 发给音频线程的指令。
 ///
-/// 目前只有「播放」：Qt 的 `stop_and_clear_queue` 只用在 shutdown 与切换调用者
-/// 时，本外壳还没有这两种场景，所以不保留单独的 Stop 指令。
+/// 目前只有「播放 / 暂停 / 前后跳」：Qt 的 `stop_and_clear_queue` 只用在 shutdown 与
+/// 切换调用者时，本外壳还没有这两种场景，所以不保留单独的 Stop 指令。
 enum Command {
     /// 清空队列、打断当前播放，然后按顺序播放这些文件（对照 `play_tags`）
     Play(Vec<PathBuf>),
+    /// 暂停 / 继续当前播放（对照 `av_player.toggle_pause()`）
+    TogglePause,
+    /// 相对当前位置前后跳（秒，可负）；对照 `av_player.seek_relative()`
+    SeekRelative(f32),
 }
 
 static COMMANDS: OnceLock<mpsc::Sender<Command>> = OnceLock::new();
+
 
 /// 当前是否有音频在播（自动前进的 `waitForAudio` 用它，对照 `av_player.current_player`）。
 static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -55,6 +60,21 @@ static PLAYING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// 是否正在播放音频（复制标签/`playFile` 都会走同一个队列）。
 pub fn is_playing() -> bool {
     PLAYING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+
+/// 暂停 / 继续（对照 `reviewer.py:644-646` 的 `on_pause_audio` → `av_player.toggle_pause()`）。
+pub fn toggle_pause() -> Result<(), String> {
+    commands()
+        .send(Command::TogglePause)
+        .map_err(|_| "音频线程已退出".to_string())
+}
+
+/// 相对当前位置前后跳（`reviewer.py:650-656` 的 `on_seek_backward` / `on_seek_forward`）。
+pub fn seek_relative(seconds: f32) -> Result<(), String> {
+    commands()
+        .send(Command::SeekRelative(seconds))
+        .map_err(|_| "音频线程已退出".to_string())
 }
 
 /// 对应 mediasrv 的 `play_file`。
@@ -129,6 +149,31 @@ fn audio_loop(rx: mpsc::Receiver<Command>) {
                 sink.play();
                 queue = paths.into();
                 playing = false;
+            }
+            // 对照 `av_player.toggle_pause()`
+            Ok(Command::TogglePause) => {
+                if sink.is_paused() {
+                    sink.play();
+                    tracing::debug!("音频继续");
+                } else {
+                    sink.pause();
+                    tracing::debug!("音频暂停");
+                }
+            }
+            // 对照 `av_player.seek_relative()`：rodio 的 `try_seek` 是绝对位置，
+            // 所以取当前位置再加偏移（下钳到 0）
+            Ok(Command::SeekRelative(seconds)) => {
+                let current = sink.get_pos();
+                let target = if seconds >= 0.0 {
+                    current + std::time::Duration::from_secs_f32(seconds)
+                } else {
+                    current
+                        .saturating_sub(std::time::Duration::from_secs_f32(-seconds))
+                };
+                match sink.try_seek(target) {
+                    Ok(()) => tracing::debug!("音频跳到 {:?}（{seconds:+.0} 秒）", target),
+                    Err(error) => tracing::warn!("音频跳转失败: {error}"),
+                }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
