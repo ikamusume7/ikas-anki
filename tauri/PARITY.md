@@ -146,7 +146,7 @@ addon、文件关联、录音格式为零。
 | 8.6 | ❌ | **集合打不开 / 过新 / 损坏的启动提示** | 打开集合失败时只记日志并继续启动（`media_folder` 置空）→ 用户拿到一个功能残缺的窗口，既不知道原因，也没有「降级并退出」 | `qt/aqt/main.py:648-660,745`、`qt/aqt/profiles.py:224-227` |
 | 8.7 | ❌ | **schema 改动「需要整合同步」确认框** | 改字段/卡片模板/笔记类型后，Qt 会弹「需要一次性整合同步」的确认；外壳完全没有（只有"删除卡片模板"这类确认） | `qt/aqt/main.py:1688-1705` |
 | 8.8 | ❌ | **卡片中的视频播放** | `SoundOrVideo` 一律丢给音频解码（`rodio`），没有 mpv 那套 → 含 `[sound:clip.mp4]` 的牌组只显示空白，日志走"播放失败"分支 | `qt/aqt/sound.py:105-129`、`qt/aqt/mpv.py` |
-| 8.9 | ⚠️ | **同步日志 / 媒体同步对话框** | 只有工具栏文字状态，没有 `MediaSyncDialog`（进度 + 日志 + 失败原因） | `qt/aqt/mediasync.py:113-149` |
+| 8.9 | ⚠️ | **同步日志 / 媒体同步对话框** | **进度条与实时计数已补**：同步期间（`syncState === "syncing"`）工具栏下方显示一根进度条（`#sync-progress`，`ts/routes/decks/+page.svelte`），媒体同步过程中页面轮询 `mediaSyncStatus` 把后端本地化好的「Checked / Added / Removed」实时写在状态行里（`runMediaSync`），结束时进度条消失、失败时状态行显示后端给的失败原因。**还差**：① 进度是**不确定**的（转圈）—— 后端 `MediaSyncStatus.progress` 只有三个本地化**文案**，没有"总数/已完成"数值，要做确定百分比得改 `rslib/src/progress.rs` 与 proto；② Qt 那个**独立对话框**（带日志列表）没做，我们是工具栏下的内联状态；③ 没有单独的"取消"按钮（点同步按钮即取消，已有断言）。验证：`verify-sync.ps1` 的媒体那一段（造 150 个媒体文件 → 断言同步期间进度条出现、结束后消失） | `qt/aqt/mediasync.py:113-149` |
 | 8.10 | ⚠️ | **可取消的进度对话框** | 检查数据库/检查媒体/还原备份只有一个 `busy` 标志，没有进度、不能取消；宿主也没有进度通道 | `qt/aqt/progress.py:340`、`qt/aqt/taskman.py:27` |
 | 8.11 | ❌ | **浏览器的侧栏显隐 / 缩放 / 布局 / 全屏 / `Ctrl+G`** | `ts/routes/browser/+page.svelte` 里 `filteredDeck`/`toggleSidebar`/`zoom`/`Ctrl+G` 全无命中 → 从搜索结果一键建筛选牌组的捷径没了，侧栏收不起来，浏览器内也不能缩放/改布局/全屏 | `qt/aqt/browser/browser.py:312-387,843-848` |
 | 8.12 | ⚠️ | **自定义 URL scheme 白名单与放行确认** | 卡片里的非 http(s) 链接既不询问也不拦截，直接 `opener::open`；用户也无法维护放行列表 | `qt/aqt/url_schemes.py:18-60` |
@@ -223,8 +223,9 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
   登录（真 `/sync/hostKey`）、整份**上传**（服务器侧真的出现 `collection.anki2`）、
   「上传/下载」**二选一 UI** + 整份**下载**（第二个客户端独立目录、空集合 → 下载后集合与服务器
   侧大小一致且含第一份的卡）、**媒体同步**成功路径（`addMediaFile` → `/msync/uploadChanges` →
-  服务器 `media/` → 第二个客户端下载到）。`verify-sync.ps1` 全绿（16/16）。**还没做**：
-  进度条 / Abort（8.9）、增量冲突/服务端消息分支。
+  服务器 `media/` → 第二个客户端下载到）。`verify-sync.ps1` 全绿（18/18）。**进度条已补**（8.9：
+  同步期间的内联进度条 + 媒体同步实时计数；确定百分比要改 rslib/proto，Qt 的独立日志对话框没做）；
+  **还没做**：增量冲突/服务端消息分支。
 - **②打包**：`fileAssociations` 补齐（apkg/colpkg/ankiaddon）、**命令行带文件启动**做通并验证
   （`verify-cli-open.ps1`，双击 `.apkg` 走与拖入同一条路）、应用图标换成上游那份七尺寸 ICO、
   `capabilities/default.json` 补上（权限为空）。**环境受限**：装安装包/签名要 Tauri CLI + 证书

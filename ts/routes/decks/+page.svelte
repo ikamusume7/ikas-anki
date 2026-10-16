@@ -1534,6 +1534,19 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         <div class="sync-status" id="sync-status" data-sync-state={syncState}>{syncMessage}</div>
     {/if}
 
+    <!--
+        进度条（对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog` 里那根 QProgressBar）。
+        只有"正在同步"时显示：集合同步与媒体同步都可能持续好几秒，之前只有一行文字。
+        进度**不确定**（转圈）是诚实的：后端给的 `MediaSyncStatus.progress` 是三个**本地化好的
+        文案**（Checked/Added/Removed），没有"总数/已完成"这种数值，做不出百分比
+        （要做成确定进度得改 rslib 与 proto，见 PARITY 8.9）。
+    -->
+    {#if syncState === "syncing"}
+        <div class="progress sync-progress" id="sync-progress" role="progressbar" aria-label={translateRaw("qt-misc-sync")}>
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div>
+        </div>
+    {/if}
+
     {#if overview}
         <!-- 概览（Qt 的 Overview 页面） -->
         <div class="overview">
@@ -2289,6 +2302,11 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         color: var(--fg);
         font-size: 0.9rem;
         white-space: pre-wrap;
+    }
+
+    .sync-progress {
+        margin-top: 0.4rem;
+        height: 0.35rem;
     }
 
     /* 「学习牌组」的名字列表（对照 `studydeck.ui` 的 `QListWidget`） */

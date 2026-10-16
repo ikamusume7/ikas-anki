@@ -393,8 +393,28 @@ try {
         typeof storedName === "string" && storedName.length > 0,
         storedName,
     );
-    // 再点一次同步：这次集合同步没有变化，媒体同步会把新文件推上去
+    // 多造一些媒体文件：本机服务器很快，一两个文件"唰"一下就同步完了，看不到进度条。
+    for (let index = 0; index < 150; index++) {
+        await rpc(
+            "addMediaFile",
+            new AddMediaFileRequest({
+                desiredName: `tauri-sync-bulk-${index}.txt`,
+                data: new TextEncoder().encode(`bulk ${index} ${Date.now()}`),
+            }).toBinary(),
+        );
+    }
+
+    // 再点一次同步：这次集合同步没有变化，媒体同步会把新文件推上去。
+    // 同步期间应该有进度条（对照 `qt/aqt/mediasync.py` 的 `MediaSyncDialog`），同步完消失。
     await page.locator("#sync").click();
+    check(
+        "同步期间出现进度条（#sync-progress）",
+        await page
+            .waitForSelector("#sync-progress", { state: "visible", timeout: 10_000 })
+            .then(() => true)
+            .catch(() => false),
+        await page.locator("#sync-progress").count(),
+    );
     const client1Media = collection1 ? path.join(mediaDirOf(collection1), storedName) : "";
     check(
         "第一个客户端的媒体夹里有它",
@@ -408,6 +428,14 @@ try {
         "服务器媒体夹里出现了这个文件",
         await waitFor("server media", () => fs.existsSync(serverMedia), 90_000),
         serverMedia,
+    );
+    check(
+        "同步结束后进度条消失",
+        await page
+            .waitForSelector("#sync-progress", { state: "detached", timeout: 120_000 })
+            .then(() => true)
+            .catch(() => false),
+        `#sync-progress 还剩 ${await page.locator("#sync-progress").count()} 个`,
     );
     check(
         "服务器日志里有 /msync/ 请求",

@@ -1134,6 +1134,16 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    `GenericString`。
 
 ### 5.46 capabilities 与图标：图标换成上游安装包那份；权限一个都不给
+### 5.48 同步进度条：后端只给本地化文案，做不出百分比
+
+`ts/routes/decks/+page.svelte` 在 `syncState === "syncing"` 时显示一根进度条（`#sync-progress`），
+媒体同步期间页面轮询 `mediaSyncStatus` 把 `progress.checked/added/removed`（**后端已经本地化好的
+字符串**，见 `rslib/src/progress.rs`）写进状态行。要做成 Qt 那种**确定**百分比，得让后端提供
+"总数/已完成"的数值（改 `rslib/src/progress.rs` 与 proto 的 `MediaSyncStatus`）——本轮没动后端，
+所以进度条是 indeterminate 的，这点写进了 PARITY 8.9。
+
+验证：`verify-sync.ps1` 媒体那一段先造 150 个媒体文件（本机服务器太快，一两个文件瞬间就完了），
+再断言"同步期间 `#sync-progress` 可见 → 同步结束后消失"。
 ### 5.47 Android / 签名的现状（环境受限，避免重复排查）
 
 - **Android**：本机 `%LOCALAPPDATA%\Android\Sdk` **有**（含 `ndk 28.2.13676358`、platforms、
