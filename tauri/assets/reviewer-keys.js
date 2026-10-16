@@ -73,7 +73,8 @@
 
         // 组合键（对照 `_shortcutKeys()` 里的 Ctrl+ 项）
         if (ctrl) {
-            // Ctrl+Alt+N → 重置卡片；Ctrl+Alt+E → 创建副本（`reviewer.py:626-627`）
+            // Ctrl+Alt+N → 重置卡片；Ctrl+Alt+E → 创建副本（`reviewer.py:626-627`）；
+            // Ctrl+Alt+I → 上一张卡片信息（`reviewer.py:634`）
             if (event.altKey) {
                 if (lower === "n") {
                     event.preventDefault();
@@ -81,6 +82,9 @@
                 } else if (lower === "e") {
                     event.preventDefault();
                     window.pycmd("rev:copy");
+                } else if (lower === "i") {
+                    event.preventDefault();
+                    window.pycmd("rev:prevCardInfo");
                 }
                 return;
             }

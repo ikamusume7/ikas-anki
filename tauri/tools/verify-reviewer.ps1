@@ -132,6 +132,8 @@ try {
     }
 
     $env:SHOT_DIR = $OutDir
+    # 菜单检查里要读宿主日志（「上一张卡片信息」开的是哪张卡、真实菜单的项数）
+    $env:ANKI_LOG = $logPath
     node tauri/tools/visual-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 

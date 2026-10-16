@@ -260,6 +260,7 @@ try {
     ]);
     await expect("Ctrl+Alt+N → 重置卡片", ["Control+Alt+KeyN"], ["rev:forget"]);
     await expect("Ctrl+Alt+E → 创建副本", ["Control+Alt+KeyE"], ["rev:copy"]);
+    await expect("Ctrl+Alt+I → 上一张卡片信息", ["Control+Alt+KeyI"], ["rev:prevCardInfo"]);
     await expect("Ctrl+Shift+D → 设置到期日", ["Control+Shift+KeyD"], ["rev:due"]);
     await expect("Ctrl+Delete → 删除笔记", ["Control+Delete"], ["rev:deleteNote"]);
     await expect("Ctrl+Z → 撤销", ["Control+KeyZ"], ["undo"]);

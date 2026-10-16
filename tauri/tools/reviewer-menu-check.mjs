@@ -341,6 +341,47 @@ try {
     await bridge("undo");
     check("撤销后到期日还原", (await readCard()).due === dueBefore);
 
+    // 「上一张卡片信息」（PARITY 2.2 / `Ctrl+Alt+I`）：答一张卡 → 宿主把它记成"上一张" →
+    // `rev:prevCardInfo` 打开的就是它（日志里的 card id 必须对得上）。之后 `undo` 还原。
+    if (process.env.ANKI_LOG) {
+        const logOf = () => {
+            try {
+                return fs.readFileSync(process.env.ANKI_LOG, "utf8");
+            } catch {
+                return "";
+            }
+        };
+        const infos = () =>
+            [...logOf().matchAll(/打开(?:上一张)?卡片信息: card=(\d+)/g)].map((match) => match[1]);
+        const before = infos().length;
+        await bridge("ans");
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        await bridge("ease3");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await bridge("rev:prevCardInfo");
+        const deadline = Date.now() + 15_000;
+        while (Date.now() < deadline && infos().length <= before) {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const seen = infos();
+        check(
+            "rev:prevCardInfo 打开的是刚答掉那张卡",
+            seen.length > before && seen.at(-1) === String(card.id),
+            `日志里的卡片：${seen.slice(before).join(" / ") || "（没有）"}，刚答掉的是 ${card.id}`,
+        );
+        // 宿主侧拼出来的真实菜单项数（13 项 + 1 条分隔线），新增项就在里面
+        await bridge("more");
+        check(
+            "真实菜单是 13 项（含新增的「上一张卡片信息」）",
+            /打开复习菜单: .*共 13 项/.test(logOf()),
+            (logOf().match(/打开复习菜单: [^\n]*/) ?? ["（没有菜单日志）"]).at(-1),
+        );
+        await bridge("undo");
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+    } else {
+        console.log("没有 ANKI_LOG，跳过「上一张卡片信息」的宿主断言");
+    }
+
     // 复习界面工具栏的「同步」：宿主的 `sync` 命令 → 真的连同步服务器
     // （假服务器只实现 `/sync/meta`，与 decks-check 5i 同一套路）
     const syncPaths = [];

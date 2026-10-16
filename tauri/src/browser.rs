@@ -322,13 +322,36 @@ pub async fn open_change_notetype(state: &AppState, note_ids: Vec<i64>) -> Resul
 /// Qt 的 `CardInfoDialog` 是单例（复用同一个对话框），这里也用固定标签 —— 已经开着
 /// 但看的是另一张卡时，直接让它跳过去（整页导航，页面会在 load 里重新取数）。
 pub fn open_card_info(state: &AppState, card_id: i64) -> Result<()> {
-    tracing::info!("打开卡片信息: card={card_id}");
+    open_card_info_titled(state, card_id, &state.backend.i18n().actions_card_info(), "卡片信息")
+}
+
+/// 打开「**上一张**卡片信息」窗口（复习菜单的 `Ctrl+Alt+I`，对照 `reviewer.py:1025-1027`
+/// 与 `:1093-1094` 的 `on_previous_card_info`）。
+///
+/// Qt 那边 `PreviousReviewerCardInfo` 是 `CardInfoDialog` 的子类，只是窗口标题不同
+/// （`actions-previous-card-info`）；本外壳复用同一个 `card-info` 窗口标签，换标题即可。
+pub fn open_previous_card_info(state: &AppState, card_id: i64) -> Result<()> {
+    open_card_info_titled(
+        state,
+        card_id,
+        &state.backend.i18n().actions_previous_card_info(),
+        "上一张卡片信息",
+    )
+}
+
+fn open_card_info_titled(
+    state: &AppState,
+    card_id: i64,
+    title: &str,
+    log_label: &str,
+) -> Result<()> {
+    tracing::info!("打开{log_label}: card={card_id}");
     let existed = state.app.get_webview_window(windows::CARD_INFO).is_some();
     windows::open(
         state,
         &WindowSpec::new(windows::CARD_INFO, &format!("card-info/{card_id}/"))
             // 对照 `actions-card-info`（Qt 的 `CardInfoDialog` 用的就是它）
-            .title(state.backend.i18n().actions_card_info())
+            .title(title)
             .size(600.0, 700.0),
     )?;
     if existed {

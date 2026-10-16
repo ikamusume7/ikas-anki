@@ -86,6 +86,8 @@ struct Timebox {
 #[derive(Default)]
 struct Session {
     card_id: Option<i64>,
+    /// 上一张卡片（对照 Qt 的 `self.previous_card`）：菜单里的「上一张卡片信息」用它
+    previous_card_id: Option<i64>,
     /// 当前卡片（类型作答需要它的 note 与模板序号）
     card: Option<Card>,
     /// 类型作答（`[[type:Field]]`）的运行时状态；无类型作答时为 `None`
@@ -163,6 +165,14 @@ impl Reviewer {
         self.session().card.clone()
     }
 
+    /// 上一张卡片 id（对照 Qt 的 `reviewer.previous_card`）。
+    ///
+    /// 复习菜单的「上一张卡片信息」（`Ctrl+Alt+I`）用它开卡片信息窗口，即使当前队列已经
+    /// 空了也能用（Qt 里那个对话框对象一直留着）。
+    pub(crate) fn previous_card_id(&self) -> Option<i64> {
+        self.session().previous_card_id
+    }
+
     /// 重新开始计时（对照 `col.startTimebox()`）。
     ///
     /// 调用点与 Qt 一致：显示概览（`overview.py:98`）与开始复习（`main.py:1242`）。
@@ -196,6 +206,16 @@ impl Reviewer {
 
 /// 开始（或继续）复习：取下一张卡片并显示问题。
 pub async fn start(state: &AppState) {
+    // 对照 `Reviewer.nextCard()` 开头两行（`reviewer.py:249-250`）：
+    // `previous_card = self.card; self.card = None` —— **在取下一张之前**就把当前这张
+    // 记成"上一张"，所以答掉最后一张、队列空了之后「上一张卡片信息」照样能看。
+    {
+        let mut session = state.reviewer.session();
+        if let Some(previous) = session.card_id {
+            session.previous_card_id = Some(previous);
+        }
+    }
+
     let request = GetQueuedCardsRequest {
         fetch_limit: 1,
         intraday_learning_only: false,

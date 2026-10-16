@@ -99,6 +99,7 @@ pub async fn show(state: &AppState) {
             { "label": tr.translate("actions-suspend-card", None), "shortcut": "@", "action": "suspendCard" },
             { "label": tr.translate("actions-options", None), "shortcut": "O", "action": "options" },
             { "label": tr.translate("actions-card-info", None), "shortcut": "I", "action": "cardInfo" },
+            { "label": tr.translate("actions-previous-card-info", None), "shortcut": "Ctrl+Alt+I", "action": "prevCardInfo" },
             serde_json::Value::Null,
             { "label": tr.translate("studying-mark-note", None), "shortcut": "*", "checked": marked, "action": "mark" },
             { "label": tr.translate("studying-bury-note", None), "shortcut": "=", "action": "buryNote" },
@@ -120,7 +121,13 @@ pub async fn show(state: &AppState) {
         },
     });
 
-    tracing::debug!("打开复习菜单: 旗标={flag} 已标记={marked}");
+    // 记一下项数：真实菜单的内容没法在 Playwright 里看（那是宿主 eval 进 WebView2 的），
+    // 验证脚本只能靠这条日志 + 真实窗口截图核对（见 `tauri/README.md` 的「更多菜单」）
+    let item_count = menu["items"]
+        .as_array()
+        .map(|items| items.iter().filter(|item| !item.is_null()).count())
+        .unwrap_or(0);
+    tracing::debug!("打开复习菜单: 旗标={flag} 已标记={marked} 共 {item_count} 项");
     windows::eval(state, windows::MAIN, &format!("showReviewerMenu({menu});"));
 }
 
@@ -131,6 +138,20 @@ pub async fn handle(state: &AppState, command: &str) {
         Some((action, param)) => (action, param),
         None => (rest, ""),
     };
+    // 「上一张卡片信息」不依赖当前卡片（对照 Qt：`_previous_card_info` 那个对话框一直在，
+    // 队列空了之后仍然能看），所以它在没有当前卡片时也要能执行
+    if action == "prevCardInfo" {
+        match state.reviewer.previous_card_id() {
+            Some(previous) => {
+                if let Err(error) = crate::browser::open_previous_card_info(state, previous) {
+                    tracing::warn!("打开上一张卡片信息失败: {error:#}");
+                }
+            }
+            None => tracing::warn!("还没有「上一张卡片」，忽略「上一张卡片信息」"),
+        }
+        return;
+    }
+
     let Some(card) = state.reviewer.current_card() else {
         tracing::warn!("复习界面没有卡片，忽略菜单动作: {command}");
         return;
