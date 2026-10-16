@@ -648,11 +648,16 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             .every((word) => haystack.includes(word));
     }
 
-    /** 工具 → 学习牌组：列出现有牌组（含筛选牌组），选中后设为当前牌组并进概览。 */
+    /**
+     * 工具 → 学习牌组：列出现有牌组，选中后设为当前牌组并进概览。
+     *
+     * **与上游的差异**（`tauri/PARITY.md` 1.2）：Qt 的 `StudyDeck(dyn=True)` 会列出
+     * **筛选牌组**（`all_names_and_ids(include_filtered=True, skip_empty_default=True)`），
+     * 这里没传 `includeFiltered`（rslib 默认排除）→ 筛选牌组**不会**出现在列表里。
+     */
     async function askStudyDeck(): Promise<void> {
         studyFilter = "";
-        // 上游 `all_names_and_ids(include_filtered=True, skip_empty_default=True)`：
-        // 树节点的 `name` 只是**叶子名**，所以单独取一次完整名字（筛选牌组也在内）
+        // 树节点的 `name` 只是**叶子名**，所以单独取一次完整名字
         studyEntries = (
             await getDeckNames(new GetDeckNamesRequest({ skipEmptyDefault: true }))
         ).entries.map((entry) => ({ id: entry.id, name: entry.name }));

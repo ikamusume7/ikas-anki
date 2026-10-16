@@ -7,9 +7,17 @@
 //! 与 Qt 保持同一个约定：卡片 HTML 交给 `js/reviewer.js` 提供的
 //! `_showQuestion(q, a, bodyclass)` / `_showAnswer(a, bodyclass)` 全局函数。
 //!
-//! 当前实现的是主链路（显示问题 → 显示答案 → 四档评分 → 下一张）。
-//! **未实现**：计时器与时间盒、撤销、自动播放与音频队列、类型作答（`type:`）、
-//! 学习/复习队列计数显示、`getSchedulingStatesWithContext` 等界面状态同步。
+//! 当前实现的是主链路（显示问题 → 显示答案 → 四档评分 → 下一张），以及计时器、
+//! 撤销、自动播放与音频队列、类型作答（`type:`）、队列计数显示、
+//! `getSchedulingStatesWithContext` 界面状态同步、顶部/底部工具栏与「更多」菜单。
+//!
+//! **未实现**（见 `tauri/PARITY.md`）：
+//! - **键盘答题**：只绑了 `Ctrl+Z`/`Ctrl+P` 与裸 `u`/`a`/`b`/`t`/`d`/`s`，
+//!   Qt `_shortcutKeys` 里的空格 / 回车显示答案、`1`–`4` 评分等一个都没绑；
+//! - **答完队列的收尾**：只注入一句提示，没有 Congratulations 页与概览跳转；
+//! - **时间盒**（`timeboxReached` 与「继续 / 结束」对话框）；
+//! - **音频**：卡面不画播放按钮（没有 `play:q:N`）、没有重播 / 暂停 / ±5 秒 / 录音，
+//!   答案面还会把问题面音频再播一遍（`partial_render` 的差异）。
 
 use std::sync::LazyLock;
 use std::sync::Mutex;
@@ -533,9 +541,10 @@ async fn show_question(state: &AppState) {
 /// 页面，因此由脚本把实测高度告诉样式表，而不是在 CSS 里写死数值。
 /// 顶部工具栏的链接（对照 `toolbar.py:353-389` 的 `_centerLinks`）。
 ///
-/// 顺序与文案都和 Qt 一致：牌组 / 添加 / 浏览 / 统计，提示是各自的全局快捷键
-/// （`actions-shortcut-key`）。**同步链接没做**（`toolbar.py:410-418`）——本外壳
-/// 没有同步功能（`tauri/PARITY.md` 6.1），左右两个托盘（add-ons 用）也没有。
+/// 顺序与文案都和 Qt 一致：牌组 / 添加 / 浏览 / 统计 / **同步**，提示是各自的全局快捷键
+/// （`actions-shortcut-key`）。同步链接走宿主的 `sync` 命令，状态用
+/// `window.__ankiSyncStatus()` 写回工具栏 —— 目前只有文字，没有 Qt 的状态色与旋转图标；
+/// 左右两个托盘（add-ons 用）也没有（`tauri/PARITY.md` 1.2 / 6.1）。
 fn toolbar_payload(tr: &I18n) -> serde_json::Value {
     json!({
         "hostId": "top-toolbar",

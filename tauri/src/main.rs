@@ -165,10 +165,9 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
 /// 开发/测试入口：把需要窗口的页面直接开出来
 /// （`ANKI_OPEN_ROUTES=deck-options/1,preferences`）。
 ///
-/// 牌组选项 / 导入 / 首选项的产品内入口还没实现（在 Qt 里它们要经过主窗口的工具栏与
-/// 牌组浏览器，而牌组浏览器是原生 Qt 界面）。这里提供一个与 `ANKI_START_PAGE` 同类的
-/// 测试入口，让「多窗口 + 模态 + 关闭 Hook」这条链路可以端到端验证。
-/// （编辑器与浏览器窗口现在有产品内入口了，见 `crate::editor` / `crate::browser`。）
+/// 牌组选项 / 导入 / 首选项现在都有产品内入口了（齿轮菜单与复习菜单的「选项」、牌组列表
+/// 底部的「导入文件」、菜单的 工具 → 首选项），这个入口保留下来是为了**不依赖 UI 路径**
+/// 就能验证「多窗口 + 模态 + 关闭 Hook」这条链路（与 `ANKI_START_PAGE` 同类）。
 fn open_extra_windows(state: &AppState) {
     let routes = std::env::var("ANKI_OPEN_ROUTES").unwrap_or_default();
     for route in routes.split(',').map(str::trim).filter(|it| !it.is_empty()) {

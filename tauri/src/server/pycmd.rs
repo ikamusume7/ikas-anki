@@ -301,8 +301,8 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             None
         }
         // 添加卡片（对照 Qt 主窗口的全局快捷键 `a` → `mw.onAddCard()`）。
-        // Qt 的入口在主窗口工具栏上，本外壳还没有牌组浏览器/工具栏，所以先由
-        // 复习页面的 `a` 快捷键触发（见 `reviewer.rs` 的 `install_reviewer_shortcuts`）。
+        // 入口有三处：复习页面的 `a`（见 `reviewer.rs` 的 `install_reviewer_shortcuts`）、
+        // 牌组列表页工具栏的「添加」、以及牌组列表页的 `a` 快捷键。
         "add" => {
             if let Err(error) = editor::open_add_cards(state) {
                 tracing::warn!("打开添加卡片窗口失败: {error:#}");
@@ -403,7 +403,8 @@ async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Op
         }
         // 「管理笔记类型」窗口（Qt 的 `Models` 对话框）。上游的入口是主窗口菜单
         // （`main.py:1357`）与浏览器侧栏 Note Types 的右键菜单（`tree.py:924-928`）；
-        // 本外壳还没有菜单栏（PARITY 1.2），所以挂在浏览器的「更多」菜单里
+        // 主窗口菜单栏画在牌组列表页、浏览器侧栏还没有右键菜单，所以挂在浏览器的
+        // 「更多」菜单里（差异见 `tauri/PARITY.md` 5.2 / 5.5）
         "notetypes" => {
             if let Err(error) = main_window::open_notetypes(state) {
                 tracing::warn!("打开「管理笔记类型」窗口失败: {error:#}");

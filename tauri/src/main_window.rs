@@ -18,8 +18,9 @@
 //! `domDone` 会往不存在的 `#qa` 注入 DOM。
 //!
 //! 主窗口全局快捷键（`main.py:1189-1198`）里与本文件相关的是：
-//! `d` → 牌组列表、`s` → 概览、`t`/`Shift+t` → 统计、`Ctrl+P` → 设置；
-//! 还没接的是 `Ctrl+:`（Python 调试控制台）与 `y`（同步，见 `tauri/PARITY.md` 6.1）。
+//! `d` → 牌组列表、`s` → 概览、`t`/`Shift+t` → 统计、`Ctrl+P` → 设置。
+//! 还没有的是 `Ctrl+:`（Python 调试控制台）；`y`（同步）只在牌组列表页接了，
+//! 复习页另外还缺 `F11`/`Ctrl+E`/`Ctrl+Shift+Z`/缩放三键（见 `tauri/PARITY.md` 1.4）。
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -249,8 +250,8 @@ fn open_cards(
 ///
 /// 上游有两个入口：主窗口菜单「管理笔记类型」（`main.py:1357` → `Models(mw, mw,
 /// fromMain=True)`）与浏览器侧栏 Note Types 的右键菜单（`browser/sidebar/tree.py:924-928`）。
-/// 本外壳还没有菜单栏（PARITY 1.2），入口因此挂在**浏览器窗口**的「更多」菜单里 ——
-/// 差异记在 `tauri/README.md` 的「管理笔记类型」。
+/// 主窗口菜单栏画在牌组列表页、浏览器侧栏还没有右键菜单，入口因此挂在**浏览器窗口**的
+/// 「更多」菜单里 —— 差异记在 `tauri/PARITY.md` 5.2 / 5.5。
 pub fn open_notetypes(state: &AppState) -> Result<()> {
     tracing::info!("打开「管理笔记类型」窗口");
     windows::open(
@@ -272,14 +273,18 @@ pub fn open_shared_decks() -> Result<()> {
 
 /// 打开统计图窗口（`t` / `Shift+t` → `onStats()`，`main.py:1331`）。
 ///
-/// 页面是既有的 `graphs/`。Qt 会把**当前选中的牌组**传进去（`_selectedDeck()`），
-/// 这里打开的是整个集合的视图（页面里可以自己换牌组/搜索词）。
+/// 页面是既有的 `graphs/`，默认搜索词是 `deck:current`，所以看到的就是**当前牌组**
+/// （牌组列表里选中的那个、复习界面里正在复习的那个），与 Qt 的 `_selectedDeck()` 同义。
+///
+/// **还差**（`tauri/PARITY.md` 3.2）：Qt 的对话框顶部有原生 `DeckChooser`（不用回主窗口
+/// 就能换牌组）与「Save PDF」按钮；标题用的是 `statistics-title`（统计数据），而这里复用了
+/// 工具栏那个 `qt-misc-stats`（统计）。
 pub fn open_stats(state: &AppState) -> Result<()> {
     tracing::info!("打开统计图窗口");
     windows::open(
         state,
         &WindowSpec::new(windows::STATS, "graphs/")
-            // 对照 DeckStats 对话框标题（`qt-misc-stats`）
+            // 对照工具栏的「统计」（`qt-misc-stats`）；Qt 对话框标题是 `statistics-title`
             .title(state.backend.i18n().translate("qt-misc-stats", None))
             .size(900.0, 760.0),
     )

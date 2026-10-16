@@ -72,9 +72,13 @@ pub async fn handle_rpc(
         };
     }
 
-    // 「卡片…」对话框：编辑器工具栏的「卡片」按钮 / `Ctrl+L`（`NotetypeButtons.svelte:61`
-    // 调的就是这个端点）。同样不带参数，对着编辑器窗口当前的笔记类型开窗（对照
-    // `mediasrv.py:1109-1116` 的 `open_cards_dialog`）。
+    // 「卡片…」对话框：编辑器工具栏的「卡片」**按钮**（`NotetypeButtons.svelte:56-63`
+    // 的 `openCardsDialog`）调的就是这个端点。同样不带参数，对着编辑器窗口当前的笔记类型
+    // 开窗（对照 `mediasrv.py:1109-1116` 的 `open_cards_dialog`）。
+    //
+    // 注意**不是** `Ctrl+L`：同一个组件里的 `Shortcut`（`:67-73`）无条件发
+    // `bridgeCommand("cards")`，而宿主的 pycmd 不处理 `cards` —— 上游这版同样没处理
+    // （`qt/aqt/editor.py` 的 `_links` 只有 paste/cut/copy/saved），所以是上游同款问题。
     if method == "openCardsDialog" {
         return match crate::main_window::open_cards_for_current(&state).await {
             Ok(()) => ([(header::CONTENT_TYPE, "application/binary")], Vec::new()).into_response(),
