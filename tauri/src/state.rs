@@ -44,6 +44,9 @@ pub struct AppState {
     pub reviewer_active: Arc<AtomicBool>,
     /// 录音会话状态。
     pub recorder: Arc<Recorder>,
+    /// 当前是否夜间模式（由 `meta["theme"]` + 系统主题算出，见 `crate::theme`）。
+    /// 每个窗口建窗时读一次，运行期切换由 `theme::broadcast()` 广播。
+    night_mode: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -68,7 +71,17 @@ impl AppState {
             preview: Arc::new(Preview::default()),
             reviewer_active: Arc::new(AtomicBool::new(false)),
             recorder: Arc::new(Recorder::default()),
+            night_mode: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 是否夜间模式（见 `crate::theme`）。
+    pub fn night_mode(&self) -> bool {
+        self.night_mode.load(Ordering::SeqCst)
+    }
+
+    pub fn set_night_mode(&self, night: bool) {
+        self.night_mode.store(night, Ordering::SeqCst);
     }
 
     pub fn set_port(&self, port: u16) {

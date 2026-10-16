@@ -18,6 +18,8 @@ use std::sync::Mutex;
 
 use anki_i18n::I18n;
 
+use crate::theme::Style;
+
 /// 页面 id 计数。Qt 用 `id(webview)` 作为 key，这里改用递增整数。
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -40,16 +42,17 @@ pub fn get(id: u32) -> Option<String> {
 /// 对照 `AnkiWebView.stdHtml`：
 /// - `<base>` 指向本地服务（对照 `mw.baseHTML()`）；
 /// - css / js 通过 `/_anki/` 下的绝对 URL 引用；
-/// - 脚本放在 body 开头，与 Qt 版本一致。
-///
-/// 未移植的部分：`standard_css()`（动态字体、缩放、主题色）。这些目前由
-/// `css/webview.css` 与 `css/reviewer.css` 的默认值兜底。
+/// - 脚本放在 body 开头，与 Qt 版本一致；
+/// - `<html>` / `<body>` 带主题类，并内联 `standard_css()`（字体、缩放、`--canvas`）——
+///   对照 `webview.py:638-692` 与 `730-755`；样式顺序也照上游：webview.css → standard_css
+///   → 各页面的隔离样式。
 pub fn render(
     port: u16,
     title: &str,
     body: &str,
     css: &[&str],
     js: &[&str],
+    style: &Style,
     extra_css: &str,
 ) -> String {
     let base = format!("http://127.0.0.1:{port}/");
@@ -60,7 +63,13 @@ pub fn render(
             "    <link rel=\"stylesheet\" type=\"text/css\" href=\"{base}_anki/{sheet}\">\n"
         ));
     }
-    // 内联样式放在所有 <link> 之后：同优先级下后者生效，用于隔离共用页面带来的污染
+    // `standard_css()` 紧跟 webview.css（两者都在 <link> 之后、隔离样式之前），
+    // 与上游的层叠顺序一致（`webview.py:716-724`）
+    head.push_str(&format!(
+        "    <style>{}</style>\n",
+        style.standard_css()
+    ));
+    // 各页面的隔离样式放在最后：同优先级下后者生效，用于隔离共用页面带来的污染
     if !extra_css.is_empty() {
         head.push_str(&format!("    <style>{extra_css}</style>\n"));
     }
@@ -72,16 +81,24 @@ pub fn render(
         ));
     }
 
+    // 夜间：`<html class="night-mode" data-bs-theme="dark">`（`webview.py:732-746`）
+    let html_attrs = if style.night {
+        " class=\"night-mode\" data-bs-theme=\"dark\""
+    } else {
+        " data-bs-theme=\"light\""
+    };
+
     format!(
         "<!doctype html>\n\
-         <html dir=\"ltr\">\n\
+         <html dir=\"ltr\"{html_attrs}>\n\
          <head>\n\
          \x20   <meta charset=\"utf-8\">\n\
          \x20   <title>{title}</title>\n\
          {head}</head>\n\
-         <body>\n\
+         <body class=\"{body_class}\">\n\
          {scripts}{body}</body>\n\
-         </html>\n"
+         </html>\n",
+        body_class = style.body_class()
     )
 }
 
@@ -93,7 +110,7 @@ pub fn render(
 /// 与 Qt 的差异：Qt 把底部工具栏放在**独立的 WebView** 里（`mw.bottomWeb`），
 /// 这里放在同一页面。`#bottom-container` 的内容由 `crate::reviewer` 注入，
 /// 其中的按钮调用全局的 `pycmd`，因此跨 WebView 的消息传递不需要了。
-pub fn reviewer_page(port: u16) -> u32 {
+pub fn reviewer_page(port: u16, style: &Style) -> u32 {
     // `#top-toolbar` 由 `crate::reviewer` 在会话开始时填内容（`install_toolbar()`），
     // 对照 Qt 主窗口那条常驻工具栏（`qt/aqt/toolbar.py`）
     let body = r#"<div id="top-toolbar"></div>
@@ -116,6 +133,7 @@ pub fn reviewer_page(port: u16) -> u32 {
         ],
         // reviewer-bottom.js 提供全局的 showQuestion / showAnswer（底部栏更新）
         &["js/webview.js", "js/reviewer.js", "js/reviewer-bottom.js"],
+        style,
         REVIEWER_ISOLATION_CSS,
     );
     register(html)
@@ -128,7 +146,7 @@ pub fn reviewer_page(port: u16) -> u32 {
 ///
 /// `secs_placeholder` 会被填进翻译串的秒数位置，再由页面脚本按帧替换 —— Qt 是每帧
 /// 重新调 `tr.media_recordingtime(secs=...)`，而这里的页面是纯静态 HTML。
-pub fn recorder_page(port: u16, i18n: &I18n, secs_placeholder: &str) -> u32 {
+pub fn recorder_page(port: u16, i18n: &I18n, secs_placeholder: &str, style: &Style) -> u32 {
     let label = i18n.media_recordingtime(secs_placeholder);
     let save = i18n.actions_save();
     let cancel = i18n.actions_cancel();
@@ -164,7 +182,7 @@ pub fn recorder_page(port: u16, i18n: &I18n, secs_placeholder: &str) -> u32 {
 </script>
 "#
     );
-    register(render(port, "Anki", &body, &[], &[], RECORDER_CSS))
+    register(render(port, "Anki", &body, &[], &[], style, RECORDER_CSS))
 }
 
 /// 预览窗口的页面（对照 `qt/aqt/browser/previewer.py:145-160`）。
@@ -175,7 +193,7 @@ pub fn recorder_page(port: u16, i18n: &I18n, secs_placeholder: &str) -> u32 {
 ///
 /// 按钮文案：重播音频取自 `actions-replay-audio`（核心 ftl）；
 /// 上一张/下一张沿用 Qt 的 `<` / `>` 字形（Qt 用的是箭头符号，没有文案）。
-pub fn preview_page(port: u16, i18n: &I18n) -> u32 {
+pub fn preview_page(port: u16, i18n: &I18n, style: &Style) -> u32 {
     let replay = i18n.actions_replay_audio();
     // 「仅背面」的文案在 `ftl/qt` 仓库里，类型化方法只覆盖核心字符串，
     // 所以用底层的 `translate`（字符串表本身包含全部模块）
@@ -248,6 +266,7 @@ pub fn preview_page(port: u16, i18n: &I18n) -> u32 {
         &body,
         &["css/webview.css", "css/reviewer.css"],
         &["js/webview.js", "js/reviewer.js"],
+        style,
         PREVIEW_ISOLATION_CSS,
     );
     register(html)

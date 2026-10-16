@@ -105,7 +105,7 @@ const SCRIPT: &str = r#"
 })();
 "#;
 
-pub fn script(api_key: &str, window_label: &str) -> String {
+pub fn script(api_key: &str, window_label: &str, night: bool) -> String {
     let mut script = SCRIPT
         .replace("__API_KEY__", api_key)
         .replace("__WINDOW_LABEL__", window_label);
@@ -115,5 +115,8 @@ pub fn script(api_key: &str, window_label: &str) -> String {
     if cfg!(windows) {
         script.push_str("\nwindow.__ankiHostColourPicker = true;\n");
     }
+    // 主题：在 document-start 就打上平台类与夜间类。对照 `qt/aqt/webview.py:919-935`
+    // 的注入（那边是页面加载完成后 eval 一段同样的类名操作）——早注入是为了避免首帧白闪。
+    script.push_str(&crate::theme::window_init_script(night));
     script
 }

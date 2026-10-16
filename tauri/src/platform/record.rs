@@ -115,7 +115,12 @@ pub fn record(state: &AppState) -> HandlerResult {
         }
     };
 
-    let page = legacy::recorder_page(state.port(), state.backend.i18n(), SECS_PLACEHOLDER);
+    let page = legacy::recorder_page(
+        state.port(),
+        state.backend.i18n(),
+        SECS_PLACEHOLDER,
+        &crate::theme::style(state),
+    );
     let spec = WindowSpec::new(windows::RECORDER, format!("_anki/legacyPageData?id={page}"))
         .title("Anki")
         .size(360.0, 200.0)

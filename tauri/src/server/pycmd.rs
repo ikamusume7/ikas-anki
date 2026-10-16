@@ -94,6 +94,19 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
         };
     }
 
+    // 主题切换（偏好设置 → 外观 → 主题；对照 `preferences.py:420-421` → `mw.set_theme()`）。
+    // 同样与窗口无关：设置页改了主题要立刻推给**所有**窗口（见 `crate::theme::broadcast`）。
+    if let Some(value) = command.strip_prefix("theme:") {
+        let value = value.trim().parse::<i64>().unwrap_or(0);
+        return Some(match crate::theme::set_theme(state, value) {
+            Ok(night) => json!({ "theme": value, "night": night }).to_string(),
+            Err(error) => {
+                tracing::warn!("切换主题失败: {error:#}");
+                json!({ "error": format!("{error:#}") }).to_string()
+            }
+        });
+    }
+
     // 非主窗口只处理与它自己相关的命令（关窗、录音、编辑器），
     // 复习相关的命令一律不接受 —— 见文件头关于 `domDone` 的说明。
     if window != windows::MAIN {

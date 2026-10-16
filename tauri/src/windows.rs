@@ -178,7 +178,14 @@ pub fn open(state: &AppState, spec: &WindowSpec) -> Result<()> {
         return Ok(());
     }
 
-    let url = format!("http://127.0.0.1:{}/{}", state.port(), spec.route);
+    let url = format!(
+        "http://127.0.0.1:{}/{}{}",
+        state.port(),
+        spec.route,
+        // SvelteKit 页面靠 `#night` 自己 checkNightMode()（`nightmode.ts:6-12`）；
+        // query 在前、hash 在后，与上游一致（`webview.py:953-957`）
+        crate::theme::url_suffix(state)
+    );
     let parsed: tauri::Url = url
         .parse()
         .with_context(|| format!("非法窗口地址: {url}"))?;
@@ -188,9 +195,11 @@ pub fn open(state: &AppState, spec: &WindowSpec) -> Result<()> {
         .title(&spec.title)
         .inner_size(spec.width, spec.height)
         .always_on_top(spec.always_on_top)
-        // 每个窗口都要注入：补鉴权头 + 提供 bridgeCommand；
+        // 底色随主题，避免打开瞬间白闪（对照 `webview.py:991`）
+        .background_color(crate::theme::window_color(state))
+        // 每个窗口都要注入：补鉴权头 + 提供 bridgeCommand + 打主题类；
         // 同时把窗口标签交给脚本，供 `/_anki/pycmd` 判断命令来自哪个窗口
-        .initialization_script(bridge::script(&state.api_key, &spec.label));
+        .initialization_script(bridge::script(&state.api_key, &spec.label, state.night_mode()));
 
     if let Some(geometry) = load_geometry(state, &spec.label) {
         builder = builder

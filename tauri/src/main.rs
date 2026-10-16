@@ -28,6 +28,7 @@ mod reviewer_menu;
 mod restore;
 mod server;
 mod state;
+mod theme;
 mod windows;
 
 use anyhow::Context;
@@ -107,6 +108,16 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
         autosync::spawn(state.clone());
     }
 
+    // 主题 / 夜间模式（PARITY 8.3）：`meta["theme"]`（0 跟随系统 / 1 浅色 / 2 深色）。
+    // 跟随系统时 Windows 读注册表 `AppsUseLightTheme`，与 Qt 同一个键；见 `crate::theme`。
+    let (theme, _ui_scale) = theme::read_prefs(&state.profile_dir);
+    state.set_night_mode(theme::night_mode(theme));
+    tracing::info!(
+        "主题: theme={} night={}",
+        theme.as_i64(),
+        state.night_mode()
+    );
+
     // 起始页面可通过 ANKI_START_PAGE 指定（editor / graphs / deck-options ...）。
     // 特例：`reviewer` 走 legacy 页面机制，加载 /_anki/legacyPageData。
     // 默认是**牌组列表**（Qt 的主窗口启动就在 deckBrowser 状态，`main.py:93`）。
@@ -124,14 +135,19 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     let port = server::spawn(state.clone()).context("启动本地 HTTP 服务失败")?;
 
     let url = if page == "reviewer" {
-        let id = legacy::reviewer_page(port);
+        let id = legacy::reviewer_page(port, &theme::style(&state));
         tracing::info!("已注册复习页: id={id}");
         let url = format!("http://127.0.0.1:{port}/_anki/legacyPageData?id={id}");
         // 记下来：`d`（牌组列表）之后再点牌组要切回复习页时直接复用这一份
         main_window::remember_reviewer_url(&url);
         url
     } else {
-        format!("http://127.0.0.1:{port}/{page}")
+        // SvelteKit 页面靠 URL 尾部的 `#night` 自己 checkNightMode()（`nightmode.ts:6-12`）；
+        // 与 `?cb=` 的顺序要照着上游：query 在前、hash 在后（`webview.py:953-957`）。
+        format!(
+            "http://127.0.0.1:{port}/{page}{}",
+            theme::url_suffix(&state)
+        )
     };
     tracing::info!("窗口将加载: {url}");
 
@@ -139,6 +155,8 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     let main_window = WebviewWindowBuilder::new(app, windows::MAIN, WebviewUrl::External(parsed))
         .title("Anki")
         .inner_size(1200.0, 820.0)
+        // 窗口底色随主题（对照 `webview.py:991` 的 `setBackgroundColor(CANVAS)`，避免首帧白闪）
+        .background_color(theme::window_color(&state))
         // 主窗口**保留** Tauri 的拖放拦截：这样 Rust 侧能拿到拖入文件的**真实路径**
         // （`WindowEvent::DragDrop`），才能像 Qt 那样"把 .apkg 拖到主窗口就导入"
         // （`main.py:112-137`，见 `crate::importing::on_drop`）。代价是页面的 HTML5 drop
@@ -147,7 +165,7 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
         // 需要 HTML5 drop 的是编辑器那几类窗口，它们走 `WindowSpec::html5_drops`。
         // 在任何页面脚本之前注入：补鉴权头 + 提供 bridgeCommand，
         // 并把窗口标签交给脚本（`/_anki/pycmd` 据此判断命令来自哪个窗口）
-        .initialization_script(bridge::script(&api_key, windows::MAIN))
+        .initialization_script(bridge::script(&api_key, windows::MAIN, state.night_mode()))
         .build()?;
 
     // 拖入文件 → 导入（对照 `main.py:112-137`）

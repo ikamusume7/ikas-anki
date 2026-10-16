@@ -49,7 +49,7 @@ fn reviewer_url(state: &AppState) -> String {
     REVIEWER_URL
         .get_or_init(|| {
             let port = state.port();
-            let id = legacy::reviewer_page(port);
+            let id = legacy::reviewer_page(port, &crate::theme::style(state));
             tracing::info!("已注册复习页: id={id}");
             format!("http://127.0.0.1:{port}/_anki/legacyPageData?id={id}")
         })

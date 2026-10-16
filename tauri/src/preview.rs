@@ -224,7 +224,7 @@ fn navigate(state: &AppState, offset: i32) {
 }
 
 fn ensure_window(state: &AppState) -> Result<()> {
-    let page = legacy::preview_page(state.port(), state.backend.i18n());
+    let page = legacy::preview_page(state.port(), state.backend.i18n(), &crate::theme::style(state));
     windows::open(
         state,
         &WindowSpec::new(windows::PREVIEW, format!("_anki/legacyPageData?id={page}"))

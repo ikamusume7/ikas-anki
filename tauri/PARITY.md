@@ -37,7 +37,7 @@
 | 1.2 | ⚠️ | 菜单栏 + 工具栏 | 菜单栏有了（牌组列表页顶部，File/Edit/View/Tools/Help）：文件=导入/导出/创建备份/**还原备份**/退出、编辑=撤销/重做、视图=全屏/三档缩放、工具=学习牌组/创建筛选牌组/检查数据库/检查媒体/空卡片/管理笔记类型/首选项、帮助=用户手册/支持 Anki/关于；快捷键 `Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`F11`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`/`F`。工具栏两页都有（牌组/添加/浏览/统计/同步）。**还差**：**复习界面整条菜单栏没有**（复习中拿不到 导入/导出/备份/还原/检查数据库/管理笔记类型）；缺 Switch Profile(`Ctrl+Shift+P`)/Add-ons(`Ctrl+Shift+A`)/检查更新；同步链接只有文字，没有 Qt 的状态色与旋转图标；「关于」缺 logo/网站/复制调试信息/Python&Qt&Chromium 版本/贡献者名单；「学习牌组」不列筛选牌组（注释却写"筛选牌组也在内"）、无 `Ctrl+N`/上下键/`Ctrl+1..9`/回车提交；菜单不响应 `Ctrl+Q`/`Ctrl+Shift+I`/`/`/`F1` | `qt/aqt/toolbar.py:353-418`、`qt/aqt/forms/main.ui`、`qt/aqt/main.py:1425-1470` |
 | 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，`qt/aqt` 里也没有 `showMessage` 调用（`profiles.ui` 那个 statusbar 在 `main.py:336` 被设为不可见）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui` |
 | 1.4 | ⚠️ | 主窗口快捷键 | 牌组列表页已接 `a`/`b`/`t`/`s`/`c`/`o`/`r`/`e`/`u`/`y`(同步)/`F`(筛选牌组)/`F11`/`Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`；复习页只接了 `u`/`a`/`b`/`t`/`d`/`s`/`Ctrl+Z`/`Ctrl+P`。**还差**：牌组列表缺 `d`（概览里按 d 回不到列表）、`Ctrl+Shift+I`、`/`、`Ctrl+Shift+N`、`Ctrl+Shift+A`、`Ctrl+Q`；复习页缺 `y`、`F11`、`Ctrl+E`、`Ctrl+Shift+Z`、缩放三键；两页都没有 `Ctrl+:`（调试控制台）。**验证只覆盖了 F11/Ctrl+E/`f` 三个真实按键**，其余是桥接命令或点击级断言 | `qt/aqt/main.py:1189-1198` |
-| 1.5 | ⚠️ | 启动行为 | 启动即牌组列表；**自动备份**（启动一次 + 每 5 分钟，`force=False`，`verify-decks.ps1` 断言产物是 >1KB 的 `.colpkg`）；启动自动同步线程；检查数据库/媒体/空卡片有入口；**还原备份**能用（6.2）。**还差**：**界面语言固定 `en-US`**（只认 `ANKI_LANG`，见 8.4）→ 中文用户第一眼就是英文；**主窗口几何不恢复**（固定 1200×820，`windows.rs` 的几何记忆只管 `windows::open` 开的窗口）；**没有 profile 选择**（永远 `Anki2/User 1`，见 8.2）；缺「检查更新」 | `qt/aqt/main.py:setupProfile`、`_backup` |
+| 1.5 | ⚠️ | 启动行为 | 启动即牌组列表；**自动备份**（启动一次 + 每 5 分钟，`force=False`，`verify-decks.ps1` 断言产物是 >1KB 的 `.colpkg`）；启动自动同步线程；检查数据库/媒体/空卡片有入口；**还原备份**能用（6.2）。**还差**：界面语言已按 `meta["defaultLang"]` / 系统语言生效（见 8.4），只剩偏好设置里的语言下拉与首次运行的语言框；**主窗口几何不恢复**（固定 1200×820，`windows.rs` 的几何记忆只管 `windows::open` 开的窗口）；**没有 profile 选择**（永远 `Anki2/User 1`，见 8.2）；缺「检查更新」 | `qt/aqt/main.py:setupProfile`、`_backup` |
 | 1.6 | ⚠️ | 每日学习流程 | 空队列时**只在复习页注入一句硬编码中文**「本队列已无待复习卡片。」（英文界面也是中文），`/congrats` 路由没有任何打开路径，`congratsInfo` 只被概览面板用来判断埋藏。**Congratulations 环 = ❌**。还差：答完最后一张不 `moveToState("overview")`、不渲染 congrats（下次到期时间 / 提前学习按钮都没有）、概览面板永不显示；时间盒到点的「继续/结束」对话框（见 2.6）；非 v3 调度器时回牌组列表 + 警告 | `qt/aqt/reviewer.py:257-259`、`qt/aqt/overview.py:190-209` |
 
 验收：启动外壳 → 截图与真 Anki 打开时的首屏逐项对比；快捷键表逐条按一遍（现在只能脚本级核对）。
@@ -136,8 +136,8 @@ addon、文件关联、录音格式为零。
 | --- | --- | --- | --- | --- |
 | 8.1 | ❌ | **偏好设置对话框（8 个分页）** | 见 3.3：`Ctrl+P` 只打开 Labs 实验页。界面语言、主题/夜间、复习上限与时间盒、下一日时间、自动备份份数、网络与自定义同步服务器、自定义答案键、第三方服务**全部改不了** —— 这是"日常必用却完全缺失"里最大的一块 | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
 | 8.2 | ❌ | **多 profile 管理** | 没有 ProfileManager 窗口，也没有「切换配置」（`Ctrl+Shift+P`）：`paths.rs` 只推断 `Anki2/User 1`（或用 `ANKI_COLLECTION` 覆盖）→ 多档案/共用电脑用户既不能切换、也不能新建/改名/删除 profile | `qt/aqt/profiles.py:128,473-499`、`qt/aqt/main.py:358-437` |
-| 8.3 | ❌ | **夜间模式 / 主题 / `standard_css`** | `tauri/src` 里 `night`/`theme` 0 命中：没有 `theme.py` 的读写，也没有 `add_dynamic_styling_and_props_then_show` 那套（注入 `night-mode`/`nightMode` body class、窗口背景色、动态字体与缩放）。前端只有靠 URL `#night` 的开关，而外壳生成的 URL 从不带 hash → **深色模式整条链路失效**，字体大小/缩放也没了动态值 | `qt/aqt/theme.py:60-102`、`qt/aqt/webview.py:910-1037` |
-| 8.4 | ❌ | **界面语言选择** | 固定 `en-US`，只认 `ANKI_LANG`（`main.rs` 里有显式 TODO）；没有首次运行/新建 profile 的语言框（`setlang.ui`），偏好设置里也没有语言下拉 → 中文用户打开就是英文 | `qt/aqt/profiles.py:473-499`、`qt/aqt/preferences.py:442-466` |
+| 8.3 | ⚠️ | **夜间模式 / 主题 / `standard_css`** | **已实现**（`tauri/src/theme.rs`）：`meta["theme"]`（0 跟随系统 / 1 浅色 / 2 深色；跟随系统时 Windows 读注册表 `AppsUseLightTheme`，与 Qt 同一个键）；三条注入通道都通了 —— ① 每个窗口在 document-start 打 `night-mode`/`night_mode`/`nightMode`（`bridge.rs`）、② legacy 页在服务端 HTML 上带 `<html class="night-mode" data-bs-theme>` + body class 并内联 `standard_css()`（字体/缩放/`--canvas`）、③ SvelteKit 页 URL 带 `#night`；卡片 body class 由宿主拼全（`reviewer.rs`，否则 `ts/reviewer/index.ts` 的整串覆盖会把夜间类清掉）；运行期切换（`theme:<0\|1\|2>` 桥接命令）会落库并广播到所有窗口，窗口底色一起换（防白闪）。验证：`verify-theme.ps1`（真实窗口亮度 52.7 → 238.8 → 52.7，含复习界面 52.2）+ `theme-check.mjs`（两条通道的 `--canvas` 取值）。**还差**：`uiScale` 只作用于 legacy 页（SvelteKit 页没注入，不缩放）；`reduce_motion` / `minimalist_mode` / 隐藏上下工具栏那几个 body class 开关没做；偏好设置里的主题下拉还没接（在 3.3 / 8.1 一起做） | `qt/aqt/theme.py:60-102,211-244`、`qt/aqt/webview.py:638-692,910-1037` |
+| 8.4 | ⚠️ | **界面语言选择** | **启动链已实现**（`tauri/src/i18n_lang.rs`）：优先级 `ANKI_LANG`（测试钩子）> `meta["defaultLang"]`（桌面版偏好设置写的）> 系统语言（Windows `GetUserDefaultLocaleName`）> en-US；换算照 `lang_to_disk_lang()`（`zh_CN`→`zh-CN`、`de_DE`→`de`）；语言表直接嵌入 `pylib/anki/lang.py` 解析（rslib 没有语言列表 API，打包后 `pylib/` 不分发，所以编译期嵌入）。验证：`verify-i18n.ps1` 四个场景（meta=zh_CN / meta=en_US / 无 prefs21 跟随系统 / `ANKI_LANG` 覆盖），每个都断言宿主生效语言 + `i18nResources` 下发的语言与文案。**还差**：偏好设置里的语言下拉（改完要重启并提示 `preferences-please-restart-anki-to-complete-language`）与首次运行的语言框（`forms/setlang.ui`） | `pylib/anki/lang.py:22-162`、`qt/aqt/preferences.py:442-466`、`qt/aqt/profiles.py:473-504` |
 | 8.5 | ❌ | **异常/错误对话框** | 后端异常只落 `tracing::error!` 与终端日志：没有 `show_exception` 那种对话框、没有 Copy debug info 按钮、没有错误提示文件、没有 panic hook → 用户看不到原因，也没有可粘贴的排障信息 | `qt/aqt/errors.py:31,177-208` |
 | 8.6 | ❌ | **集合打不开 / 过新 / 损坏的启动提示** | 打开集合失败时只记日志并继续启动（`media_folder` 置空）→ 用户拿到一个功能残缺的窗口，既不知道原因，也没有「降级并退出」 | `qt/aqt/main.py:648-660,745`、`qt/aqt/profiles.py:224-227` |
 | 8.7 | ❌ | **schema 改动「需要整合同步」确认框** | 改字段/卡片模板/笔记类型后，Qt 会弹「需要一次性整合同步」的确认；外壳完全没有（只有"删除卡片模板"这类确认） | `qt/aqt/main.py:1688-1705` |
@@ -152,7 +152,9 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
 
 ## 9. 验证体系的缺口（文档里的「✅」就来自这些脚本）
 
-跑回归的正确姿势：**一次一个脚本**（见 §0 的顺序耦合问题）。当前断言强度分四档：
+跑回归的正确姿势：**一次一个脚本**（见 §0 的顺序耦合问题），且 `verify-browser` 之前先跑
+`verify-reviewer` —— 后者在集合为空时会补一张卡片；紧跟 `verify-decks` 之后跑会因为它的
+「还原备份」把集合整个换掉而首屏 0 结果（2026-10-16 复现两次）。当前断言强度分四档：
 
 1. **恒真/无效断言**：`cards-check.mjs:175` 的 `check(..., true)`；`reviewer-menu-check.mjs:310`
    的「more 命令被接受」；`editor-check.mjs` 的字段级取色只剩 `console.log`。

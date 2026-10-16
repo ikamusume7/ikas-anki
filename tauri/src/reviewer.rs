@@ -342,6 +342,22 @@ fn install_reviewer_shortcuts(state: &AppState) {
     );
 }
 
+/// 当前卡片对应的 body class（对照 `theme_manager.body_classes_for_card_ord(ord)`）。
+///
+/// 必须整串传给 `_showQuestion` / `_showAnswer`：页面里是
+/// `document.body.className = bodyclass`（整串覆盖），少一个类就会把页面上打好的
+/// 平台类/夜间类清掉（表现出来就是「首帧正常、出卡变浅色」）。
+fn card_body_class(state: &AppState) -> String {
+    let ord = state
+        .reviewer
+        .session()
+        .card
+        .as_ref()
+        // 卡片模板序号（pylib 里叫 `ord`，rslib 的 proto 字段名是 `template_idx`）
+        .map(|card| card.template_idx)
+        .unwrap_or(0);
+    crate::theme::style(state).body_classes_for_card_ord(ord)
+}
 /// 显示答案（对照 Qt 的 `Reviewer._showAnswer`）。
 pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
     let Some(card_id) = state.reviewer.session().card_id else {
@@ -373,8 +389,9 @@ pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
         &format!(
             "_showAnswer({}, '', {})",
             js_string(&with_css(&rendered.css, &answer_html)),
-            // bodyclass 为空字符串时前端不会覆盖
-            js_string(""),
+            // 对照 `reviewer.py:394-399`：bodyclass 必须带全（`ts/reviewer/index.ts:209`
+            // 是 `document.body.className = bodyclass`，整串覆盖）
+            js_string(&card_body_class(state)),
         ),
     );
 
@@ -517,7 +534,8 @@ async fn show_question(state: &AppState) {
             "_showQuestion({}, {}, {})",
             js_string(&question),
             js_string(&answer),
-            js_string(""),
+            // 对照 `reviewer.py:394-399` 的 `body_classes_for_card_ord(c.ord)`
+            js_string(&card_body_class(state)),
         ),
     );
 
