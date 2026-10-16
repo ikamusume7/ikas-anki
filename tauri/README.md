@@ -690,7 +690,7 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
   `state != "answer"`），免得手快把还没看的卡片评掉；
 - `e` 编辑当前卡片、`m` 更多菜单、`u` 撤销、`o` 牌组选项、`i` 卡片信息；
 - `*` 标记笔记、`=` 暂缓笔记、`-` 暂缓卡片、`!` 搁置笔记、`@` 搁置卡片；
-- `Ctrl+1..7` 设旗标、`Ctrl+Alt+N` 重置卡片、`Ctrl+Alt+E` 创建副本、`Ctrl+Alt+I` 上一张卡片信息、`Shift+A` 自动前进开关、`Ctrl+Del` 删除笔记、
+- `Ctrl+1..7` 设旗标、`Ctrl+Alt+N` 重置卡片、`Ctrl+Alt+E` 创建副本、`Ctrl+Alt+I` 上一张卡片信息、`Shift+A` 自动前进开关、`r`/`F5` 重播音频、`Ctrl+Del` 删除笔记、
   `Ctrl+Shift+D` 设置到期日、`Ctrl+Z` 撤销、`Ctrl+P` 设置；
 - 主窗口的全局键在复习页同样有效：`a` 添加、`b` 浏览、`t`/`Shift+t` 统计、`d` 牌组列表、
   `s` 概览、`y` 同步。
@@ -709,6 +709,27 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 **31 组真实按键**断言 `pycmd` 收到的命令，含「输入框里不抢键」与「未实现的键不发命令」；
 第 2 半对着真外壳发桥接命令断言宿主守卫：问题面发 `ease3` 不把卡片答掉（日志
 `尚未显示答案`），`ans` 之后再发 `ease3` 才换下一张。
+
+### 音频（播放按钮 / 重播 / 不重复播放）
+
+对照 `pylib/anki/sound.py:69,900-921` 与 `qt/aqt/sound.py:924-937`：
+
+- **卡面画播放按钮**：渲染结果里的 `[sound:x.mp3]` / `[anki:tts …]`（以及上游渲染器会写的
+  `[anki:play:q:N]` 标记）由宿主换成 `.replay-button` 图标（`reviewer::av_refs_to_play_icons`），
+  索引与 `extractAvTags` 返回的标签顺序一致；点击发 `play:q:N` / `play:a:N`，宿主播**那一个**
+  标签（`play_clicked_audio`）。上游渲染器在 rslib 里会把标签写成 `[anki:play:…]` 标记
+  （`writer.rs:137`），但本外壳拿到的渲染结果仍是原始形式，所以两种形式都认（有单测）。
+- **重播**：`r` / `F5` / 菜单「重播音频」重播当前这一面（`replayAudio`）。
+- **答案面不再把问题面的音频再播一遍**：答案 HTML 带 `{{FrontSide}}`，其中的音频标签会在
+  自动播放时被按"前缀"跳过（对照 Qt 的 `answer_av_tags()`；显示上那 1 个播放按钮仍然在，
+  Qt 也一样）。
+- **还没做**：暂停 `5`、±5 秒 `6`/`7`、录音 `Shift+V`、重播录音 `V`（播放器只有 `Play`，
+  没有 pause/seek）。见 PARITY 2.3。
+
+验证：`tauri/tools/audio-check.mjs`（由 `verify-reviewer.ps1` 调用）——往媒体夹写一个真 WAV、
+造一张带 `[sound:…]` 的卡 → 断言问题面注入了播放按钮、自动播放了那个 WAV、显示答案后
+「答案面跳过」、答案面按钮是两份、`play:a:0` 播的是答案面第 0 个、`rev:replayAudio` 重播当前面；
+收尾删掉笔记与 WAV。
 
 ### 自动前进（Shift+A）
 
@@ -801,8 +822,8 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 （`reviewer.py:682-683` 的 `more` 链接 → `reviewer.py:998-1056` 的 `_contextMenu`）。
 菜单内容对照 Qt 的 `_contextMenu`：旗标子菜单（Ctrl+1..7、当前旗标打勾）、埋藏卡片、
 重置卡片…、设置到期日…、暂停卡片、选项、卡片信息、**上一张卡片信息**（`Ctrl+Alt+I`，会话里记着上一张，见 PARITY 2.2）、标记笔记、埋藏笔记、暂停笔记、
-创建副本…、删除笔记 —— 共 **13 项 + 旗标子菜单**（宿主 eval 出来的真实菜单是 14 个条目），已实现的项都带 Qt 的快捷键提示。
-**比 Qt 少 6 项**（Qt 是 19 项 + 旗标）：重播音频 `R`、
+创建副本…、删除笔记 —— 共 **14 项 + 旗标子菜单**（宿主 eval 出来的真实菜单是 15 个条目），已实现的项都带 Qt 的快捷键提示。
+**比 Qt 少 5 项**（Qt 是 19 项 + 旗标）：
 暂停音频 `5`、`-5` 秒 `6`、`+5` 秒 `7`、录音 `Shift+V`、重播录音 `V`、自动前进 `Shift+A`
 （带勾选态）。另外旗标名写死 ftl 默认值，不读集合配置 `flagLabels`。
 
@@ -1714,6 +1735,7 @@ browserSearch：图表 → 浏览器搜索
 | `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
 | `reviewer-keys-check.mjs` | `verify-reviewer.ps1` 调用的复习键盘检查：第 1 半加载 `assets/reviewer-keys.js` 按 **31 组真实按键**断言桥接命令（含焦点档、空格评分开关、输入框不抢键、未实现的键不发命令），第 2 半对真外壳断言「问题面不许评分」的宿主守卫 |
 | `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
+| `audio-check.mjs` | `verify-reviewer.ps1` 调用的音频显示与语义检查：写一个真 WAV + 造带 `[sound:…]` 的卡 → 断言播放按钮注入、自动播放、答案面跳过问题面音频、`play:a:0` 与 `rev:replayAudio` 的播放日志（收尾清理） |
 | `export-guard-check.mjs` | `verify-decks.ps1`（第二段）调用的导出目录拦截检查：`ANKI_SAVE_PATH` 指进 profile 目录时 `saveFileDialog` 必须拒绝（返回空串）+ 日志有拒绝 + 文件没被写出来 |
 | `verify-timebox.ps1` | 一键：时间盒（PARITY 2.6）。**两次**启动外壳，分别用 `ANKI_TIMEBOX_CHOICE=finish` / `continue` 跑 `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言两种选择的可见结果 + 真实窗口截图） |
 | `timebox-check.mjs` | 上面那个脚本调用的检查：`reviewing.timeLimitSecs` 改成 1 秒（并断言没写坏别的复习偏好）→ 答一张卡必然到点 → 按钩子断言「结束回牌组列表且不再渲染」/「继续并重新渲染」，收尾还原偏好与临时笔记 |

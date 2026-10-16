@@ -144,6 +144,23 @@ async fn dispatch(state: &AppState, window: &str, command: &str) -> Option<Strin
             }
             None
         }
+        // 点卡片上的播放按钮：`play:q:0` / `play:a:0`（对照 `sound.py:924-937` 的
+        // `play_clicked_audio`，标记换成按钮见 `reviewer::av_refs_to_play_icons`）
+        command if command.starts_with("play:") => {
+            let parts: Vec<&str> = command.split(':').collect();
+            if parts.len() == 3 {
+                let question_side = parts[1] == "q";
+                match parts[2].parse::<usize>() {
+                    Ok(index) => {
+                        reviewer::play_clicked_audio(state, question_side, index).await;
+                    }
+                    Err(error) => tracing::warn!("非法的 play 命令: {command}（{error}）"),
+                }
+            } else {
+                tracing::warn!("非法的 play 命令: {command}");
+            }
+            None
+        }
         // 显示答案（对照 Qt 的 `ans`）。
         // 类型作答时桥接脚本会把输入框内容附在命令后面：`ans:<用户输入>`
         "ans" => {

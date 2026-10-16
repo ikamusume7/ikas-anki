@@ -126,10 +126,12 @@
                 event.preventDefault();
                 onEnterKey();
                 return;
-            // F5 → 重播音频。音频重播还没实现（`tauri/PARITY.md` 2.2），
-            // 但必须拦住默认行为，否则 WebView 会重新加载页面。
+            // `r` / F5 → 重播当前这一面的音频（`reviewer.py:615-616`）。
+            // F5 必须 preventDefault，否则 WebView 会重新加载页面。
+            case "r":
             case "F5":
                 event.preventDefault();
+                window.pycmd("rev:replayAudio");
                 return;
             // Shift+A → 自动前进开关（`reviewer.py:640`）
             case "A":

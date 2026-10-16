@@ -115,6 +115,9 @@ struct Session {
     /// Qt 的 `_answerCard()` 有 `if self.state != "answer": return` 守卫，
     /// 所以「问题面按 1」不会评分。评分按钮由 `show_answer()` 画出，这里同步记录。
     answer_shown: bool,
+    /// 问题面 / 答案面的音频标签（按渲染顺序），`play:q:N` 与「重播音频」用
+    question_tags: Vec<AvTag>,
+    answer_tags: Vec<AvTag>,
     /// 自动前进的运行时开关（对照 Qt 的 `self.auto_advance_enabled`）。
     ///
     /// Qt 每次构造 reviewer 都重置为 `False`，只能靠 `Shift+A`/菜单打开 —— 牌组配置里那
@@ -773,8 +776,15 @@ pub async fn show_answer(state: &AppState, typed_answer: Option<String>) {
     )
     .await;
 
-    // 对照 Qt `_showAnswer`：自动播放答案面音频
-    autoplay_audio(state, false, &answer_html).await;
+    // 对照 Qt `_showAnswer`：自动播放答案面音频（并记住这面的标签）
+    let answer_tags = autoplay_audio(state, false, &answer_html).await;
+    state.reviewer.session().answer_tags = answer_tags;
+    // 对照 `av_refs_to_play_icons()`：把 `[anki:play:a:N]` 标记换成播放按钮
+    let answer_html = av_refs_to_play_icons(&answer_html, 'a');
+    let play_buttons = answer_html.matches("replay-button").count();
+    if play_buttons > 0 {
+        tracing::info!("答案面注入了 {play_buttons} 个播放按钮");
+    }
 
     eval(
         state,
@@ -922,7 +932,13 @@ async fn show_question(state: &AppState) {
     state.reviewer.session().type_answer = type_answer;
 
     // 对照 Qt `_showQuestion`：先按牌组配置自动播放问题面音频，再注入渲染结果
-    autoplay_audio(state, true, &question_html).await;
+    let question_tags = autoplay_audio(state, true, &question_html).await;
+    state.reviewer.session().question_tags = question_tags;
+    let question_html = av_refs_to_play_icons(&question_html, 'q');
+    let play_buttons = question_html.matches("replay-button").count();
+    if play_buttons > 0 {
+        tracing::info!("问题面注入了 {play_buttons} 个播放按钮");
+    }
 
     let question = with_css(&rendered.css, &question_html);
     // 答案侧用于预加载图片，第二个参数不能为空
@@ -1049,21 +1065,38 @@ pub(crate) async fn render_card(
     call(state, "renderExistingCard", &request).await
 }
 
-/// 显示问题/答案时自动播放卡片音频。
+/// 显示问题/答案时自动播放卡片音频，并把这面的音频标签记进会话
+/// （`play:q:N` / `replayq` 要用）。
 ///
 /// 对照 Qt 的 `Reviewer._showQuestion` / `_showAnswer`：
 /// `if c.autoplay(): av_player.play_tags(c.question_av_tags())`。
 /// 是否播放由牌组配置的 `disable_autoplay` 决定（默认播放）。
-async fn autoplay_audio(state: &AppState, question_side: bool, html: &str) {
-    let tags = match extract_av_tags(state, html, question_side).await {
+///
+/// **答案面不再把问题面的音频再播一遍**：答案 HTML 里带着 `{{FrontSide}}`（含问题面的
+/// 音频标记），Qt 那边 `card.answer_av_tags()` 是按答案面算的，所以问题面的那份不会重复。
+/// 这里用"前缀跳过"近似：答案面的标签如果以问题面的标签列表开头，就把这一段去掉。
+async fn autoplay_audio(state: &AppState, question_side: bool, html: &str) -> Vec<AvTag> {
+    let mut tags = match extract_av_tags(state, html, question_side).await {
         Ok(tags) => tags,
         Err(error) => {
             tracing::warn!("提取音频标签失败: {error:#}");
-            return;
+            return Vec::new();
         }
     };
+    if !question_side {
+        let question_tags = state.reviewer.session().question_tags.clone();
+        if !question_tags.is_empty() && tags.len() >= question_tags.len() {
+            if tags[..question_tags.len()] == question_tags[..] {
+                tracing::debug!(
+                    "答案面跳过 {} 个已在问题面播过的音频标签（对照 `answer_av_tags()`）",
+                    question_tags.len()
+                );
+                tags.drain(..question_tags.len());
+            }
+        }
+    }
     if tags.is_empty() {
-        return;
+        return tags;
     }
 
     // 对照 `Card.autoplay()`：看牌组配置的 `disable_autoplay`，默认播放
@@ -1076,9 +1109,106 @@ async fn autoplay_audio(state: &AppState, question_side: bool, html: &str) {
         .unwrap_or(true);
     if !autoplay {
         tracing::debug!("牌组关闭了自动播放，跳过 {} 个音频标签", tags.len());
-        return;
+        return tags;
     }
 
+    play_av_tags(state, tags.clone()).await;
+    tags
+}
+
+/// 卡片 HTML 里的音频：上游渲染器会写成 `[anki:play:q:N]` 标记（`rslib/.../writer.rs:137`），
+/// 本外壳拿到的渲染结果里还是原始的 `[sound:...]` / `[anki:tts ...]`，所以三种形式都认
+/// （索引按出现顺序递增，与 `extractAvTags` 返回的标签顺序一致）。
+static AV_REF_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?P<marker>\[anki:play:[qa]:\d+\])|\[sound:[^\]]+\]|\[anki:tts[^\]]*\]")
+        .expect("音频标记正则")
+});
+
+/// 把音频标记换成播放按钮（对照 `sound.py:900-921` 的 `av_refs_to_play_icons()`）。
+///
+/// 点击后发 `play:q:N` / `play:a:N` 给宿主（见 `server/pycmd.rs` 的 `play:` 分支），
+/// 索引对应 `extractAvTags` 那份列表。图标复用页面里的 `.replay-button` / `.playImage`
+/// （`css/reviewer.css`）。
+fn av_refs_to_play_icons(html: &str, side: char) -> String {
+    let mut index = 0usize;
+    AV_REF_PATTERN
+        .replace_all(html, |captures: &regex::Captures| {
+            let command = match captures.name("marker") {
+                Some(marker) => marker
+                    .as_str()
+                    .trim_start_matches("[anki:")
+                    .trim_end_matches(']')
+                    .to_owned(),
+                None => {
+                    let command = format!("play:{side}:{index}");
+                    index += 1;
+                    command
+                }
+            };
+            format!(
+                r##"<a class="replay-button soundLink" href="#" onclick="pycmd('{command}'); return false;" draggable="false">
+    <svg class="playImage" viewBox="0 0 64 64" version="1.1">
+        <circle cx="32" cy="32" r="29" />
+        <path d="M56.502,32.301l-37.502,20.101l0.329,-40.804l37.173,20.703Z" />
+    </svg>
+</a>"##
+            )
+        })
+        .into_owned()
+}
+
+/// 播放某一面的第 `index` 个音频标签（`play:q:0` / `play:a:0`）。
+///
+/// 对照 `qt/aqt/sound.py:924-937` 的 `play_clicked_audio`。
+pub(crate) async fn play_clicked_audio(state: &AppState, question_side: bool, index: usize) {
+    let tag = {
+        let session = state.reviewer.session();
+        let tags = if question_side {
+            &session.question_tags
+        } else {
+            &session.answer_tags
+        };
+        tags.get(index).cloned()
+    };
+    match tag {
+        Some(tag) => {
+            tracing::info!(
+                "播放点击的音频: {}第 {index} 个",
+                if question_side { "问题面" } else { "答案面" }
+            );
+            play_av_tags(state, vec![tag]).await;
+        }
+        None => tracing::warn!(
+            "没有第 {index} 个{}音频标签",
+            if question_side { "问题面" } else { "答案面" }
+        ),
+    }
+}
+
+/// 重播当前这一面的音频（`r` / `F5` / 菜单里的「重播音频」）。
+///
+/// 对照 `reviewer.py:1043-1044` 的 `replayAudio`：问题面重播问题面的，答案面重播答案面的。
+pub(crate) async fn replay_audio(state: &AppState) {
+    let (answer_shown, tags) = {
+        let session = state.reviewer.session();
+        if session.answer_shown {
+            (true, session.answer_tags.clone())
+        } else {
+            (false, session.question_tags.clone())
+        }
+    };
+    if tags.is_empty() {
+        tracing::info!(
+            "没有音频可重播（{}）",
+            if answer_shown { "答案面" } else { "问题面" }
+        );
+        return;
+    }
+    tracing::info!(
+        "重播音频（{}，{} 个标签）",
+        if answer_shown { "答案面" } else { "问题面" },
+        tags.len()
+    );
     play_av_tags(state, tags).await;
 }
 
@@ -1602,4 +1732,33 @@ fn now_millis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod test {
+    use super::av_refs_to_play_icons;
+
+    #[test]
+    fn av_refs_become_play_buttons() {
+        // 上游渲染器写的标记形式（`rslib/.../writer.rs:137`）
+        let marked = av_refs_to_play_icons("前[anki:play:q:0]中[anki:play:a:1]后", 'q');
+        assert!(marked.contains("pycmd('play:q:0')"), "{marked}");
+        assert!(marked.contains("pycmd('play:a:1')"), "{marked}");
+        assert!(!marked.contains("[anki:play:"), "标记应该都被换掉了: {marked}");
+        assert_eq!(marked.matches("replay-button").count(), 2);
+
+        // 本外壳实际拿到的原始形式：`[sound:...]` / `[anki:tts ...]`，索引按出现顺序
+        let raw = av_refs_to_play_icons(
+            "[sound:a.mp3]和[anki:tts en_US:hi]以及[sound:b.mp3]<p>纯文本</p>",
+            'q',
+        );
+        assert!(raw.contains("pycmd('play:q:0')"), "{raw}");
+        assert!(raw.contains("pycmd('play:q:1')"), "{raw}");
+        assert!(raw.contains("pycmd('play:q:2')"), "{raw}");
+        assert_eq!(raw.matches("replay-button").count(), 3);
+        assert!(raw.contains("<p>纯文本</p>"), "{raw}");
+
+        // 没有音频的 HTML 原样返回
+        assert_eq!(av_refs_to_play_icons("<p>纯文本</p>", 'q'), "<p>纯文本</p>");
+    }
 }

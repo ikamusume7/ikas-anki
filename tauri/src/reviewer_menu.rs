@@ -107,6 +107,9 @@ pub async fn show(state: &AppState) {
             { "label": with_ellipsis("actions-create-copy"), "shortcut": "Ctrl+Alt+E", "action": "copy" },
             { "label": tr.translate("studying-delete-note", None), "shortcut": "Ctrl+Del", "action": "deleteNote" },
             serde_json::Value::Null,
+            // 重播当前这一面的音频（对照 `reviewer.py:1043`，快捷键 `R`）。
+            // 暂停 / ±5 秒 / 录音 / 重播录音还没做（播放器要加 pause/seek，见 PARITY 2.3）
+            { "label": tr.translate("actions-replay-audio", None), "shortcut": "R", "action": "replayAudio" },
             // 自动前进（对照 `reviewer.py:1049-1054`）：带勾选态，`Shift+A` 是快捷键。
             // 差的音频六项（重播/暂停/±5 秒/录音/重播录音）见 PARITY 2.3
             { "label": tr.translate("actions-auto-advance", None), "shortcut": "Shift+A", "checked": state.reviewer.auto_advance_enabled(), "action": "autoAdvance" },
@@ -153,6 +156,12 @@ pub async fn handle(state: &AppState, command: &str) {
             }
             None => tracing::warn!("还没有「上一张卡片」，忽略「上一张卡片信息」"),
         }
+        return;
+    }
+
+    // 重播音频：不依赖当前卡片（标签在会话里）
+    if action == "replayAudio" {
+        crate::reviewer::replay_audio(state).await;
         return;
     }
 

@@ -235,6 +235,12 @@ try {
     $env:ANKI_LOG = $logPath
     node tauri/tools/auto-advance-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 音频显示与语义（PARITY 2.3 第一半）：卡面播放按钮 / 答案面不重播 / play: 与重播
+    Write-Host "检查音频显示与语义（播放按钮 / 不重播 / play:）…"
+    $env:ANKI_LOG = $logPath
+    node tauri/tools/audio-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red
     $passed = $false
