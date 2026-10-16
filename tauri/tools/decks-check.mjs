@@ -1109,17 +1109,33 @@ try {
         await page.locator("#sync-progress").isVisible().catch(() => false),
         `#sync-progress 数量=${await page.locator("#sync-progress").count()}`,
     );
+    // 同步进度对话框（PARITY 8.9，对照 `mediasync.py` 的 `MediaSyncDialog`）：带日志与 Abort
+    check(
+        "同步中打开了进度对话框（#sync-dialog-progress）",
+        await page.locator("#sync-dialog-progress").isVisible().catch(() => false),
+        `#sync-dialog-progress 数量=${await page.locator("#sync-dialog-progress").count()}`,
+    );
+    check(
+        "对话框里有日志（#sync-dialog-log）",
+        (await page.locator("#sync-dialog-log li").count()) > 0,
+        await page.locator("#sync-dialog-log").innerText().catch(() => "（没有日志）"),
+    );
     check(
         "挂住的下载请求打到了 /sync/download",
         syncPaths.includes("/sync/download"),
         syncPaths.join(" / ") || "（没有请求）",
     );
-    await page.locator("#sync").click();
+    // 取消走对话框里的 Abort 按钮（对照 Qt：进度对话框上那个按钮），不再点工具栏的「同步」
+    await page.locator("#sync-cancel").click();
     await page.waitForTimeout(4000);
     check(
         "取消后回到 idle 状态",
         (await page.locator("#sync[data-sync-state='idle']").count()) === 1,
         await page.locator("#sync").getAttribute("data-sync-state"),
+    );
+    check(
+        "取消后对话框关掉",
+        (await page.locator("#sync-dialog-progress").isVisible().catch(() => false)) === false,
     );
     check(
         "取消后页面有提示",

@@ -1136,6 +1136,21 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 ### 5.46 capabilities 与图标：图标换成上游安装包那份；权限一个都不给
 ### 5.48 同步进度条：后端只给本地化文案，做不出百分比
 ### 5.49 增量同步测出两个真 bug：`NORMAL_SYNC` 被当成"要完整同步"、媒体同步期间进度条已消失
+### 5.50 同步进度面板：用内联面板而不是模态；确定百分比卡在 rslib 没接线
+
+- **面板**（`#sync-dialog`：进度条 + 日志 + Abort）做成**内联**而不是 bootstrap 模态。原因：
+  模态遮罩会和「上传/下载」二选一那个模态叠加，`decks-check`/`sync-check` 里实测把工具栏的
+  「同步」按钮挡在遮罩下面（Playwright 报 `subtree intercepts pointer events`，点 30s 都不通）。
+  换内联之后，两个检查脚本都稳定通过。
+- **确定百分比**：页面已按 `latestProgress` → `Progress.FullSync { transferred, total }` 实现
+  （有值就显示 `%`，否则转圈）。但实测**整份下载**期间 `latestProgress` 一直返回 `none` ——
+  rslib 的 `fullUploadOrDownload` → `full_sync` 这条路径没把进度发布到共享进度状态（对比：
+  `dbcheck.rs` / `import_export.rs` 都显式拿了 `new_progress_handler()`）。要补的话得在
+  `backend/sync.rs` 那条路径上把 handler 传进 `full_sync`。`verify-sync.ps1` 现在把这个事实
+  钉成断言（"整份下载期间后端没有发布 FullSync 进度"），哪天接上了它就会失败，正好提醒改。
+- 为了让"进度条出现"这条断言稳定，`decks-check.mjs` 用假服务器把 `/sync/download` 挂住，把
+  `syncState` 钉在 `syncing` 上（真同步在本机是一瞬间的事，抓不稳）。
+
 
 用真同步服务器跑"加一张卡 → 再同步"（`NORMAL_SYNC` 分支）时暴露出两个页面侧的 bug：
 

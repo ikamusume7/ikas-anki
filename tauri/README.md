@@ -481,11 +481,13 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 设成 2 秒，脚本在 profile 里放一份凭据 + `autoSyncMediaMinutes=0` → 断言几秒后宿主真的
 打到了 `/msync/begin`，日志里也有「自动同步: 开始媒体同步」）。
 
-**进度条**：同步期间（工具栏下方）会显示一根进度条（`#sync-progress`），媒体同步过程中状态行实时显示
-后端本地化好的「Checked / Added / Removed」，结束后进度条消失、失败时状态行给出失败原因
+**进度面板**：同步期间工具栏下方显示一根进度条（`#sync-progress`）与一块**同步面板**
+（`#sync-dialog`：进度条 + 日志列表 + Abort 按钮，对照 `mediasync.py` 的 `MediaSyncDialog`），
+媒体同步过程中状态行与日志实时显示后端本地化好的「Checked / Added / Removed」，结束后收起、
+失败时给出失败原因
 （对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog`；我们是内联状态而不是独立对话框，
 进度是**不确定**的——后端的 `MediaSyncStatus.progress` 只有本地化文案，没有总数/已完成数值）。
-进度条在**整个同步期间**都在（集合同步 + 媒体同步，`syncState` 等媒体结束才回 `idle`）；
+面板在**整个同步期间**都在（集合同步 + 媒体同步，`syncState` 等媒体结束才回 `idle`）；面板做成内联而不是 bootstrap 模态，是因为模态遮罩会和「上传/下载」那个模态叠加、实测挡住工具栏按钮；进度是**不确定**的（转圈）——代码已支持 `latestProgress` 的 `Progress.FullSync{transferred,total}`，但实测整份下载期间后端报的是 `none`（rslib 这条路径没接线），`verify-sync.ps1` 把这个事实钉成了断言；
 "同步中显示进度条"由 `decks-check.mjs` 断言（假服务器把请求挂住、状态钉在 `syncing`），
 `verify-sync.ps1` 只断言真同步结束后它消失。
 

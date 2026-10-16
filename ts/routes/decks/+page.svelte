@@ -71,6 +71,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         getDeck,
         getDeckNames,
         getEmptyCards,
+    latestProgress,
         getOrCreateFilteredDeck,
         getQueuedCards,
         helpPageLink,
@@ -182,6 +183,14 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     /** 同步（PARITY 6.1）：登录弹框、状态机、全量同步的二选一 */
     let syncModal: Modal;
     let syncFullModal: Modal;
+    /** 同步进度面板是否显示（内联面板，不是 bootstrap 模态：见下面注释） */
+    let showSyncProgress = false;
+    /** 同步对话框里的日志（对照 `mediasync.py` 的 `MediaSyncDialog` 那份 log） */
+    let syncLog: string[] = [];
+    /** 确定百分比的分子/分母（整份同步有 `Progress.FullSync`；媒体同步只有文案，用 null=不确定） */
+    let syncPercent: number | null = null;
+    /** `Progress` 里带的人类可读阶段（`fullSync` 的字节数 / `normalSync` 的 stage） */
+    let syncStage = "";
     let syncUser = "";
     let syncPassword = "";
     let syncEndpoint = "";
@@ -497,6 +506,49 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     }
 
     /** 工具栏「同步」/ `Y`：同步中再点一次 = 取消；没登录先弹登录框。 */
+    function pushSyncLog(message: string): void {
+        if (!message) {
+            return;
+        }
+        syncLog = [...syncLog, message].slice(-200);
+    }
+
+    let progressTimer: ReturnType<typeof setInterval> | undefined;
+
+    /** 同步期间轮询 `LatestProgress`（`qt/aqt/sync.py` 也是这么拿进度的）。 */
+    async function pollProgress(): Promise<void> {
+        try {
+            const progress = await latestProgress(new Empty({}));
+            const value = progress.value;
+            if (value.case === "fullSync" && value.value.total > 0) {
+                syncPercent = Math.max(
+                    0,
+                    Math.min(100, Math.round((value.value.transferred / value.value.total) * 100)),
+                );
+                syncStage = `${value.value.transferred} / ${value.value.total}`;
+            } else if (value.case === "normalSync") {
+                syncPercent = null;
+                syncStage = value.value.stage || "";
+            }
+        } catch {
+            // 轮询失败不影响同步本身
+        }
+    }
+
+    function startProgressPolling(): void {
+        stopProgressPolling();
+        progressTimer = setInterval(() => void pollProgress(), 150);
+    }
+
+    function stopProgressPolling(): void {
+        if (progressTimer) {
+            clearInterval(progressTimer);
+            progressTimer = undefined;
+        }
+        syncPercent = null;
+        syncStage = "";
+    }
+
     function askSync(): void {
         void (async () => {
             if (syncState === "syncing") {
@@ -571,6 +623,12 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         syncState = "syncing";
         syncMessage = "";
         syncCancelled = false;
+        // 独立同步对话框（对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog`）：进度条 +
+        // 日志 + 取消。整个同步（集合 + 媒体）期间开着，结束时自动关。
+        syncLog = [];
+        pushSyncLog(translateRaw("qt-misc-sync"));
+        startProgressPolling();
+        showSyncProgress = true;
         try {
             const status = await syncStatus(auth);
             // `syncStatus` 有三个值（`proto/anki/sync.proto` 的 `Required`）：
@@ -582,6 +640,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             if (status.required === SyncStatusResponse_Required.FULL_SYNC) {
                 syncState = "idle";
                 syncMessage = tr.syncConflictExplanation();
+                pushSyncLog(tr.syncConflictExplanation());
+                showSyncProgress = false;
+                stopProgressPolling();
                 syncFullModal.show();
                 return;
             }
@@ -594,6 +655,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             ) {
                 syncState = "idle";
                 syncMessage = result.serverMessage || tr.syncConflictExplanation();
+                pushSyncLog(syncMessage);
+                showSyncProgress = false;
+                stopProgressPolling();
                 syncFullModal.show();
                 return;
             }
@@ -604,13 +668,19 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             if (await getProfileConfig("syncMedia")) {
                 await runMediaSync(auth);
             }
+            pushSyncLog(syncMessage);
             syncState = "idle";
+            showSyncProgress = false;
+            stopProgressPolling();
         } catch (problem) {
             if (syncCancelled) {
                 // 我们主动取消的：当作正常结束
                 syncCancelled = false;
                 syncState = "idle";
                 syncMessage = tr.syncMediaAborted();
+                pushSyncLog(syncMessage);
+                showSyncProgress = false;
+                stopProgressPolling();
                 return;
             }
             // 同步失败时后端有时给不带消息的错误（例如同步协议层的问题），
@@ -619,6 +689,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             const bare = text.length === 0 || /^Error[:\s]*$/.test(text);
             syncState = "error";
             syncMessage = bare ? tr.syncServerError() : text;
+            pushSyncLog(`失败：${syncMessage}`);
+            showSyncProgress = false;
+            stopProgressPolling();
         }
     }
 
@@ -642,13 +715,17 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 syncMessage = [progress.checked, progress.added, progress.removed]
                     .filter((value) => value.length > 0)
                     .join(" ");
+                if (syncLog[syncLog.length - 1] !== syncMessage) {
+                    pushSyncLog(syncMessage);
+                }
             }
             await new Promise((resolve) => setTimeout(resolve, 500));
         }
         syncMessage = tr.syncMediaComplete();
     }
 
-    /** 全量同步（上传 / 下载），对照 `sync.py` 的 `full_sync()`。 */    async function startFullSync(upload: boolean): Promise<void> {
+    /** 全量同步（上传 / 下载），对照 `sync.py` 的 `full_sync()`。 */
+    async function startFullSync(upload: boolean): Promise<void> {
         const auth = await currentSyncAuth();
         if (!auth) {
             return;
@@ -656,14 +733,25 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         syncFullModal.hide();
         syncState = "syncing";
         syncMessage = "";
+        // 整份同步期间后端会报 `Progress.FullSync { transferred, total }`（`rslib` 拿
+        // `anki-original-size` 当分母），所以这里能给出**确定**百分比 —— 与
+        // `qt/aqt/sync.py` 把 transferred/total 喂给 QProgressBar 是同一份数据。
+        syncLog = [];
+        pushSyncLog(upload ? tr.syncUploadingToAnkiweb() : tr.syncDownloadingFromAnkiweb());
+        startProgressPolling();
+        showSyncProgress = true;
         try {
             await fullUploadOrDownload({ auth, upload });
             syncState = "idle";
             syncMessage = upload ? tr.syncUploadingToAnkiweb() : tr.syncDownloadingFromAnkiweb();
+            pushSyncLog(tr.syncMediaComplete());
         } catch (problem) {
             syncState = "error";
             syncMessage = String(problem);
+            pushSyncLog(`失败：${syncMessage}`);
         }
+        showSyncProgress = false;
+        stopProgressPolling();
     }
 
     // 工具 → 学习牌组 ##########################################################
@@ -1862,6 +1950,51 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     </div>
 </Modal>
 
+<!--
+    同步进度对话框（对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog`：进度条 + 日志 + Abort）。
+    整份同步能拿到 `Progress.FullSync` 的 transferred/total，所以是**确定**百分比；媒体同步只有
+    后端本地化好的计数文案，那里退化成不确定进度（转圈）+ 状态行文字。
+-->
+<!--
+    同步进度面板（对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog`：进度条 + 日志 + Abort）。
+    这里用**内联面板**而不是 bootstrap 模态：模态的遮罩会和「上传/下载」二选一那个模态叠加，
+    实测会把工具栏的「同步」按钮挡在遮罩下面（点击被拦截）。
+    整份同步能拿到 `Progress.FullSync` 的 transferred/total，所以是**确定**百分比；媒体同步只有
+    后端本地化好的计数文案，那里退化成不确定进度（转圈）+ 状态行文字。
+-->
+{#if showSyncProgress}
+    <div class="sync-dialog" id="sync-dialog">
+        <div class="progress sync-dialog-progress" id="sync-dialog-progress" role="progressbar">
+            {#if syncPercent !== null}
+                <div
+                    class="progress-bar"
+                    id="sync-dialog-percent"
+                    data-percent={String(syncPercent)}
+                    style={`width: ${syncPercent}%`}
+                >
+                    {syncPercent}%
+                </div>
+            {:else}
+                <div
+                    class="progress-bar progress-bar-striped progress-bar-animated"
+                    id="sync-dialog-percent"
+                    style="width: 100%"
+                ></div>
+            {/if}
+        </div>
+        <p class="sync-dialog-stage" id="sync-dialog-stage">{syncStage || syncMessage}</p>
+        <ul class="sync-dialog-log" id="sync-dialog-log">
+            {#each syncLog as line}
+                <li>{line}</li>
+            {/each}
+        </ul>
+        <button type="button" class="btn btn-secondary" id="sync-cancel" on:click={cancelSync}>
+            {tr.syncAbortButton()}
+        </button>
+    </div>
+{/if}
+
+
 <!-- 完整同步的二选一（对照 `sync.py` 的 `full_sync`：上传覆盖 / 下载覆盖） -->
 <Modal bind:this={syncFullModal} modalKey="sync-full">
     <div slot="header" class="modal-header">
@@ -2309,6 +2442,34 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         color: var(--fg);
         font-size: 0.9rem;
         white-space: pre-wrap;
+    }
+
+    /* Bootstrap 的 `.progress` 在本页不一定有样式，高度显式给出来（否则零高度，连可见性都判不出来） */
+    .sync-dialog {
+        margin-top: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+        border-radius: 0.25rem;
+        max-width: 32rem;
+    }
+
+    .sync-dialog-progress {
+        height: 1rem;
+    }
+
+    .sync-dialog-stage {
+        margin: 0.5rem 0 0.25rem;
+        font-size: 0.9rem;
+        color: var(--fg);
+    }
+
+    .sync-dialog-log {
+        margin: 0;
+        padding-left: 1.1rem;
+        max-height: 9rem;
+        overflow-y: auto;
+        font-size: 0.8rem;
+        color: var(--fg-subtle, var(--fg));
     }
 
     .sync-progress {

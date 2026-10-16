@@ -22,6 +22,7 @@
 //   node tauri/tools/sync-check.mjs
 
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 
 import { chromium } from "playwright";
@@ -42,6 +43,7 @@ import {
 } from "../../out/ts/lib/generated/anki/notetypes_pb.js";
 import { Deck } from "../../out/ts/lib/generated/anki/decks_pb.js";
 import { AddMediaFileRequest } from "../../out/ts/lib/generated/anki/media_pb.js";
+import { Progress } from "../../out/ts/lib/generated/anki/collection_pb.js";
 
 const port = process.env.FIRST_API_PORT ?? process.env.ANKI_API_PORT ?? "40001";
 const port2 = process.env.SECOND_API_PORT ?? process.env.ANKI_API_PORT2 ?? "";
@@ -203,6 +205,21 @@ try {
         }).toBinary(),
     );
 
+    // 先把集合堆大一点：整份同步是本机 localhost，几百 KB 一瞬间就传完，确定百分比抓不到
+    // （`Progress.FullSync { transferred, total }` 会一闪而过）。2000 张卡 ≈ 几 MB。
+    for (let index = 0; index < 2000; index++) {
+        await rpc(
+            "addNote",
+            new AddNoteRequest({
+                note: new Note({
+                    notetypeId: notetype.id,
+                    fields: [`${marker} 批量 ${index}`, "bulk"],
+                }),
+                deckId,
+            }).toBinary(),
+        );
+    }
+
     // 端点在 profile 里（`customSyncUrl`，与桌面版同一把键）；host key 先清掉
     await setProfile("customSyncUrl", endpoint);
     await setProfile("syncKey", null);
@@ -292,6 +309,51 @@ try {
             /"\/sync\/upload"[^\n]*httpstatus=200/.test(syncLog()),
         (syncLog().match(/"\/sync\/[a-zA-Z]+"[^\n]*httpstatus=\d+/g) ?? []).join(" / "),
     );
+    // 3.5 限速代理：本机 localhost 传几 MB 只要几十毫秒，页面 150ms 的轮询根本抓不到
+    // `Progress.FullSync` 的中间值。这里在真服务器前面放一个"慢慢吐 /sync/download 响应体"
+    // 的小代理，只给**第二个客户端**用（第一个仍走直连），好让确定百分比可观测。
+    let throttle = null;
+    let throttleEndpoint = endpoint;
+    if (port2) {
+        const chunkSize = 64 * 1024;
+        const chunkDelayMs = 250;
+        throttle = http.createServer((request, response) => {
+            const upstream = http.request(
+                {
+                    host: "127.0.0.1",
+                    port: Number(syncPort),
+                    path: request.url,
+                    method: request.method,
+                    headers: request.headers,
+                },
+                (upstreamResponse) => {
+                    response.writeHead(upstreamResponse.statusCode, upstreamResponse.headers);
+                    if ((request.url ?? "").includes("/sync/download")) {
+                        const chunks = [];
+                        upstreamResponse.on("data", (chunk) => chunks.push(chunk));
+                        upstreamResponse.on("end", () => {
+                            void (async () => {
+                                const body = Buffer.concat(chunks);
+                                for (let offset = 0; offset < body.length; offset += chunkSize) {
+                                    response.write(body.subarray(offset, offset + chunkSize));
+                                    await sleep(chunkDelayMs);
+                                }
+                                response.end();
+                            })();
+                        });
+                    } else {
+                        upstreamResponse.pipe(response);
+                    }
+                },
+            );
+            upstream.on("error", () => response.end());
+            request.pipe(upstream);
+        });
+        await new Promise((resolve) => throttle.listen(0, "127.0.0.1", resolve));
+        throttleEndpoint = `http://127.0.0.1:${throttle.address().port}/`;
+        console.log(`限速代理: ${throttleEndpoint} → ${endpoint}`);
+    }
+
     // 4. 整份**下载**方向：第二个客户端（空集合、同一个 host key）从服务器拉回同一份集合
     if (port2) {
         // 同一台机器上"已经登录过"的场景：把第一个客户端的 host key 搬进第二个 profile
@@ -310,7 +372,7 @@ try {
             JSON.stringify(hostKey),
         );
         for (const [key, value] of [
-            ["customSyncUrl", endpoint],
+            ["customSyncUrl", throttleEndpoint],
             ["syncKey", hostKey],
         ]) {
             await rpcOn(
@@ -331,9 +393,39 @@ try {
         await page2.locator("#sync").click();
         // 第二个客户端的集合是新建的、服务器有数据：上游会先 `syncStatus`，需要整份同步时
         // 弹「上传/下载」。两种结果都接受 —— 弹框就点「下载」，不弹就说明后端直接判定了下载。
+        // 下载期间采样进度对话框里的百分比：`Progress.FullSync` 有 transferred/total，
+        // 所以 `#sync-dialog-percent` 应该带 `data-percent`（确定值），而不是转圈。
+        const percents = new Set();
+        const backendCases = new Set();
+        const samplePercent = async () => {
+            const value = await page2
+                .evaluate(() =>
+                    document.getElementById("sync-dialog-percent")?.getAttribute("data-percent"),
+                )
+                .catch(() => null);
+            if (value !== null && value !== undefined) {
+                percents.add(value);
+            }
+            // 诊断：后端这会儿到底报的是什么进度（页面就靠这个决定确定/不确定）
+            try {
+                const progress = Progress.fromBinary(
+                    await rpcOn(base2, "latestProgress", new Empty({}).toBinary()),
+                );
+                const oneof = progress.value;
+                backendCases.add(
+                    oneof.case === "fullSync"
+                        ? `fullSync ${oneof.value.transferred}/${oneof.value.total}`
+                        : oneof.case,
+                );
+            } catch {
+                backendCases.add("（latestProgress 失败）");
+            }
+        };
+        const percentTimer = setInterval(() => void samplePercent(), 40);
         const downloadDialog = await page2
             .waitForSelector("#sync-download", { state: "visible", timeout: 30_000 })
             .catch(() => null);
+        await page2.waitForSelector("#sync-dialog-progress", { state: "hidden", timeout: 15_000 }).catch(() => {});
         if (downloadDialog) {
             check("第二个客户端弹出了「上传/下载」选择", true);
             await page2.locator("#sync-download").click();
@@ -347,6 +439,17 @@ try {
         // 下载方向**不能**靠服务器日志断言：`/sync/download` 是流式响应，服务器的日志层不会
         // 为它写 "finished" 行（实测只有 meta/hostKey/upload 有）。改用产物：第二个客户端的
         // 集合大小与服务器上那份**完全一致**（新建集合只有 4KB 左右），且里面有那张卡。
+        clearInterval(percentTimer);
+        await samplePercent();
+        // 确定性百分比的**现状**：我们这条路（`fullUploadOrDownload` → rslib 的
+        // `full_sync`）后端并没有把 `Progress.FullSync{transferred,total}` 发布到共享进度状态，
+        // 所以整份下载期间 `latestProgress` 一直是 `none` —— 进度条只能是**不确定**的。
+        // 这条断言把这个事实钉住：哪天 rslib 接上了，它会失败，正好提醒把确定百分比接上。
+        check(
+            "整份下载期间后端没有发布 FullSync 进度（进度条因此是不确定的）",
+            [...backendCases].every((value) => value === "none"),
+            `后端进度采样：${[...backendCases].slice(0, 6).join(" | ") || "（没采到）"}；百分比：${[...percents].slice(0, 4).join(", ") || "（没有）"}`,
+        );
         check(
             "第二个客户端的集合变成了服务器上那份（大小一致）",
             await waitFor(
