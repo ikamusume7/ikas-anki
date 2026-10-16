@@ -78,6 +78,23 @@ function Wait-LogPattern {
     return $false
 }
 
+# 某个片段在日志里出现过几次（要判断"有没有**新的**一条"时必须用它：
+# `Wait-LogPattern` 会被旧行骗过）
+function Count-Log {
+    param([string]$Pattern)
+    return ([regex]::Matches((Read-Log $logPath), $Pattern)).Count
+}
+
+function Wait-LogCount {
+    param([string]$Pattern, [int]$Minimum, [int]$TimeoutSeconds)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ((Count-Log $Pattern) -ge $Minimum) { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $false
+}
+
 Write-Host "启动 $Exe（端口 $Port，集合 $Collection）…"
 $proc = Start-Process -FilePath $exePath -WorkingDirectory $root `
     -RedirectStandardOutput $logPath -RedirectStandardError $errPath -NoNewWindow -PassThru
@@ -92,14 +109,9 @@ try {
     if ((Read-Log $logPath) -match "队列: 共 0 张") {
         Write-Host "集合为空，写入一张测试卡片…"
         node tauri/tools/seed-card.mjs
-        $cmdPath = Join-Path $OutDir "pycmd.dat"
-        [System.IO.File]::WriteAllBytes(
-            $cmdPath,
-            [System.Text.Encoding]::UTF8.GetBytes("domDone")
-        )
-        curl.exe -s -o NUL -X POST -H "Content-Type: text/plain" `
-            -H "Authorization: Bearer $ApiKey" --data-binary "@$cmdPath" `
-            "http://127.0.0.1:$Port/_anki/pycmd"
+        # 队列空时宿主已经回到概览上的 Congratulations（PARITY 1.6），
+        # 所以这里发 `study` 重新进复习页；在概览上发 `domDone` 会被忽略
+        Send-Bridge "study"
         if (-not (Wait-LogPattern "渲染完成" 30)) {
             throw "补卡片后复习界面仍未渲染（详见 $logPath）"
         }
@@ -136,6 +148,18 @@ try {
     } else {
         Write-Host "没有看到工具栏同步的宿主日志（见 $logPath）" -ForegroundColor Red
         $passed = $false
+    }
+
+    # 菜单检查里的「设置到期日 → 撤销」会把队列清空一次（宿主按 PARITY 1.6 回了概览），
+    # 撤销之后主窗口未必停在复习页上；后面要截菜单、开牌组选项/卡片信息两个窗口，
+    # 都要求复习页有当前卡片 —— 所以重新进一次复习页（`study` 幂等）
+    $renders = Count-Log "渲染完成"
+    Send-Bridge "study"
+    if (-not (Wait-LogCount "渲染完成" ($renders + 1) 30)) {
+        Write-Host "重新进复习页后没有渲染（详见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "重新进复习页并渲染了卡片" -ForegroundColor Green
     }
 
     # 让真实窗口弹出菜单并截图（菜单是页面里的浮层，窗口截图就能看到）
@@ -189,6 +213,14 @@ try {
     Write-Host "检查复习键盘（按键映射 + 宿主守卫）…"
     $env:ANKI_LOG = $logPath
     node tauri/tools/reviewer-keys-check.mjs
+    if ($LASTEXITCODE -ne 0) { $passed = $false }
+
+    # 答完队列的收尾：没有卡片时要回概览并画 Congratulations（不再是硬编码中文提示）。
+    # 这个检查自造一个「今天学完」的临时牌组，所以不受前面几步留下的状态影响。
+    Write-Host "检查答完队列的收尾（Congratulations）…"
+    $env:ANKI_LOG = $logPath
+    $env:SHOT_DIR = $OutDir
+    node tauri/tools/congrats-check.mjs
     if ($LASTEXITCODE -ne 0) { $passed = $false }
 } catch {
     Write-Host "验证过程出错：$_" -ForegroundColor Red

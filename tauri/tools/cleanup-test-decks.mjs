@@ -26,6 +26,8 @@ const prefixes = [
     "TauriRenamed",
     "TauriImport",
     "TauriFiltered",
+    // 答完队列的收尾检查（`congrats-check.mjs`）造的「今天学完」牌组
+    "TauriCongrats",
 ];
 
 /**
@@ -45,6 +47,8 @@ const noteMarkers = [
     "TauriBrowser",
     "TauriDecks 补的卡片",
     "TauriFiltered",
+    // `congrats-check.mjs` 造的那张（卡片正面文本）
+    "TauriCongrats",
 ];
 
 const noteIds = async () => {

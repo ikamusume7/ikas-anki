@@ -174,7 +174,14 @@ pub async fn start(state: &AppState) {
     );
 
     let Some(queued_card) = queued.cards.first() else {
-        show_message(state, "本队列已无待复习卡片。");
+        // 对照 Qt 的 `Reviewer.nextCard()`（`reviewer.py:257-259`）：没有卡片就
+        // `moveToState("overview")`，而概览在没有可学卡片时会渲染 Congratulations
+        // （`overview.py:190-209` 的 `_show_finished_screen`，本外壳画在概览面板里）。
+        tracing::info!("队列已空：清理复习会话并回到概览（恭喜页）");
+        clear_session(state);
+        if let Err(error) = crate::main_window::show_overview(state) {
+            tracing::warn!("回到概览失败: {error:#}");
+        }
         return;
     };
 
@@ -269,10 +276,31 @@ pub async fn start(state: &AppState) {
     show_question(state).await;
 }
 
+/// 队列空了：把会话清干净（对照 Qt 里 `self.card = None`）。
+///
+/// 不清的话底栏还留着上一张卡的评分按钮，再按 `1`–`4` 会拿过期状态去评分
+/// （后端以 `card was modified` 报错，用户看到的是一个莫名其妙的失败）。
+fn clear_session(state: &AppState) {
+    let mut session = state.reviewer.session();
+    session.card_id = None;
+    session.card = None;
+    session.type_answer = None;
+    session.deck_settings = None;
+    session.states = None;
+    session.context = None;
+    session.counts = [0, 0, 0];
+    session.queue_index = 0;
+    session.answer_shown = false;
+    session.shown_at = None;
+}
+
 /// 撤销上一次操作（对照 Qt 的 `mw.undo()` → `operations/collection.py:undo()`）。
 ///
-/// 撤销会改变卡片的调度状态（通常是把上一张卡放回队列），所以完成后必须重新
-/// 取队列并重新渲染。
+/// 撤销会改变卡片的调度状态（通常是把上一张卡放回队列），所以完成后必须重新取队列并
+/// 重新渲染 —— 但**要按当前界面来**：还在复习页就重取重画；已经被顶回概览/牌组列表
+/// （例如「设置到期日」把最后一张卡移到未来 → 队列空 → 自动回概览，再撤销）就让那个
+/// 页面重新拉数据（对照 Qt 的 `mw.undo()` → `col.undo()` → `mw.reset()` → 按当前
+/// 状态刷新）。
 pub async fn undo(state: &AppState) {
     match call::<_, OpChangesAfterUndo>(state, "undo", &Empty {}).await {
         Ok(_) => tracing::debug!("已撤销上一步操作"),
@@ -282,7 +310,13 @@ pub async fn undo(state: &AppState) {
             return;
         }
     }
-    start(state).await;
+    if state.reviewer_active.load(std::sync::atomic::Ordering::SeqCst) {
+        start(state).await;
+    } else {
+        // 页面（牌组列表 / 概览）自己重新取数据；复习会话在回到概览时已经清干净
+        tracing::debug!("撤销时不在复习页，让当前页面重新加载");
+        eval(state, "window.location.reload();");
+    }
 }
 
 /// 复习界面的快捷键脚本（对照 Qt 的 `Reviewer._shortcutKeys()`）。

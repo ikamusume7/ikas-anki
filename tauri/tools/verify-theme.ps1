@@ -207,7 +207,9 @@ try {
     if ($text -match "队列: 共 0 张") {
         Write-Host "集合为空，补一张卡片…"
         node tauri/tools/seed-card.mjs | Out-Null
-        Send-Bridge "domDone"
+        # 队列空时宿主已经回到概览（PARITY 1.6），要发 `study` 重新进复习页
+        # 才能截到复习界面的深色渲染
+        Send-Bridge "study"
     }
     Start-Sleep -Seconds 4
     Capture -OutFile (Join-Path $OutDir "reviewer-dark.png")

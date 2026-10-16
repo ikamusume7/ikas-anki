@@ -134,7 +134,8 @@ try {
     if ((Read-Log $logPath) -match "队列: 共 0 张") {
         Write-Host "集合为空，写入一张测试卡片…"
         node tauri/tools/seed-card.mjs
-        Send-Bridge -Window "main" -Command "domDone" | Out-Null
+        # 队列空时宿主已经回到概览（PARITY 1.6），要发 `study` 重新进复习页
+        Send-Bridge -Window "main" -Command "study" | Out-Null
         if (-not (Wait-LogPattern "渲染完成" 30)) {
             throw "补卡片后复习界面仍未渲染（详见 $logPath）"
         }

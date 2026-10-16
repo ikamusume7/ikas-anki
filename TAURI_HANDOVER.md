@@ -54,8 +54,8 @@
     「字段…」「卡片…」两个按钮；入口暂时挂在浏览器「更多」菜单，因为主窗口菜单栏画在
     牌组列表页、浏览器窗口自己没有菜单栏，见 PARITY 5.2）。
   - 未做：编辑已有筛选牌组（筛选牌组点「选项」会开到报错窗口）、Android、addon、文件关联、
-    以及复习界面剩下的几块（Congratulations 收尾、时间盒、音频语义）（PARITY 第 8 节；
-    **多 profile 管理、夜间模式、界面语言、首选项真页面已完成**）。
+    以及复习界面剩下的几块（时间盒、音频语义、自动前进、上一张卡片信息）（PARITY 第 8 节；
+    **多 profile 管理、夜间模式、界面语言、首选项真页面、键盘答题、答完队列的 Congratulations 已完成**）。
 - **M4 进行中**：**Windows 可分发目录**已做并验证（`tauri/tools/package.ps1` +
   `verify-package.ps1`，`tauri/tauri.conf.json` 的 bundle 配置也写好了）——
   `tauri/PACKAGING.md` 里写了布局、与 `tauri build` 的差别、签名与 Android 的缺口。
@@ -66,7 +66,8 @@
 > 重新定级并新增第 8/9 节（未覆盖缺口、验证体系缺口），`tauri/README.md` 同步；
 > 本文档 §6 / §7 / §9 也已对齐。
 > 核查同时确认：~~**键盘答题整条链路没有**（复习页只绑了 8 个键）~~（**2026-10-16 已补**，
-> 见下方 §1 与 PARITY 1.4）、**Congratulations 收尾不存在**、
+> 见下方 §1 与 PARITY 1.4）、~~**Congratulations 收尾不存在**~~（**同日已补**：队列空了
+> 清会话 + 回概览，概览改画 Congratulations，见 PARITY 1.6）、
 > **时间盒不存在**、**addon/文件关联为零**。
 > 同一天接着补齐了第 8 节里的四块：**界面语言**（`i18n_lang.rs`）、**夜间模式/主题**
 > （`theme.rs`，三条注入通道 + 运行期广播）、**首选项真页面**（七个分页）、
@@ -77,7 +78,7 @@
 
 | 脚本 | 覆盖 |
 | --- | --- |
-| `tauri/tools/verify-reviewer.ps1` | 复习界面：启动 → 补卡片 → 截真实窗口 → 布局断言 → 「更多」菜单（`reviewer-menu-check.mjs`）→ **复习键盘**（`reviewer-keys-check.mjs`：31 组真实按键 + 宿主评分守卫） |
+| `tauri/tools/verify-reviewer.ps1` | 复习界面：启动 → 补卡片 → 截真实窗口 → 布局断言 → 「更多」菜单（`reviewer-menu-check.mjs`）→ **复习键盘**（`reviewer-keys-check.mjs`：31 组真实按键 + 宿主评分守卫）→ **答完队列的收尾**（`congrats-check.mjs`：自造学完牌组 → `study` → 恭喜内容 + 取消埋藏） |
 | `tauri/tools/verify-m2.ps1` | 平台能力：剪贴板文件列表 / TTS 合成 / 录音闭环 + 多窗口命令归属 |
 | `tauri/tools/verify-editor.ps1` | 编辑器：「编辑当前卡片」开窗 → 载入 note → 截图 → 关窗 → 改字段保存 → **「字段…」/「卡片…」两个对话框** → **拖入文件**（合成 drop → 媒体落库）→ **图像遮挡**（选图片 → 掩码编辑器渲染出图片） |
 | `tauri/tools/verify-addcards.ps1` | 添加卡片：`add` 开窗 → 注入新建 note → 截图 → 默认值 / 添加落库 / 两条关闭契约 |
@@ -1175,7 +1176,7 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 | ~~**界面状态同步**~~ | **已完成**：`getSchedulingStatesWithContext` / `setSchedulingStates` + `cardStateCustomizer` 注入，见 `platform/scheduling.rs` |
 | ~~**顶部工具栏**~~ | **已完成**：牌组 / 添加 / 浏览 / 统计 / **同步** + 快捷键提示，宿主注入 `assets/reviewer-toolbar.js`。差的只有 add-ons 左右托盘、全屏自动隐藏，以及同步链接**只有文字**（没有 Qt 的状态色与旋转图标），见 `tauri/README.md` 的「顶部工具栏」 |
 | ~~**键盘答题**~~ | **已完成**：`assets/reviewer-keys.js`（宿主 `include_str!` 注入）照 `reviewer.py:595-642` 的 `_shortcutKeys()` 绑定 —— 空格/回车（问题面 `ans`；答案面按 `meta.spacebar_rates_card` 用焦点档或默认档 3）、`1`–`4`（仅答案面）、`e`/`m`/`u`/`o`/`i`、`*`/`=`/`-`/`!`/`@`、`Ctrl+1..7`、`Ctrl+Alt+N`/`Ctrl+Alt+E`、`Ctrl+Del`、`Ctrl+Shift+D`、`Ctrl+Z`/`Ctrl+P` 与主窗口全局键；宿主另加 `answer_shown` 守卫（对照 `_answerCard()` 的 `state != "answer"`）。差的是没有后端能力的那些：音频 `r`/`F5`/`5`/`6`/`7`/`v`/`Shift+v`、自动前进 `Shift+A`、上一张卡片信息 `Ctrl+Alt+I`（PARITY 1.4/2.2/2.3/2.4）。验证 `reviewer-keys-check.mjs` |
-| **答完队列的收尾** | **没有 Congratulations**（PARITY 1.6）：队列空时只注入一句硬编码中文，不回概览、没有「下次到期时间 / 提前学习」、概览面板也永不显示；底栏按钮与会话都不清（再点会拿过期状态评分，后端以 `card was modified` 报错） |
+| ~~**答完队列的收尾**~~ | **已完成**：队列空了**清会话**（卡片/调度状态/计数/底栏一起清，否则再按 `1`–`4` 会拿过期状态评分）+ 回概览（对照 `reviewer.py:257-259`），概览在没有可学卡片时改画 Congratulations（`overview.py:190-209`）—— 标题、下次学习时间（复用 `ts/routes/congrats/lib.ts`）、今日复习/新卡片上限两句、埋藏卡片的「取消埋藏」链接（实点验证会真的 `unburyDeck`）、自定义学习提示与描述；选项/自定义学习/取消埋藏按钮保留；`undo` 按当前界面刷新（在复习页就重取队列，已回概览/列表就重新加载页面）。差 `/congrats` 路由仍无打开路径（内容画在概览面板里）。验证 `congrats-check.mjs` |
 | **音频的显示与语义** | 卡面**不画播放按钮**（没有 `play:q:N` 这条命令，`[sound:]` / `{{tts}}` 原样显示、点不了）；答案面会把问题面音频**再播一遍**（Qt 是 `partial_render`，`answer_av_tags` 不含 FrontSide 音频）；重播 / 暂停 / ±5 秒 / 录音 / 重播录音都没有（PARITY 2.3） |
 
 ### 6.2 桥接命令扩充
@@ -1549,9 +1550,10 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
   `profiles.rs` + 「切换配置」都落地，`verify-prefs` / `verify-theme` / `verify-i18n` /
   `verify-profiles` 四个一键脚本全绿；剩下的尾巴（媒体同步日志窗口、`answer_keys` 自定义答案键、
   `resetWindowSizes`、「干扰项」的消费方）记在 PARITY 3.3 / 8.1-8.4。
-- **复习界面的三块缺口**：~~键盘答题（只绑了 8 个键）~~ → **2026-10-16 已补齐**
-  （`assets/reviewer-keys.js` + 宿主 `answer_shown` 守卫 + `reviewer-keys-check.mjs`）；
-  **答完队列的 Congratulations 收尾与时间盒仍未做**
+- **复习界面的三块缺口**：~~键盘答题（只绑了 8 个键）~~、~~答完队列的 Congratulations 收尾~~
+  → **2026-10-16 均已补齐**（`assets/reviewer-keys.js` + 宿主 `answer_shown` 守卫 +
+  `reviewer-keys-check.mjs`；`reviewer::start()` 清会话 + 回概览，概览改画 Congratulations，
+  `congrats-check.mjs`）；**时间盒仍未做**
   —— 见 §6.1；另外自动前进、上一张卡片信息、音频重播/暂停/±5 秒/
   录音也没有（PARITY 2.2-2.4）。
 - **同步只验到「登录 / 取消 / 自动媒体同步请求」**：`syncCollection` 与媒体同步的成功路径、
@@ -1639,8 +1641,8 @@ M1 / M2 已收尾（32 个平台端点全部有实现），M3 的窗口都能用
    下一步建议的顺序（同 `tauri/PARITY.md` §10）：
    1. **首选项真页面 + profile 管理 + 夜间模式 `standard_css` + 界面语言** —— 一次消掉
       "日常必用却完全缺失"和最大的文档落差（PARITY 8.1-8.4）；
-   2. **~~复习键盘答题~~ + Congratulations 收尾 + 时间盒**（每天都会碰到，改动集中在
-      `reviewer.rs`）—— 键盘已落地（2026-10-16），剩下 congrats 与时间盒；
+   2. **~~复习键盘答题~~ + ~~Congratulations 收尾~~ + 时间盒**（每天都会碰到，改动集中在
+      `reviewer.rs`）—— 前两块已落地（2026-10-16），只剩时间盒；
    3. **数据安全三项**：关窗契约（牌组选项 / 编辑当前 / 浏览器编辑区）、筛选牌组「选项」、
       导出目录拦截；顺手把 `prefs21` 的"写 null"改成删键；
    4. **音频显示与语义 + 自动前进 + 上一张卡片信息**；

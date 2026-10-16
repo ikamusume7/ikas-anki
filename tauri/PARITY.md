@@ -40,7 +40,7 @@
 | 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，`qt/aqt` 里也没有 `showMessage` 调用（`profiles.ui` 那个 statusbar 在 `main.py:336` 被设为不可见）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui` |
 | 1.4 | ⚠️ | 主窗口快捷键 | 牌组列表页已接 `a`/`b`/`t`/`s`/`c`/`o`/`r`/`e`/`u`/`y`(同步)/`F`(筛选牌组)/`F11`/`Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`；复习页已照 `_shortcutKeys()` 接上所有有后端能力的键位（`assets/reviewer-keys.js`，宿主 `include_str!` 注入）：空格/回车（问题面显示答案；答案面按 `meta.spacebar_rates_card` 用焦点档或默认档 3，关闭则不动）、`1`–`4`（仅答案面，宿主另有 `answer_shown` 守卫）、`e`/`m`/`u`/`o`/`i`、`*`/`=`/`-`/`!`/`@`、`Ctrl+1..7`、`Ctrl+Alt+N`/`Ctrl+Alt+E`、`Ctrl+Del`、`Ctrl+Shift+D`、`Ctrl+Z`/`Ctrl+P`，以及主窗口全局的 `a`/`b`/`t`(`Shift+t`)/`d`/`s`/`y`。**还差**：复习页缺 `r`/`F5`/`5`/`6`/`7`/`v`/`Shift+v`（音频，见 2.3）、`Shift+A`（自动前进，2.4）、`Ctrl+Alt+I`（上一张卡片信息，2.2）、`F11`/`Ctrl+E`/`Ctrl+Shift+Z`/缩放三键；牌组列表缺 `d`（概览里按 d 回不到列表）、`Ctrl+Shift+I`、`/`、`Ctrl+Shift+N`、`Ctrl+Shift+A`、`Ctrl+Q`；两页都没有 `Ctrl+:`（调试控制台）。验证：`reviewer-keys-check.mjs` 按 31 组真实按键断言桥接命令（含输入框不抢键），另对真外壳断言评分守卫 | `qt/aqt/main.py:1189-1198`、`qt/aqt/reviewer.py:595-642` |
 | 1.5 | ⚠️ | 启动行为 | 启动即牌组列表；**自动备份**（启动一次 + 每 5 分钟，`force=False`，`verify-decks.ps1` 断言产物是 >1KB 的 `.colpkg`）；启动自动同步线程；检查数据库/媒体/空卡片有入口；**还原备份**能用（6.2）。**还差**：界面语言已按 `meta["defaultLang"]` / 系统语言生效（见 8.4），只剩偏好设置里的语言下拉与首次运行的语言框；**主窗口几何不恢复**（固定 1200×820，`windows.rs` 的几何记忆只管 `windows::open` 开的窗口；「重置窗口大小」还需要 prefs21 的删键端点）；**profile 选择已实现**（`meta["last_loaded_profile_name"]` + 切换配置窗口，见 8.2）；缺「检查更新」 | `qt/aqt/main.py:setupProfile`、`_backup` |
-| 1.6 | ⚠️ | 每日学习流程 | 空队列时**只在复习页注入一句硬编码中文**「本队列已无待复习卡片。」（英文界面也是中文），`/congrats` 路由没有任何打开路径，`congratsInfo` 只被概览面板用来判断埋藏。**Congratulations 环 = ❌**。还差：答完最后一张不 `moveToState("overview")`、不渲染 congrats（下次到期时间 / 提前学习按钮都没有）、概览面板永不显示；时间盒到点的「继续/结束」对话框（见 2.6）；非 v3 调度器时回牌组列表 + 警告 | `qt/aqt/reviewer.py:257-259`、`qt/aqt/overview.py:190-209` |
+| 1.6 | ⚠️ | 每日学习流程 | 队列空了会**回到概览并画上 Congratulations**：宿主在 `reviewer::start()` 里清会话（卡片/状态/计数一起清，否则底栏留着评分按钮、再按 `1`–`4` 会拿过期状态评分）+ `moveToState("overview")`（对照 `reviewer.py:257-259`），概览面板在没有可学卡片时改画恭喜内容（对照 `overview.py:190-209` 的 `_show_finished_screen`）—— 标题「恭喜！…」、`buildNextLearnMsg` 的「下次学习时间 / 剩余学习中卡片」（与 `/congrats` 页共用 `ts/routes/congrats/lib.ts`）、「今日复习上限已达」「今日新卡片上限已达」（`congratsInfo` 的 `reviewRemaining`/`newRemaining`）、埋藏卡片的「取消埋藏」链接（点了真的 `unburyDeck`）、「自定义学习」提示与牌组描述；选项/自定义学习/取消埋藏按钮照 Qt 的底栏在学完时也保留，「学习」按钮隐藏；`undo` 也按当前界面刷新（还在复习页就重取队列，已回概览/牌组列表就让页面重新加载，避免往没有 `_showQuestion` 的页面注入卡片）。**还差**：`/congrats` 路由本身仍然没有打开路径（内容画在概览面板里，因为本外壳的概览就是同一页的面板，见 1.1 的既有偏差）；时间盒到点的「继续 / 结束」对话框（见 2.6）；非 v3 调度器的回列表 + 警告不适用（rslib 只有 v3）。验证：`congrats-check.mjs`（自造一个「今天学完」的牌组 → 发 `study` → 断言两次导航与页面内容 → 点「取消埋藏」后卡片真的回到队列）| `qt/aqt/reviewer.py:257-259`、`qt/aqt/overview.py:190-209`、`ts/routes/congrats/` |
 
 验收：启动外壳 → 截图与真 Anki 打开时的首屏逐项对比；快捷键表逐条按一遍（现在只能脚本级核对）。
 
@@ -165,7 +165,7 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    "没人用"的删除分支；`browser-check.mjs` 对侧栏只验"有默认牌组"。
 3. **靠钩子顶掉原生交互**：`ANKI_SAVE_PATH`/`ANKI_PICK_COLOUR`/`ANKI_RESTORE_PATH`/`ANKI_BACKUP_NOW`
    → 真对话框（保存、确认、取色、还原）路径全靠手工。
-4. **0 断言的主要功能**：计时器与时间盒、答完队列/congrats、上一张卡片信息、
+4. **0 断言的主要功能**：计时器与时间盒、上一张卡片信息、
    音频的重播·暂停·±5 秒·录音、埋藏/暂停/重置/副本/删除笔记的**按键与菜单路径**
    （`rev:` 动作只有旗标·标记·到期日有断言）、同步成功路径、TTS 播放链路、
    `prefs21` 桌面版↔外壳互操作、文件关联与命令行、`just`/CI（根本没有）。
@@ -181,11 +181,11 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    `tauri/src/theme.rs`、`tauri/src/i18n_lang.rs`；四个一键脚本 `verify-prefs` /
    `verify-profiles` / `verify-theme` / `verify-i18n` 全绿。剩下的尾巴记在 3.3 / 8.1 / 8.2
    （媒体日志窗口、`answer_keys`、`resetWindowSizes`、「干扰项」的消费方等）
-2. **~~复习键盘（空格/回车/1–4 等，2.x 附）~~ + Congratulations 收尾（1.6）+ 时间盒（2.6）**
-   —— **键盘已落地**（2026-10-16）：`tauri/assets/reviewer-keys.js` 照 `_shortcutKeys()`
-   绑完整张可用表、宿主加 `answer_shown` 守卫、`meta.spacebar_rates_card` 生效，
-   `reviewer-keys-check.mjs`（31 组真实按键 + 宿主守卫）接进 `verify-reviewer.ps1`；
-   剩下 congrats 与时间盒。
+2. **~~复习键盘（空格/回车/1–4 等，2.x 附）~~ + ~~Congratulations 收尾~~（1.6）+ 时间盒（2.6）**
+   —— **前两块已落地**（2026-10-16）：`tauri/assets/reviewer-keys.js` 照 `_shortcutKeys()`
+   绑完整张可用表、宿主加 `answer_shown` 守卫、`meta.spacebar_rates_card` 生效
+   （`reviewer-keys-check.mjs`）；队列空了会清会话 + 回概览，概览改画 Congratulations
+   （`congrats-check.mjs`）；两块都接进 `verify-reviewer.ps1`。**只剩时间盒**。
 3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
    筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
 4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**

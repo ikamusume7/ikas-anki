@@ -53,6 +53,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     } from "@generated/anki/sync_pb";
     import { HelpPageLinkRequest_HelpPage } from "@generated/anki/links_pb";
     import { UnburyDeckRequest_Mode } from "@generated/anki/scheduler_pb";
+    import type { CongratsInfoResponse } from "@generated/anki/scheduler_pb";
+    import { GetQueuedCardsRequest } from "@generated/anki/scheduler_pb";
     import * as tr from "@generated/ftl";
     import { translate as translateRaw } from "@generated/ftl-helpers";
     import {
@@ -70,6 +72,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         getDeckNames,
         getEmptyCards,
         getOrCreateFilteredDeck,
+        getQueuedCards,
         helpPageLink,
         openLink,
         rebuildFilteredDeck,
@@ -105,6 +108,9 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     import ExportDialog from "../browser/ExportDialog.svelte";
     import { performExport } from "../browser/exporting";
     import type { ExportChoice, MenuSection } from "../browser/menu";
+    // 概览没有可学卡片时画的就是 Congratulations 那块内容（对照 `overview.py:208-209`
+    // 直接载入 `/congrats`）；文案拼装复用恭喜页那一份，避免两份说法漂移
+    import { buildNextLearnMsg } from "../congrats/lib";
 
     interface Row {
         node: DeckTreeNode;
@@ -125,6 +131,17 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     let haveBuried = false;
     let haveSchedBuried = false;
     let haveUserBuried = false;
+    /**
+     * 概览的补充信息（`congratsInfo`）。「今天学完了」那块要拿它拼「下次学习时间」，
+     * 以及「今日复习/新卡片上限已达」两句。
+     */
+    let overviewInfo: CongratsInfoResponse | null = null;
+    /**
+     * 当前牌组今天是否已经学完（对照 `v3.py:124-126` 的 `_is_finished()`：
+     * 队列里一张卡都没有）。为真时概览面板改画 Congratulations
+     * （对照 `overview.py:190-209`）。
+     */
+    let overviewFinished = false;
     /** 描述编辑弹框（对照 `deckdescription.py`） */
     let descriptionModal: Modal;
     let descriptionText = "";
@@ -192,6 +209,14 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     $: textPrompt = textMode === "create" ? tr.decksNewDeckName() : tr.actionsRename();
     /** 当前概览的牌组是不是筛选牌组（决定显示「重建/清空」还是「自定义学习」） */
     $: overviewFiltered = overviewDeck?.kind.case === "filtered";
+    /** 学完那一块的三句文案（与 `/congrats` 页同一份 ftl 文案与拼装方式） */
+    $: nextLearnMsg = overviewInfo ? buildNextLearnMsg(overviewInfo) : "";
+    $: buriedMsg = tr.schedulingBuriedCardsFound({
+        unburyThem: overviewLink("unbury", tr.schedulingUnburyThem()),
+    });
+    $: customStudyMsg = tr.schedulingHowToCustomStudy({
+        customStudy: overviewLink("customStudy", tr.schedulingCustomStudy()),
+    });
     // 「学习牌组」列表：随着候选列表更新与筛选框输入重算。
     // 注意这里**直接**引用 `studyEntries` —— Svelte 的响应式依赖是静态分析的，
     // 挪进函数里的话依赖会只剩 `studyFilter`（表现为：刚打开弹框时列表是空的）
@@ -975,6 +1000,8 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             haveBuried = false;
             haveSchedBuried = false;
             haveUserBuried = false;
+            overviewInfo = null;
+            overviewFinished = false;
             return;
         }
         const deck = await getDeck({ did: node.deckId });
@@ -995,9 +1022,46 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
             overviewDescription = "";
         }
         const info = await congratsInfo(new Empty({}));
+        overviewInfo = info;
         haveSchedBuried = info.haveSchedBuried;
         haveUserBuried = info.haveUserBuried;
         haveBuried = haveSchedBuried || haveUserBuried;
+        // 对照 `v3.py:124-126` 的 `_is_finished()`：队列为空 = 今天学完了。
+        // 注意不能用 `congratsInfo` 判断 —— 它的 `reviewRemaining`/`newRemaining` 是
+        // 「还有卡片但被每日上限挡住」（`congrats.sql` 不看上限），那正是恭喜页要
+        // 告诉用户的事，不能拿来当"还有卡可学"。
+        const queued = await getQueuedCards(new GetQueuedCardsRequest({ fetchLimit: 1 }));
+        overviewFinished = queued.cards.length === 0;
+    }
+
+    /**
+     * 概览面板里的链接（「取消埋藏」「自定义学习」）。
+     *
+     * 与 `@tslib/bridgecommand` 的 `bridgeLink` 同形，但动作由本页直接执行 ——
+     * 概览面板就在本页里，不用绕一圈桥接命令（`/congrats` 页是独立页面才需要）。
+     */
+    const overviewLink = (action: string, label: string): string =>
+        `<a href="#" data-overview-action="${action}">${label}</a>`;
+
+    /** 点概览里那两个用 `{@html}` 插进来的链接（CSP 不允许内联事件处理器，用委托）。 */
+    function onOverviewLinkClick(event: MouseEvent): void {
+        const target = (event.target as HTMLElement | null)?.closest("[data-overview-action]");
+        if (!target) {
+            return;
+        }
+        event.preventDefault();
+        const action = target.getAttribute("data-overview-action");
+        if (action === "unbury") {
+            askUnbury();
+        } else if (action === "customStudy" && overview) {
+            bridgeCommand(`customStudy:${overview.deckId}`);
+        }
+    }
+
+    /** 窗口级点击：关掉菜单栏，另外转发概览里那两个链接（见上）。 */
+    function onWindowClick(event: MouseEvent): void {
+        openMenu = null;
+        onOverviewLinkClick(event);
     }
 
     /** 概览「选项」（`overview.py:284-285` 的 `O`）。 */
@@ -1376,7 +1440,7 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     });
 </script>
 
-<svelte:window on:keydown={onKeydown} on:click={() => (openMenu = null)} />
+<svelte:window on:keydown={onKeydown} on:click={onWindowClick} />
 
 <div class="decks">
     <!-- 主窗口菜单栏（对照 Qt 主窗口的 `menuCol` / `menuEdit` / `menuTools` / `menuHelp`） -->
@@ -1454,31 +1518,63 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         <!-- 概览（Qt 的 Overview 页面） -->
         <div class="overview">
             <h3>{overview.name}</h3>
-            <table class="counts">
-                <thead>
-                    <tr>
-                        <th>{tr.actionsNew()}</th>
-                        <th>{tr.schedulingLearning()}</th>
-                        <th>{tr.studyingToReview()}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td class={overview.newCount === 0 ? "zero" : ""}>{overview.newCount}</td>
-                        <td class={overview.learnCount === 0 ? "zero" : ""}>{overview.learnCount}</td>
-                        <td class={overview.reviewCount === 0 ? "zero" : ""}>
-                            {overview.reviewCount}
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+            {#if overviewFinished}
+                <!-- 今天学完了：对照 `overview.py:190-209`，概览直接换成 Congratulations
+                     （上游是 `load_sveltekit_page("congrats")`；本外壳概览是同一页里的一块
+                     面板，所以在这里画同一份内容）。底部的选项/自定义学习/取消埋藏按钮
+                     保留 —— Qt 的概览底栏（`_renderBottom`）在学完时也还在 -->
+                <div class="congrats" id="congrats">
+                    <h1>{tr.schedulingCongratulationsFinished()}</h1>
+                    {#if nextLearnMsg}
+                        <p id="congrats-next-learn">{nextLearnMsg}</p>
+                    {/if}
+                    {#if overviewInfo?.reviewRemaining}
+                        <p id="congrats-review-limit">{tr.schedulingTodayReviewLimitReached()}</p>
+                    {/if}
+                    {#if overviewInfo?.newRemaining}
+                        <p id="congrats-new-limit">{tr.schedulingTodayNewLimitReached()}</p>
+                    {/if}
+                    {#if haveBuried}
+                        <p id="congrats-buried">{@html buriedMsg}</p>
+                    {/if}
+                    {#if !overviewFiltered}
+                        <p id="congrats-custom-study">{@html customStudyMsg}</p>
+                    {/if}
+                    {#if overviewDescription}
+                        <div class="description" id="congrats-description">
+                            {@html overviewDescription}
+                        </div>
+                    {/if}
+                </div>
+            {:else}
+                <table class="counts">
+                    <thead>
+                        <tr>
+                            <th>{tr.actionsNew()}</th>
+                            <th>{tr.schedulingLearning()}</th>
+                            <th>{tr.studyingToReview()}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class={overview.newCount === 0 ? "zero" : ""}>{overview.newCount}</td>
+                            <td class={overview.learnCount === 0 ? "zero" : ""}>{overview.learnCount}</td>
+                            <td class={overview.reviewCount === 0 ? "zero" : ""}>
+                                {overview.reviewCount}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            {/if}
             <div class="overview-buttons">
-                <button
-                    class="btn btn-primary"
-                    id="deck-study"
-                    disabled={busy}
-                    on:click={() => void study()}>{tr.studyingStudyNow()}</button
-                >
+                {#if !overviewFinished}
+                    <button
+                        class="btn btn-primary"
+                        id="deck-study"
+                        disabled={busy}
+                        on:click={() => void study()}>{tr.studyingStudyNow()}</button
+                    >
+                {/if}
                 <button
                     class="btn btn-secondary"
                     id="deck-options"
@@ -1530,9 +1626,10 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                     >{tr.actionsDecks()}</button
                 >
             </div>
-            {#if overviewDescription}
+            {#if overviewDescription && !overviewFinished}
                 <!-- 牌组描述（上游用 `stdHtml` 直接插 HTML；这里的 CSP 是不可信页面的
-                     那套：内联脚本/事件处理器都被 script-src 挡住） -->
+                     那套：内联脚本/事件处理器都被 script-src 挡住）。
+                     学完时描述画在上面的 Congratulations 块里（与 `/congrats` 页一致） -->
                 <div class="description" id="deck-description-text">
                     {@html overviewDescription}
                 </div>
@@ -2245,5 +2342,27 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
     .overview-buttons {
         display: flex;
         gap: 0.5rem;
+    }
+
+    /* 学完那一块（对照 `/congrats` 页的 CongratsPage.svelte 的样式） */
+    .congrats {
+        margin-bottom: 1rem;
+        max-width: 30em;
+    }
+
+    .congrats h1 {
+        font-size: 1.5rem;
+    }
+
+    /* `{@html}` 插进来的链接不带 Svelte 的作用域类，必须用 `:global`（与
+       `/congrats` 页的写法一致） */
+    .congrats :global(a) {
+        color: var(--fg-link, #0b5fff);
+        text-decoration: none;
+    }
+
+    .congrats .description {
+        border: 1px solid var(--border, #ddd);
+        padding: 1em;
     }
 </style>

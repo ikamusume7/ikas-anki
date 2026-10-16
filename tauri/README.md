@@ -710,6 +710,38 @@ Tauri 的 `eval` 没有返回值，所以由**桥接垫片**在 `pycmd("ans")` �
 第 2 半对着真外壳发桥接命令断言宿主守卫：问题面发 `ease3` 不把卡片答掉（日志
 `尚未显示答案`），`ans` 之后再发 `ease3` 才换下一张。
 
+### 答完队列的收尾（Congratulations）
+
+答完最后一张（或点「学习」时队列本来就是空的）时，对照 Qt 的
+`Reviewer.nextCard()` → `moveToState("overview")`（`reviewer.py:257-259`）与概览的
+`_show_finished_screen()`（`overview.py:190-209`）：
+
+- 宿主在 `reviewer::start()` 里**把会话清干净**（卡片、调度状态、计数、底栏）——不清的话
+  底栏还留着上一张卡的评分按钮，再按 `1`–`4` 会拿过期状态去评分（后端会以
+  `card was modified` 报错），然后导航到 `/decks/?deck=current`；
+- 概览面板在**没有可学卡片**时改画 Congratulations：「恭喜！…」标题、下次学习时间
+  （与 `/congrats` 页共用 `ts/routes/congrats/lib.ts` 的 `buildNextLearnMsg`）、
+  「今日复习上限已达」「今日新卡片上限已达」两句（`congratsInfo` 的
+  `reviewRemaining` / `newRemaining`，「还有卡片但被每日上限挡住」正是这两句要说的）、
+  埋藏卡片的「取消埋藏」链接、「自定义学习」提示与牌组描述；选项 / 自定义学习 /
+  取消埋藏按钮保留（Qt 的概览底栏在学完时也还在），只把「学习」按钮收起来。
+
+差异：Qt 在学完时是 `load_sveltekit_page("congrats")`，也就是整页换成 `/congrats`；
+本外壳的概览本来就是主窗口里的**一块面板**（见「牌组列表」），所以把同一份内容画在面板里
+—— `/congrats` 路由本身仍然没有打开路径（PARITY 1.6）。
+
+**撤销要按当前界面来**：`undo` 之后如果还在复习页就重新取队列渲染；已经被顶回概览/牌组
+列表（典型路径：菜单「设置到期日」把最后一张卡移到未来 → 队列空 → 自动回概览 → 再按
+`Ctrl+Z`）就只让那个页面重新加载 —— 否则宿主会往一个没有 `_showQuestion` 的页面上注入
+卡片，用户看到的"撤销"像是没反应（对照 Qt 的 `mw.undo()` → `col.undo()` → `mw.reset()`
+按当前状态刷新）。
+
+验证：`tauri/tools/congrats-check.mjs`（由 `verify-reviewer.ps1` 调用）—— 自己造一个
+「今天学完」的临时牌组（放一张卡片再埋藏它）→ 发真实的 `study` → 断言宿主「发现队列空
+→ 清会话 → 导航到概览」两条日志与最后一条导航地址 → Playwright 打开概览断言恭喜内容
+与「学习」按钮消失 → **真的点「取消埋藏」**，断言卡片回到队列、Congratulations 消失。
+同时留下真实窗口的截图 `out/reviewer-check/congrats.png`。
+
 ### 「更多」菜单（= 右键菜单）
 
 底部栏的「更多」按钮与卡片右键都会打开它，对照 Qt 的 `showContextMenu()`
@@ -867,6 +899,7 @@ Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第
 | 项 | Qt | 本外壳 |
 | --- | --- | --- |
 | 概览 | 独立页面（`moveToState("overview")`） | 同一页面的面板（`?deck=<id>`），少一次状态切换 |
+| 学完的概览 | 换成 `/congrats` 整页（`overview.py:208-209`） | 面板里画同一份内容（文案与拼装复用 `/congrats` 的模块），牌组列表与工具栏还在；见「答完队列的收尾（Congratulations）」 |
 | 概览底部按钮 | 选项 / 自定义学习 / 重建·清空（筛选牌组）/ 取消埋藏 / 描述（`overview.py:283-314`） | 都在：`O` 选项、`C` 自定义学习、筛选牌组显示 `R` 重建 / `E` 清空、有埋藏卡片时显示 `U` 取消埋藏、「描述」开编辑弹框；快捷键 `o/r/e/c/u` 也照 `overview.py:126-133` |
 | 牌组描述 | `DeckDescriptionDialog`（约 79 行）：markdown 勾选 + 纯文本框 | 同一个弹框思路（`Modal` + `textarea` + markdown 勾选），保存走 `updateDeck`；概览里按 `renderMarkdown` 渲染 |
 | 取消埋藏的三选一 | 两种埋藏都有时弹 `askUserDialog`（手动 / 计划 / 全部） | 同左（`#unbury-user` / `#unbury-sched` / `#unbury-all`），否则直接 ALL |
@@ -903,6 +936,9 @@ Python / Qt / Chromium 版本与贡献者名单；筛选牌组对话框没有第
 由 `custom-study-check.mjs` 覆盖（它先建出一个筛选牌组）。
 检查会临时建/删牌组，并还原当前牌组；失败留下的临时牌组用
 `tauri/tools/cleanup-test-decks.mjs` 清掉。
+
+「学完」的概览（恭喜内容 + 「取消埋藏」的实点）由 `congrats-check.mjs` 覆盖，
+它自己造一个「今天学完」的临时牌组，见「答完队列的收尾（Congratulations）」。
 
 ## 自定义学习（筛选牌组）
 
@@ -1596,7 +1632,7 @@ browserSearch：图表 → 浏览器搜索
 
 | 脚本 | 作用 |
 | --- | --- |
-| `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言 + 「更多」菜单 + 复习键盘。改完复习界面先跑它 |
+| `verify-reviewer.ps1` | 一键：启动外壳 → 必要时补一张卡片 → 截真实窗口 → 跑布局断言 + 「更多」菜单 + 复习键盘 + 答完队列的收尾。改完复习界面先跑它 |
 | `verify-m2.ps1` | 一键：验证 M2 的平台能力（剪贴板文件列表、TTS 合成、录音闭环）并检查多窗口的命令归属。**录音那项需要本机有输入设备**，没有时会以 `recordAudio → HTTP 500 找不到可用的录音设备` 失败（其余断言照常通过） |
 | `m2-check.mjs` | 上面那个脚本调用的实际检查（HTTP 层端到端断言）。注意：那条会一直挂着的 `recordAudio` 必须马上挂 `.catch()`、且收尾**不要** `abort()` —— 否则 node 会以 unhandled rejection 自杀并带出 libuv 的 `UV_HANDLE_CLOSING` 断言，看着像被测程序崩了 |
 | `verify-editor.ps1` | 一键：验证「编辑当前卡片」窗口（开窗 → 载入 note → 截图 → 关窗 → 保存链路 → 「字段…」/「卡片…」两个对话框） |
@@ -1624,6 +1660,7 @@ browserSearch：图表 → 浏览器搜索
 | `verify-profiles.ps1` | 一键：多 profile（`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs` → **真切换**：发 `profile:{"action":"switch"}` 后等重启出来的新进程日志 + 新 profile 的集合） |
 | `profiles-check.mjs` | 上面那个脚本调用的检查：列表 / 当前项标记 / 新建 / 非法名提示 / 重命名 / 删除（每步都用宿主的 `profile:` 命令复查 `prefs21.db` 行），收尾清理临时 profile |
 | `reviewer-keys-check.mjs` | `verify-reviewer.ps1` 调用的复习键盘检查：第 1 半加载 `assets/reviewer-keys.js` 按 **31 组真实按键**断言桥接命令（含焦点档、空格评分开关、输入框不抢键、未实现的键不发命令），第 2 半对真外壳断言「问题面不许评分」的宿主守卫 |
+| `congrats-check.mjs` | `verify-reviewer.ps1` 调用的答完队列收尾检查：自造「今天学完」的临时牌组 → `study` → 断言宿主清会话 + 回概览 → 页面画出 Congratulations（截图 `congrats.png`）→ 点「取消埋藏」后卡片回队列 |
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `visual-check.mjs` | 用 Playwright 复现宿主注入，输出 DOM 度量并做布局断言（定位布局问题用） |
 | `seed-card.mjs` | 通过 HTTP API 向测试集合写入一张卡片（可带自定义正反面） |
@@ -1660,8 +1697,9 @@ browserSearch：图表 → 浏览器搜索
     恒返回 4，2/3 个按钮是 v2 的遗留）。**时间盒整块没做**（没有 `timeboxReached`，也没有
     到点的「继续 / 结束」对话框），计时器本身也**没有任何自动断言**
     （`set-deck-timer.mjs` 不在任何 verify 脚本里，`visual-check.mjs` 把 maxTime 写死 0）。
-    答完队列后的收尾也不对：只注入一句硬编码中文「本队列已无待复习卡片。」，不会回概览、
-    也没有 Congratulations 页与「提前学习」按钮（PARITY 1.6）。
+    答完队列后的收尾**已实现**：队列空了清会话 + 回概览，概览改画 Congratulations
+    （下次学习时间、每日上限两句、取消埋藏链接、自定义学习提示），见「答完队列的收尾
+    （Congratulations）」。
   - ~~牌组列表~~ —— **已实现**（新写的 SvelteKit 页面，启动默认页）：牌组树与今日
     计数、折叠、点牌组 → 概览 → 学习、齿轮菜单（重命名 / 选项 / 导出 / 删除）、底部
     「获取共享牌组 / 创建牌组 / 导入文件」、`d`/`s` 快捷键与工具栏；概览面板还有描述
@@ -1734,11 +1772,10 @@ browserSearch：图表 → 浏览器搜索
   **安装器从未生成、没有签名、没有 `fileAssociations`**。
 - **`capabilities/` 目录不存在**：`tauri-build` 会引用它，当前不影响编译；因为前端不走
   IPC（没有 `#[tauri::command]` / `invoke`），**现在无害**，等引入 Tauri 插件时才需要补。
-- **首选项 / 主题 / 语言 / profile 这四块是缺口**：`Ctrl+P` 打开的只是 Labs 实验页
-  （PARITY 3.3 / 8.1）；夜间模式与 Qt 的 `standard_css` 动态样式没有注入（PARITY 8.3）；
-  界面语言固定 `en-US`、只认 `ANKI_LANG`（PARITY 8.4）；没有多 profile 管理与切换、
-  路径永远推断 `Anki2/User 1`（PARITY 8.2）。另有 addon 支持、文件关联、时间盒、
-  Congratulations 收尾等，逐项见 `tauri/PARITY.md` 第 2、6、8 节。
+- ~~**首选项 / 主题 / 语言 / profile 这四块是缺口**~~ → **2026-10-16 已补齐**：真首选项页面
+  （PARITY 3.3 / 8.1）、主题与 `standard_css` 注入（8.3）、界面语言（8.4）、多 profile
+  管理与切换（8.2）。另有 addon 支持、文件关联、时间盒等，逐项见 `tauri/PARITY.md`
+  第 2、6、8 节。
 - **Android 未验证**：路径解析里的 `user_data` 需要改为 `getFilesDir()`
   （`paths.rs` 里已留 TODO）。
 - **本工程是独立 workspace**：不参与 Anki 原有的构建与 CI，依赖树独立。

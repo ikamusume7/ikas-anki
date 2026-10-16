@@ -25,6 +25,7 @@ import fs from "node:fs";
 import { chromium } from "playwright";
 
 import { GetQueuedCardsRequest, QueuedCards } from "../../out/ts/lib/generated/anki/scheduler_pb.js";
+import { Card, CardId } from "../../out/ts/lib/generated/anki/cards_pb.js";
 
 const port = process.env.ANKI_API_PORT ?? "40001";
 const apiKey = process.env.ANKI_API_KEY ?? "test-key-123";
@@ -105,6 +106,17 @@ async function topCard() {
         await rpc("getQueuedCards", new GetQueuedCardsRequest({ fetchLimit: 1 }).toBinary()),
     );
     return queued.cards[0]?.card ?? null;
+}
+
+/**
+ * 卡片的复习次数（`Card.reps`）。
+ *
+ * 判断「有没有真的评过分」不能用"卡片离没离开队列顶端"：学习卡片评完之后
+ * 还在 learn-ahead 窗口里，会被 `getQueuedCards` 再取出来（同一张卡、`reps` 已 +1）。
+ */
+async function cardReps(cardId) {
+    const card = Card.fromBinary(await rpc("getCard", new CardId({ cid: cardId }).toBinary()));
+    return card.reps;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,44 +309,47 @@ try {
         check("ANKI_LOG 已设置", false, "第 2 半需要读外壳日志");
         throw new Error("缺少 ANKI_LOG");
     }
-    // 先让宿主重新取队列并渲染问题面（保证当前是「还没显示答案」的状态）
+    // 先让宿主回到复习页并渲染问题面（保证当前是「还没显示答案」的状态）。
+    // 用 `study` 而不是 `domDone`：前面的检查可能已经把队列清空过一次、主窗口
+    // 停在概览上（那种情况下 `domDone` 会被忽略，`reviewer_active` 是 false）
     const renders = countLog("渲染完成");
-    await bridge("domDone");
-    check("宿主重新渲染了问题面", await waitLogAbove("渲染完成", renders), logPath);
+    await bridge("study");
+    check("发 study 后宿主渲染了问题面", await waitLogAbove("渲染完成", renders), logPath);
 
     const before = await topCard();
     if (!before) {
         check("队列里有卡片", false, "队列为空，无法测试评分守卫");
         throw new Error("队列为空");
     }
+    const repsBefore = await cardReps(before.id);
 
     // 问题面发 ease3：宿主必须挡住（对照 `_answerCard()` 的 `self.state != "answer"`）
     await bridge("ease3");
     await sleep(1200);
-    const afterPremature = await topCard();
     check(
         "问题面发 ease3 没有把卡片答掉",
-        afterPremature?.id === before.id,
-        `卡片 ${before.id} → ${afterPremature?.id ?? "（队列空）"}`,
+        (await cardReps(before.id)) === repsBefore,
+        `reps ${repsBefore} → ${await cardReps(before.id)}`,
     );
     check("宿主日志记录了这次忽略", readLog().includes("尚未显示答案"));
 
-    // 答案面：`ans` 之后 `ease3` 应当评分并换下一张
+    // 答案面：`ans` 之后 `ease3` 应当评分（`reps` +1）并重新取队列
     const buttonLogs = countLog("评分按钮");
     await bridge("ans");
     check("显示答案后画出了评分按钮", await waitLogAbove("评分按钮", buttonLogs), logPath);
+    const queueLogs = countLog("队列: 共");
     await bridge("ease3");
-    // 等队列顶端真的换掉（轮询 RPC，比等日志更直接）
-    let after = await topCard();
-    const deadline = Date.now() + 10000;
-    while (after?.id === before.id && Date.now() < deadline) {
+    let repsAfter = await cardReps(before.id);
+    const repsDeadline = Date.now() + 10000;
+    while (repsAfter === repsBefore && Date.now() < repsDeadline) {
         await sleep(300);
-        after = await topCard();
+        repsAfter = await cardReps(before.id);
     }
+    check("评分后卡片的复习次数 +1", repsAfter === repsBefore + 1, `reps ${repsBefore} → ${repsAfter}`);
     check(
-        "评分后卡片离开了队列顶端",
-        after?.id !== before.id,
-        `卡片 ${before.id} → ${after?.id ?? "（队列空）"}`,
+        "评分后宿主重新取了队列（进入下一张）",
+        await waitLogAbove("队列: 共", queueLogs, 10000),
+        logPath,
     );
 } catch (error) {
     check("宿主守卫检查", false, String(error));
