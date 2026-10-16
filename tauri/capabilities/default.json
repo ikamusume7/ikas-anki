@@ -1,0 +1,7 @@
+{
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "default",
+    "description": "外壳不使用 IPC（没有 #[tauri::command] / invoke），所以这里不授予任何权限；窗口与生成的 schema 都列出来，方便以后加插件时只改这一个文件。",
+    "windows": ["*"],
+    "permissions": []
+}

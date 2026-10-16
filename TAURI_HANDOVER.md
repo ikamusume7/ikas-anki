@@ -1133,6 +1133,15 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    （导入时得 `import { String as GenericString }`），Rust 侧那边的别名才是
    `GenericString`。
 
+### 5.46 capabilities 与图标：图标换成上游安装包那份；权限一个都不给
+
+- `tauri/icons/icon.ico` 以前是 `qt/aqt/data/web/imgs/favicon.ico` 的副本（**只有 32×32**，PARITY 7.4
+  记的就是这条）。现在换成上游安装包自带的 `qt/installer/app/resources/anki.ico`
+  （16/20/24/32/48/128/256 七个尺寸）+ 同源 `icon.png`（176×176），都列进 `bundle.icon`。
+  校验方式：`PIL.Image.open(...).ico.sizes()` 读回尺寸、与 favicon 比 sha256。
+- `tauri/capabilities/default.json`：`windows: ["*"]` + **`permissions: []`**（外壳不用 IPC，不给
+  任何权限）。`cargo build` 会把它写进 `tauri/gen/schemas/capabilities.json`（之前在仓库里是
+  2 字节的 `[]`）—— 这是**不需要 tauri-cli** 就能验证的：构建一次，看那个文件从 `[]` 变成完整对象。
 ### 5.45 命令行带文件启动：与拖入同一个入口；`quote()` 把反斜杠也编码
 
 `main.rs` 的 `cli_file_paths()` 只收"存在且是文件"的参数（Tauri/WebView2 自己会塞 `-` 开头的

@@ -20,7 +20,7 @@
 核对当次跑通的回归：`eslint --max-warnings=0`（0）、`svelte-check`（0 errors / 0 warnings）、
 `verify-decks.ps1`、`verify-reviewer.ps1`、`verify-browser.ps1`（**单独跑**均通过）。
 
-**结论：第 1–7 节的 44 项里 ✅ 6 / ⚠️ 32 / ❌ 5**（首次核查时是 ✅ 3 / ⚠️ 33 / ❌ 8；
+**结论：第 1–7 节的 44 项里 ✅ 7 / ⚠️ 31 / ❌ 5**（首次核查时是 ✅ 3 / ⚠️ 33 / ❌ 8；
 2026-10-16 先补了 3.3「偏好设置」→ ⚠️，接着「数据安全三项」把 5.9 从 ❌ 做到 ✅，
 再往后 §10 第 2 项与第 4 项把 2.4 从 ❌ 做到 ✅、2.3 与 2.2 做到 ✅）。
 第 8 节那 12 项现在 **⚠️ 7 / ❌ 5**（8.2 多 profile、8.3 夜间模式、
@@ -130,7 +130,7 @@ addon、文件关联、录音格式为零。
 | 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做实并验证**：`package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致，实测 exe 43.9MB、web 25 文件、sveltekit 151 文件），`tauri.conf.json` 的 `bundle.fileAssociations` 已补（apkg/colpkg/ankiaddon，见 6.7）；`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`；`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标 + currentUser 安装）也写好了。**还差**：① 安装器**从未生成过**（本机没有 `cargo-tauri`/`@tauri-apps/cli`/NSIS/WiX）；② 无代码签名；③ **没有 `bundle.fileAssociations`** → 即使装了安装包，"双击 .apkg" 仍不成立；④ 元数据不全（FileVersion 0.1.0、无 LegalCopyright/publisher/category）；⑤ **网络其实是通的**（实测 crates.io / api.github.com 都 200），卡的是工具链未安装与首次下载。详见 `tauri/PACKAGING.md` |
 | 7.2 | ❌ | Android | 零行 Android 代码：没有 `tauri/gen/android/`、没有 `lib.rs`/`mobile_entry_point`，非 Windows 的路径推断走 `$HOME`（不是应用私有目录）。需要：`tauri android init`、四个 rustup android target、SAF 版导入导出、录音（oboe vs MediaRecorder）、`getFilesDir()`、localhost 明文 HTTP 放行；**必须真机/模拟器**。本机 SDK + NDK 28.2 + JDK 已就位，缺 rustup target（联网）、Tauri CLI、Gradle 发行包 |
 | 7.3 | ⚠️ | 构建流程 | 静态资源本来有官方路径（`just build` → `out/sveltekit` + `qt/_aqt/data/web`，正是 `package.ps1` 用的两处），但 ~~**`justfile` 里没有任何 tauri 配方，CI 里也没有外壳的 `cargo check/build`**~~ → **2026-10-16 已补**：`tauri/justfile`（`check`/`check-quick`/`test`/`build`/`web`/`verify <name>`/`verify-all`/`package`）、`tauri/tools/check-all.ps1`（本地门禁一条命令：cargo build/test/clippy + yarn build + eslint + svelte-check，`-RunVerify` 追加全部一键脚本）、`.github/workflows/tauri.yml`（windows-2022 上跑同一个脚本，`paths` 只认 `tauri/ts/rslib/proto`）。**本机实测**：`check-all.ps1` 全绿（6/6，退出码 0）；workflow 的 YAML 解析通过、两个 action 的 SHA 与仓库现有 workflow 一致。本机实测：`just --list` 列出 9 个配方、`just check-quick` **真的跑通**（4 项全绿，退出码 0；`just` 由 `cargo install just` 装上）。**环境限制**：Actions 没法在这里触发（没有 Windows runner），所以 workflow 本身只做了静态审查（YAML 解析 + action SHA 对齐）。缺 `just tauri-build / tauri-run / tauri-package / tauri-verify` 与 descriptors → web/sveltekit → cargo build 的依赖链 |
-| 7.4 | ⚠️ | `capabilities/` 与图标 | `tauri/capabilities/` 不存在、`gen/schemas/capabilities.json` 是空数组，但前端不经 IPC（没有 `#[tauri::command]`/`invoke`），**现在无害**，加插件时才需要。图标是真问题：`tauri/icons/icon.ico` 与 `qt/aqt/data/web/imgs/favicon.ico` 逐字节相同，且只有 1 帧 32×32；上游真图标 `qt/installer/app/resources/anki.ico` 有 7 帧。另缺 `.icns`/`.png`（Android/macOS 无图标可用） |
+| 7.4 | ⚠️ | `capabilities/` 与图标 | ~~`tauri/capabilities/` 不存在、`gen/schemas/capabilities.json` 是空数组~~ → **已补** `tauri/capabilities/default.json`（`windows: ["*"]`、**`permissions: []`** —— 外壳不用 IPC，所以一个权限都不授予；以后加插件只改这一个文件），`cargo build` 后 `tauri/gen/schemas/capabilities.json` 从 `[]` 变成完整的 capability 对象（实测）。~~图标是真问题~~ → **图标也换了**：`tauri/icons/icon.ico` 现在是上游安装包自带的那份应用图标（`qt/installer/app/resources/anki.ico`，**7 个尺寸**：16/20/24/32/48/128/256），另加同源的 `icon.png`（176×176）并一起写进 `bundle.icon`；与 `qt/aqt/data/web/imgs/favicon.ico`（只有 32×32）不再相同（sha256 不同，实测），且只有 1 帧 32×32；上游真图标 `qt/installer/app/resources/anki.ico` 有 7 帧。另缺 `.icns`/`.png`（Android/macOS 无图标可用） |
 
 ---
 

@@ -159,6 +159,15 @@ cargo build
 .\target\debug\anki-tauri.exe
 ```
 
+### 4.5 图标与 capabilities（PARITY 7.4）
+
+- **图标**：`tauri/icons/icon.ico` 用上游安装包自带的应用图标（`qt/installer/app/resources/anki.ico`，
+  16/20/24/32/48/128/256 七个尺寸），另有同源的 `icon.png`（176×176）；两者都写在
+  `bundle.icon` 里。之前那份是 `qt/aqt/data/web/imgs/favicon.ico`（只有 32×32）。
+- **capabilities**：`tauri/capabilities/default.json` 声明了窗口（`["*"]`）但**不授予任何权限**
+  （`permissions: []`）—— 外壳不使用 IPC（没有 `#[tauri::command]`/`invoke`）。`cargo build` 会
+  把它编进 `tauri/gen/schemas/capabilities.json`（原来是空数组 `[]`）。以后加插件时，权限只改
+  这一个文件。
 ### 5. 本地门禁与 CI（PARITY 7.3）
 
 一条命令跑完所有不需要图形界面的门禁（`cargo build/test/clippy` + `yarn build` +
