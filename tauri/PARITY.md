@@ -11,31 +11,50 @@
 
 ---
 
+## 0. 本次核查（2026-10-16）
+
+方法：**逐条读代码与验证脚本**核实（`ts/routes/**`、`tauri/src/**`、`tauri/tools/**`
+对照上游 `qt/aqt/**`），**不采信旧标记**。上一版有 10 处状态与代码不符，已在下表更正；
+清单没覆盖到的缺口新增为第 8 节。
+
+核对当次跑通的回归：`eslint --max-warnings=0`（0）、`svelte-check`（0 errors / 0 warnings）、
+`verify-decks.ps1`、`verify-reviewer.ps1`、`verify-browser.ps1`（**单独跑**均通过）。
+
+**结论：第 1–7 节的 44 项里 ✅ 3 / ⚠️ 33 / ❌ 8**（上一版标的是 ✅ 5 / ⚠️ 31 / ❌ 7）。
+另外第 8 节列了 12 项清单完全没覆盖的用户可见缺口。
+
+**回归脚本不是顺序无关的**：三个 `verify-*.ps1` 共用 `out/tauri-test/collection.anki2`，
+`verify-decks` 的「还原备份」会替换集合并留下失效的当前牌组，紧接着跑 `verify-browser`
+就会首屏 0 结果、5 个开窗断言全挂（单独跑通过）。**跑回归要一个一个来**，见 §9。
+
+---
+
 ## 1. 启动与主窗口（第一印象）
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 1.1 | ⚠️ | **牌组列表主界面** | 已新写 `ts/routes/decks/`（启动默认页）：今日计数、折叠/展开、点牌组 → 概览 → 学习（概览面板里还有**牌组描述**（可编辑 + markdown 渲染）、选项、自定义学习、筛选牌组的**重建/清空**、**取消埋藏**，快捷键 `o`/`r`/`e`/`c`/`u` 照 `overview.py:126-133`）、齿轮菜单（重命名/选项/**导出**/删除）、**拖拽移动牌组**（拖到另一行 → 变成它的子牌组，拖到顶部那条 → 回顶层；`reparentDecks`）、底部三按钮、今日学习行。**差**：默认牌组的删除保护（本外壳禁用删除，上游删掉会重建）、概览计数的「埋藏差值」那一列、同层内的手动排序（上游其实也没有，顺序由后端按名字排） | `qt/aqt/deckbrowser.py` + `overview.py` |
-| 1.2 | ⚠️ | 菜单栏 + 工具栏 | **菜单栏有了**（牌组列表页顶部，对照 `main.ui` 的 File/Edit/View/Tools/Help）：文件=导入/导出/创建备份/退出、编辑=撤销/重做、**视图=全屏/放大/缩小/重置缩放**、工具=**学习牌组**/**创建筛选牌组**/检查数据库/检查媒体/空卡片/管理笔记类型/首选项、帮助=用户手册/支持 Anki/**关于（版本信息）**，快捷键 `Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`F11`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`/`F`；**工具栏**两页都有了（牌组/添加/浏览/统计 + 快捷键提示）。**差**：菜单栏只在牌组列表页（复习界面是 legacy 页，仍是顶部工具栏），缺 Switch Profile / 检查更新 / add-ons / 同步链接（含状态色/旋转图标）；「关于」没有 Python/Qt/Chromium 版本与贡献者名单 | `qt/aqt/toolbar.py:353-418`、`qt/aqt/forms/main.ui`、`qt/aqt/main.py:1425-1470` |
-| 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，也没有 `showMessage` 调用 —— 同步状态在工具栏的同步链接上、计数在复习界面底部栏上（两者我们都已复刻，同步除外）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui`、`qt/aqt/toolbar.py:421-430` |
-| 1.4 | ⚠️ | 主窗口快捷键 | 已接 `u`/`a`/`b`/`t`/`d`/`s`/`Ctrl+P`/`Ctrl+E`（导出）/`Ctrl+Z`/`Ctrl+Shift+Z`/`F11`（全屏）/`Ctrl++`/`Ctrl+-`/`Ctrl+0`（缩放）；**差** `y`（同步）、`Ctrl+:`（调试控制台） | `qt/aqt/main.py:1189-1198` |
-| 1.5 | ✅ | 启动行为 | **自动备份已做**（PARITY 6.2）：启动时尝试一次 + 之后每 5 分钟一次，都是 `force=False`、由后端按 `BackupLimits` 节流（启动那一次是替代 Qt 的"关闭时备份"，因为外壳没有优雅关闭的保证）；**打开上次的牌组**本来就一致（主窗口启动在牌组列表、当前牌组高亮）；**检查数据库 / 检查媒体 / 空卡片**有菜单入口（工具菜单，6.3）；**还原备份**也能用了（6.2） | `qt/aqt/main.py:setupProfile`、`_backup` |
-| 1.6 | ⚠️ | 每日学习流程 | 复习完的「Congratulations」页面由复习页面自己渲染（`congratsInfo` 已接入）；但"明天再来"的等待时间/提前学习按钮要与 Qt 对齐核对 | `qt/aqt/reviewer.py:930-992` |
+| 1.1 | ⚠️ | **牌组列表主界面** | 已有 `ts/routes/decks/`（启动默认页）：今日计数、折叠/展开、Shift 选牌组、点牌组 → 概览 → 学习、概览里的**牌组描述**（可编辑 + markdown）、选项、自定义学习、筛选牌组重建/清空、**取消埋藏**、齿轮菜单（重命名/选项/导出/删除）、**拖拽移动牌组**、底部三按钮、今日学习行。**还差**：概览计数取的是到期树，Qt 用 `sched.counts()` 并单列「埋藏差值 ±N」（有埋藏时概览数字大于实际可学，无提示）；没有 v1→v3 调度器升级提示条；概览缺「Reviews and Updates」共享来源链接；齿轮/文件导出的建议文件名用**叶子名**（子牌组导出文件名与 Qt 不同）；点整行任意处即进概览（Qt 只在点牌组名时进）；默认牌组的删除被禁用；今日学习行无任何断言 | `qt/aqt/deckbrowser.py` + `overview.py` |
+| 1.2 | ⚠️ | 菜单栏 + 工具栏 | 菜单栏有了（牌组列表页顶部，File/Edit/View/Tools/Help）：文件=导入/导出/创建备份/**还原备份**/退出、编辑=撤销/重做、视图=全屏/三档缩放、工具=学习牌组/创建筛选牌组/检查数据库/检查媒体/空卡片/管理笔记类型/首选项、帮助=用户手册/支持 Anki/关于；快捷键 `Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`F11`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`/`F`。工具栏两页都有（牌组/添加/浏览/统计/同步）。**还差**：**复习界面整条菜单栏没有**（复习中拿不到 导入/导出/备份/还原/检查数据库/管理笔记类型）；缺 Switch Profile(`Ctrl+Shift+P`)/Add-ons(`Ctrl+Shift+A`)/检查更新；同步链接只有文字，没有 Qt 的状态色与旋转图标；「关于」缺 logo/网站/复制调试信息/Python&Qt&Chromium 版本/贡献者名单；「学习牌组」不列筛选牌组（注释却写"筛选牌组也在内"）、无 `Ctrl+N`/上下键/`Ctrl+1..9`/回车提交；菜单不响应 `Ctrl+Q`/`Ctrl+Shift+I`/`/`/`F1` | `qt/aqt/toolbar.py:353-418`、`qt/aqt/forms/main.ui`、`qt/aqt/main.py:1425-1470` |
+| 1.3 | ✅ | ~~底部状态栏~~ | **Qt v3 其实没有状态栏**：`forms/main.ui` 里没有 QStatusBar，`qt/aqt` 里也没有 `showMessage` 调用（`profiles.ui` 那个 statusbar 在 `main.py:336` 被设为不可见）。本项按"已对齐"处理 | `qt/aqt/forms/main.ui` |
+| 1.4 | ⚠️ | 主窗口快捷键 | 牌组列表页已接 `a`/`b`/`t`/`s`/`c`/`o`/`r`/`e`/`u`/`y`(同步)/`F`(筛选牌组)/`F11`/`Ctrl+E`/`Ctrl+Z`/`Ctrl+Shift+Z`/`Ctrl+P`/`Ctrl++`/`Ctrl+-`/`Ctrl+0`；复习页只接了 `u`/`a`/`b`/`t`/`d`/`s`/`Ctrl+Z`/`Ctrl+P`。**还差**：牌组列表缺 `d`（概览里按 d 回不到列表）、`Ctrl+Shift+I`、`/`、`Ctrl+Shift+N`、`Ctrl+Shift+A`、`Ctrl+Q`；复习页缺 `y`、`F11`、`Ctrl+E`、`Ctrl+Shift+Z`、缩放三键；两页都没有 `Ctrl+:`（调试控制台）。**验证只覆盖了 F11/Ctrl+E/`f` 三个真实按键**，其余是桥接命令或点击级断言 | `qt/aqt/main.py:1189-1198` |
+| 1.5 | ⚠️ | 启动行为 | 启动即牌组列表；**自动备份**（启动一次 + 每 5 分钟，`force=False`，`verify-decks.ps1` 断言产物是 >1KB 的 `.colpkg`）；启动自动同步线程；检查数据库/媒体/空卡片有入口；**还原备份**能用（6.2）。**还差**：**界面语言固定 `en-US`**（只认 `ANKI_LANG`，见 8.4）→ 中文用户第一眼就是英文；**主窗口几何不恢复**（固定 1200×820，`windows.rs` 的几何记忆只管 `windows::open` 开的窗口）；**没有 profile 选择**（永远 `Anki2/User 1`，见 8.2）；缺「检查更新」 | `qt/aqt/main.py:setupProfile`、`_backup` |
+| 1.6 | ⚠️ | 每日学习流程 | 空队列时**只在复习页注入一句硬编码中文**「本队列已无待复习卡片。」（英文界面也是中文），`/congrats` 路由没有任何打开路径，`congratsInfo` 只被概览面板用来判断埋藏。**Congratulations 环 = ❌**。还差：答完最后一张不 `moveToState("overview")`、不渲染 congrats（下次到期时间 / 提前学习按钮都没有）、概览面板永不显示；时间盒到点的「继续/结束」对话框（见 2.6）；非 v3 调度器时回牌组列表 + 警告 | `qt/aqt/reviewer.py:257-259`、`qt/aqt/overview.py:190-209` |
 
-验收：启动外壳 → 截图与真 Anki 打开时的首屏逐项对比；快捷键表逐条按一遍。
+验收：启动外壳 → 截图与真 Anki 打开时的首屏逐项对比；快捷键表逐条按一遍（现在只能脚本级核对）。
 
 ## 2. 复习会话
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 2.1 | ✅ | **「更多」菜单 / 右键菜单** | 已补：13 项 + 旗标子菜单（埋藏/暂停的卡片与笔记、重置…、设置到期日…、选项、卡片信息、标记笔记、创建副本…、删除笔记）；差的三项见 2.2-2.4 | `qt/aqt/reviewer.py:998-1056`（`_contextMenu`）+ `_linkHandler` 的 `more` |
-| 2.2 | ⚠️ | 卡片信息 / 上一张卡片信息 | 卡片信息窗口已有（浏览器与复习都要能开）；**上一张卡片信息**需要维护"看过的卡片"历史 | `qt/aqt/reviewer.py:1093-1097` |
-| 2.3 | ⚠️ | 音频操作 | 队列播放、自动播放已对齐；缺**重播 / 暂停 / 前进后退 5 秒 / 录音（Shift+V）/ 重播录音（V）** 这些菜单项与快捷键 | `qt/aqt/reviewer.py:1043-1048`、`qt/aqt/sound.py` |
-| 2.4 | ❌ | 自动前进 | Anki 的「自动前进」（`Shift+A`，答完题 N 秒后自动显示答案）没有 | `qt/aqt/reviewer.py:1049-1054`、`profile` 的 `autoAdvance`/`autoAdvanceDelay` |
-| 2.5 | ❌ | `current_caller` | TTS/音频的「谁在播」语义（编辑器播放时打断复习界面音频）没有区分 | `TAURI_HANDOVER.md` §7.2 |
-| 2.6 | ⚠️ | 时间盒 / 计时器 | 计时器与"下次间隔"已对齐；时间盒到点的提示对话框（继续 / 结束）要与 Qt 核对 | `qt/aqt/reviewer.py:975-992` |
+| 2.1 | ⚠️ | **「更多」菜单 / 右键菜单** | 已有 **11 项 + 旗标子菜单**（不是文档原先写的 13 项）：埋藏/暂停的卡片与笔记、重置…、设置到期日…、选项、卡片信息、标记笔记、创建副本…、删除笔记 + 旗标 1-7。UI 与宿主动作都有真断言（菜单渲染/勾选态/子菜单悬停/`rev:flag:1`/表单 URL 编码/`rev:mark`/`rev:due`+undo）。**还差 8 项**（对照 Qt 的 19 项）：上一张卡片信息 `Ctrl+Alt+I`、重播音频 `R`、暂停音频 `5`、`-5` 秒 `6`、`+5` 秒 `7`、录音 `Shift+V`、重播录音 `V`、自动前进 `Shift+A`（带勾选态）；旗标名写死 ftl 默认值，不读集合配置 `flagLabels`；真实菜单的项数/文案只有截图，无断言 | `qt/aqt/reviewer.py:998-1056`（`_contextMenu`） |
+| 2.2 | ⚠️ | 卡片信息 / 上一张卡片信息 | 卡片信息窗口两处入口都有断言（复习菜单 `rev:cardInfo`、浏览器菜单 `cardInfo:<cid>`，都断言开窗）。**「上一张卡片信息」完全不存在**：`reviewer.rs` 的 Session 没有"看过的卡片"历史，菜单里也没这一项 | `qt/aqt/reviewer.py:1093-1097` |
+| 2.3 | ⚠️ | 音频操作 | 队列播放/自动播放已实现（TTS 合成成 WAV 再入队、`extractAvTags` 有断言）。**还差**：卡面**不画播放按钮**（宿主从不把 `extractAvTags` 结果写回显示文本，也没有 `play:q:N`），卡上的 `[sound:x.mp3]` / `[anki:tts …]` **原样显示、点不了**；**答案面会把问题面音频再播一遍**（`partial_render:false` 让 FrontSide 的 `[sound:]` 留在答案 HTML 里），所以 `replayq` 无效、日志多一次「播放音频」；重播/暂停/前进后退 5 秒/录音 `Shift+V`/重播录音 `V` 全无（`Command` 只有 `Play`，没有 pause/seek） | `qt/aqt/reviewer.py:1043-1048`、`qt/aqt/sound.py:906-932` |
+| 2.4 | ❌ | 自动前进 | 没有：`autoAdvance` / `secondsToShowQuestion` / `secondsToShowAnswer` / `questionAction` / `answerAction` / `waitForAudio` 在 `tauri/src` 里 0 引用（只有 rslib 的牌组配置定义）。缺 `Shift+A`、目标牌组秒数与动作、`waitForAudio`、焦点不在窗口时自动失效、tooltip | `qt/aqt/reviewer.py:408-527,1049-1054` |
+| 2.5 | ❌ | `current_caller` | 音频队列只有「播放」，没有 caller 概念，也没有 `stop_and_clear_queue_if_caller` 的等价物。影响：编辑器关窗不会停掉自己发起的播放、播放来源不可区分（纯鼠标用户感知较弱） | `qt/aqt/sound.py:171-173`、`qt/aqt/editor.py:479` |
+| 2.6 | ⚠️ | 计时器 / 时间盒 | 计时器与"下次间隔"已接（`show_timer` → `maxTime`、答后停表），但**无任何自动断言**（`set-deck-timer.mjs` 不被任何脚本调用，`visual-check.mjs` 把 maxTime 写死 0）。**时间盒整块不存在 = ❌**：没有 `timeboxReached`/`startTimebox`，没有「N 分钟学习了 M 张：继续 / 结束」对话框 | `qt/aqt/reviewer.py:975-992`、`qt/aqt/overview.py:98` |
 
-验收：`tauri/tools/verify-reviewer.ps1` 里逐项断言；菜单项逐条点一遍并检查集合状态。
+验收：`tauri/tools/verify-reviewer.ps1` 逐项断言；菜单项逐条点一遍并检查集合状态。
+**注意**：`visual-check.mjs` 里的底栏 HTML 是手抄副本，会与 `reviewer.rs` 漂移。
 
 ## 3. 既有页面 / 窗口的接入（成本最低的一类）
 
@@ -43,24 +62,25 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 3.1 | ⚠️ | **牌组选项** | 已能开（复习界面「更多」→「选项」）；还差**牌组列表上的 Options 入口**（等 1.1） | `qt/aqt/deckoptions.py`、`ts/routes/deck-options/[...deckId]` |
-| 3.2 | ⚠️ | **统计图** | 已能开（主窗口 `t` / `Shift+t`，见「复习界面」）；差**按当前牌组打开**（Qt 传 `_selectedDeck()`，这里是整个集合，页面里可换）与工具栏入口 | `qt/aqt/stats.py`、`main.py:1331` |
-| 3.3 | ⚠️ | **偏好设置** | 已能开（主窗口 `Ctrl+P`）；Qt 的对话框底部有 Close 按钮，这里用窗口的 ×（页面自己没有关闭按钮） | `qt/aqt/preferences.py`、`main.py:1459` |
-| 3.4 | ⚠️ | **导入** | **三条入口都通**（对照 Qt）：牌组列表底部「导入文件」（`pycmd("import")` → `importing::prompt_and_import`）、主窗口拖入文件（`WindowEvent::DragDrop` → `importing::on_drop`，`main.py:112-137`，存在的文件才收、`.colpkg` 排除、一次只导一个）、以及 `ANKI_OPEN_PATH` 顶掉对话框后的选文件路径。宿主先弹**原生文件对话框**（`importing.py:153-163`），再按扩展名挑页面：`.apkg`/`.zip` → `import-anki-package/<百分号编码的路径>`（`import_dialog.py:68`）、`.csv`/`.tsv`/`.txt` → `import-csv/<…>`、其他 → 弹 `importing-unable-to-import-filename`。端到端验证在 `verify-decks.ps1`（`import-check.mjs` 造 `.apkg` 夹具 → 页面导入 → RPC 复查）。**差**：整体替换集合（`.colpkg`、`collection.apkg`、`backup-*.apkg`）与 Mnemosyne `.db` 只提示不支持；`.apkg` 双击打开见 6.7 | `qt/aqt/import_export/importing.py`、`qt/aqt/deckbrowser.py:399`、`qt/aqt/main.py:112-137` |
-| 3.5 | ⚠️ | **图像遮挡** | 已核对并验证：**这个版本没有独立的遮挡窗口**，「遮挡」按钮只是把编辑器页面里的 `ImageOcclusionPage`（掩码编辑器）切出来；「选图片」走宿主的 `/openFilePicker`。`tools/occlusion-check.mjs` 覆盖了「按钮出现 → 图片选择器 → 拷进媒体夹 → 掩码编辑器渲染出图片」。**没覆盖**：画遮罩并保存成遮挡笔记 | `ts/routes/editor/NoteEditor.svelte:795-815`、`ts/routes/image-occlusion/` |
-| 3.6 | ⚠️ | **自定义学习 / 筛选牌组** | **自定义学习已实现**：概览里的「自定义学习」（快捷键 `C`）→ 新写的 `ts/routes/custom-study/`（六个选项 + cram 的四选一 + 标签包含/排除，走 `CustomStudy` RPC，验证见 `tools/custom-study-check.mjs`）。**筛选牌组编辑器也有了**：工具 → 创建筛选牌组（快捷键 `F`）→ 名字 / 搜索 / 顺序（`filteredDeckOrderLabels`）/ 限量 / 重排 / 即使为空也创建 → `addOrUpdateFilteredDeck`。**差**：`TagLimit` 标签选择对话框（这里是两个文本框）、筛选牌组对话框的第二个筛选条件 / 预览间隔（again·hard·good 秒数）/ 「搜索」按钮（浏览器的搜索编辑器）/ FSRS 专用排序 | `qt/aqt/customstudy.py`、`qt/aqt/filtered_deck.py`、`qt/aqt/overview.py:284-292` |
+| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② **× 关窗丢改动**：Qt 会 `evt.ignore()` + 问 `anki.deckOptionsPendingChanges()`，这里只拦「添加卡片」的关闭，改完点 × 直接丢、没有确认；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
+| 3.2 | ⚠️ | **统计图** | 入口两处都有（牌组列表工具栏「统计」、复习页 `t`/`Shift+t`），页面 `graphs/` 默认 `initialSearch="deck:current"`（等于 Qt 的 `_selectedDeck()`，**按当前牌组打开已经成立**）。**还差**：① Qt 的 NewDeckStats 顶部有**牌组下拉**（换牌组 = 设当前牌组 + 刷新），这里换牌组只能靠页面里的「牌组/集合/自定义搜索」；② 没有 **Save PDF**（Qt 是原生按钮 + `printToPdf`）；③ 窗口标题用 `qt-misc-stats`（「统计」），Qt 用 `statistics-title`（「统计数据」）；④ 没有"请先选一个牌组"的兜底 | `qt/aqt/stats.py:52-66,95-123`、`forms/stats.ui:14` |
+| 3.3 | ❌ | **偏好设置** | **Ctrl+P 打开的其实只是 Labs 实验页**（`ts/routes/preferences/` 只有一个 `LabItem` 开关），Qt 那个 8 分页对话框（Appearance/Review/Editing/Network/Backups/Third-party services + Labs）整块没迁 → 改不了界面语言、主题/夜间、复习上限与时间盒、下一日时间、自动备份、网络与自定义同步服务器、自定义答案键。**还差**：真首选项界面（见 8.1）、对话框底部的 Close 与 Help 入口 | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
+| 3.4 | ⚠️ | **导入** | 三条入口都通（牌组列表底部「导入文件」、主窗口拖入、`ANKI_OPEN_PATH` 顶掉对话框），扩展名分流正确，`.apkg` 有端到端断言（造夹具 → 页面导入 → RPC 复查牌组与笔记回来 → `importDone`）。**还差**：`.csv/.tsv/.txt` → `import-csv` 只有单测，没有页面级/落库断言；「拖到主窗口导入」只有 `drop_path` 单测，没有合成 `DragDropEvent` 的端到端；`.colpkg`/`collection.apkg`/`backup-*.apkg` 与 Mnemosyne `.db` 仍只提示不支持（见 6.7） | `qt/aqt/import_export/importing.py`、`qt/aqt/main.py:112-137` |
+| 3.5 | ⚠️ | **图像遮挡** | 已核对：这个版本没有独立的遮挡窗口，「遮挡」按钮只是把编辑器里的 `ImageOcclusionPage` 切出来；「选图片」走宿主 `/openFilePicker`。断言覆盖「按钮出现 → 图片选择器 → 拷进媒体夹 → 掩码编辑器渲染出图片」。**没覆盖**：画遮罩并保存成遮挡笔记 | `ts/routes/editor/NoteEditor.svelte`、`ts/routes/image-occlusion/` |
+| 3.6 | ⚠️ | **自定义学习 / 筛选牌组** | 自定义学习已实现（六个选项 + cram 四选一 + 标签包含/排除，走 `CustomStudy` RPC，有端到端断言）；筛选牌组编辑器也有（名字/搜索/顺序/限量/重排/即使为空也创建 → `addOrUpdateFilteredDeck`，有断言）。**还差**：第二筛选条件（`search_2`/`order_2`/`limit_2`）、预览间隔三个数字框、每个筛选条件旁的「搜索」按钮、hint 按钮；**FSRS 专用排序被无条件过滤**（Qt 在开着 FSRS 时要显示）；**编辑已有筛选牌组做不到**（唯一入口就是 3.1 那个会报错的「选项」）；TagLimit 用两个文本框代替标签选择框 | `qt/aqt/customstudy.py`、`qt/aqt/filtered_deck.py` |
 
 验收：每个窗口：能开、能关、关窗契约（`deckOptionsRequireClose` 等）走通、改动落库。
+**现状**：3.1/3.2/3.3 只有「命令发出/窗口打开」级断言，页面能否加载、改动能否落库、关窗契约都没有断言。
 
 ## 4. 编辑器
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 4.1 | ⚠️ | **「字段…」对话框** | **已实现**：新写的 `ts/routes/fields/`（编辑器工具栏的「字段」按钮 → 前端端点 `openFieldsDialog` → 宿主对当前编辑器窗口的笔记类型开窗）。字段增删/改名/重新定位、编辑字体（家族+字号）、描述、排序字段、RTL / HTML 默认 / 折叠 / 排除搜索都在，保存走 `updateNotetype`，取消会问一句。**差**：系统字体下拉（这里是文本框）、拖动重排、删除时提示「有 N 张笔记用到它」、字段间跳转按钮 | `qt/aqt/fields.py`（要新写界面） |
-| 4.2 | ⚠️ | **「卡片…」对话框** | **已实现**：新写的 `ts/routes/cards/`（编辑器工具栏的「卡片」/ `Ctrl+L` → 前端端点 `openCardsDialog` → 宿主对着编辑器窗口的笔记类型 + 那张 note + 当前卡片的 `ord` 开窗）。三个编辑区（正面/背面/样式）、添加字段、翻转、卡片类型增删改重排、恢复默认、浏览器外观、牌组覆盖、复制信息、`RenderUncommittedCard` 预览（正/背面 + 填充空字段 + 夜间模式）都在，保存走 `updateNotetype`。**差**：帮助按钮（HelpPage）、系统字体下拉（这里是文本框）、下拉里没有 Qt 的「序号: 名字: 字段摘要」、卡片类型重排是数字框、复制信息后没有提示 | `qt/aqt/clayout.py`（884 行，要新写界面） |
-| 4.3 | — | 编辑器「更多」菜单 | **不存在**（已核对）：这一版编辑器工具栏整个迁到了 TS（`ts/routes/editor/editor-toolbar/EditorToolbar.svelte:98-131`，按钮只有 笔记类型 / 齿轮选项 / 行内格式 / 块格式 / 模板 / 填空题 / 遮挡），`qt/aqt/editor.py` 里没有 `onMore`、`_links` 也只有 `paste` / `cut` / `copy` / `saved` 四项；旧版那个「更多」菜单已经拆成齿轮（`OptionsButtons.svelte`）与两个按钮，没有要对齐的东西 | — |
-| 4.4 | ⚠️ | **拖入文件（HTML5 drop）** | **已实现**：页面链路本来就是上游 TS 的（`data-transfer.ts` 的 `handleDrop`，图片 / 音频 / URL / 文本 / HTML 五支 + `addMediaFile` / `convertPastedImage`），宿主补的是「别挡路」——`WindowSpec::html5_drops` → `disable_drag_drop_handler()`（Tauri 默认会顶掉 WebView2 的拖放处理器，页面收不到 HTML5 drop）。**差**：「操作系统 → WebView2」那一步只能靠真机手工确认（自动化里只断言宿主日志），以及「拖 `.apkg` 到主窗口导入」（6.7） | `qt/aqt/editor.py:120` 的 `allow_drops`、`webview.py:550-552`、`main.py:112-137` |
-| 4.5 | ⚠️ | 未保存拦截 / `EditorState` | 字段是即时保存的（600ms 去抖），Qt 另有"未保存"状态与关窗拦截；影响 addon 与极端场景 | `qt/aqt/editor.py` 的 `EditorState` |
+| 4.1 | ⚠️ | **「字段…」对话框** | 已实现（`ts/routes/fields/`）：增删改/重定位、字体（家族 + 字号）、描述、排序字段、RTL / HTML 默认 / 折叠 / 排除搜索，保存走 `updateNotetype`，取消会问一句，删除有守卫。**还差**：系统字体下拉（这里是文本框）、拖动重排、删除时提示「有 N 张笔记用到它」、字段间跳转按钮。**验证缺口**：只断言了字段数/首个字段名/添加后 +1/保存落库/还原，字体、RTL、排序字段、重定位、删除守卫 0 断言 | `qt/aqt/fields.py` |
+| 4.2 | ⚠️ | **「卡片…」对话框** | 已实现（`ts/routes/cards/`）：三个编辑区、添加字段、翻转、卡片类型增删改重排、恢复默认、浏览器外观、牌组覆盖、复制信息、`RenderUncommittedCard` 预览（正/背面 + 填充空字段 + 夜间模式），保存走 `updateNotetype`。**还差**：帮助按钮、系统字体下拉、模板下拉里没有 Qt 的「序号: 名字: 字段摘要」、重排是数字框、复制信息后没有提示。**验证缺口**：翻转/删除/重排/恢复默认/浏览器外观/牌组覆盖/复制信息/夜间模式全无断言，`cards-check.mjs:175` 还是恒真断言 `check(..., true)`。**注**：`Ctrl+L` 在本外壳无效（`NotetypeButtons.svelte:71` 无条件发 `bridgeCommand("cards")`，宿主不处理），但**上游这版同样没处理 `cards`**（`qt/aqt/editor.py` 的 `_links` 只有 paste/cut/copy/saved）→ 属上游同款问题，不算迁移差异；`tauri/src/server/api.rs:75-77` 的注释说错了 | `qt/aqt/clayout.py` |
+| 4.3 | ✅ | 编辑器「更多」菜单 | **不存在对齐对象**（已核对）：这一版编辑器工具栏整个迁到了 TS，按钮只有 笔记类型 / 齿轮选项 / 行内格式 / 块格式 / 模板 / 填空题 / 遮挡；`qt/aqt/editor.py` 里没有 `onMore`，`_links` 也只有 paste / cut / copy / saved | — |
+| 4.4 | ⚠️ | **拖入文件（HTML5 drop）** | 已实现：`WindowSpec::html5_drops` → `disable_drag_drop_handler()`，编辑器/浏览器编辑区/预览/编辑当前都开了，主窗口刻意保留 Tauri 拦截用于 `.apkg` 拖入；断言覆盖"编辑器窗口关了拦截 + 主窗口没关"。**还差**：**浏览器「复制笔记」开的添加卡片窗口漏了 `.html5_drops(true)`**（`editor.rs` 的 `open_add_cards_with_note`）→ 该路径拖放又被 Tauri 顶掉；`drop-check.mjs` 只测图片分支，音频/URL/文本/HTML 四支无断言；「操作系统 → WebView2」这一步只能真机手工确认 | `qt/aqt/editor.py:120`、`qt/aqt/webview.py:550-552` |
+| 4.5 | ⚠️ | 未保存拦截 / `EditorState` | 页面有等价物（600ms 去抖保存、`saveNow`、`shouldPromptBeforeClosing`、`closeAddCards`/`closeEditCurrent`），**但宿主只拦「添加卡片」**（标题栏 × 与 Alt+F4 会问、有断言）。**还差**：**编辑当前 / 浏览器编辑区的原生 × 完全不拦**，页面里 600ms 内未落库的编辑直接丢（上游是 `call_after_note_saved`）；`editorState:` 命令宿主只记日志，没有 addon 回调语义 | `qt/aqt/editcurrent.py:45-46`、`qt/aqt/editor.py` 的 `EditorState` |
 
 验收：编辑器验证脚本里加"改字段 → 保存 → 集合内容正确"的既有链路 + 新界面的人工/自动核对。
 
@@ -68,69 +88,103 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 5.1 | ⚠️ | **查找重复** | **已实现**：浏览器「更多」菜单 → 页面内的 `FindDuplicatesModal.svelte`——「搜索位置」字段下拉、「可选筛选器」、搜索、分组报告（「N 条笔记: 值」）、点一组跳到那些笔记（切笔记模式 + `nid:…` 搜索）、「Tag Duplicates」一键打 `browsing-duplicate` 标签；判重复刻 `col.find_dupes()`（`collection.py:744-778`）。验证见 `browser-check.mjs` 第 8.8 节。**差**：Qt 是独立非模态对话框（报告画在 QWebView 里），这里是页面内模态框；搜索框没有历史记录；逐条 `getNote` 取字段值，大集合慢（上游直接读 SQL） | `qt/aqt/browser/find_duplicates.py`、`qt/aqt/forms/finddupes.ui` |
-| 5.2 | ⚠️ | **管理笔记类型** | **已实现**：新写的 `ts/routes/notetypes/` —— 列表「名字 [笔记数]」（`getNotetypeNamesAndCounts`）、添加两步走（6 种原厂类型 / 克隆现有类型 → 问名字）、重命名、删除（守卫与两种确认文案照 `models.py:189-198`），「字段…」「卡片…」两个按钮走宿主端点 `openFieldsDialogForNotetype` / `openCardsDialogForNotetype`。**入口**因本外壳还没有菜单栏，暂时挂在浏览器窗口的「更多」菜单（上游是主窗口菜单 `main.py:1357` 与浏览器侧栏 Note Types 节点的右键菜单 `tree.py:924-928`）；验证见 `tools/notetypes-check.mjs`（由 `verify-browser.ps1` 调用）。**差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`，内容就是字段/卡片两块） | `qt/aqt/models.py` |
-| 5.3 | ⚠️ | 导出的 CSV / 纯文本 | **已实现**：导出对话框的「笔记纯文本 / 卡片纯文本」（`.txt`，制表符分隔的 CSV，后端 `exportNoteCsv` / `exportCardCsv`），勾选项（HTML / 标签 / 牌组名 / 笔记类型 / GUID）与初值照 `forms/exporting.ui`；验证见 `browser-check.mjs`（真的导出，并按文件头与内容断言）。**差**：没有独立的"选列"对话框（列由勾选项决定，Qt 也只按勾选项）、没有牌组下拉（只有「选中的笔记 / 全部集合」）、没有逐个牌组导出 | `qt/aqt/import_export/exporting.py` 的 `NoteCsvExporter`/`CardCsvExporter`、`forms/exporting.ui` |
-| 5.4 | ⚠️ | 编辑区位置 | Qt 把编辑区嵌在浏览器窗口内；外壳是独立窗口（`/editor/` 的 CSP 不允许 iframe），双击才打开 | `qt/aqt/browser/browser.py:608-630` |
-| 5.5 | ⚠️ | 侧栏 | 4 个分区（Qt 7 个 + 折叠状态 + 修饰键组合搜索） | `qt/aqt/browser/sidebar/tree.py` |
-| 5.6 | ⚠️ | 加标签对话框 | 没有补全与最近标签 | `qt/aqt/tagedit.py` |
-| 5.7 | ⚠️ | 列设置的存储位置 | 列宽/顺序存在**外壳自己的 profile 配置**里（Qt 存 QHeaderView 的二进制状态）→ 两边交替使用时不通用 | `qt/aqt/utils.py:saveHeader` |
-| 5.8 | ⚠️ | 立即评分 / 查找替换 / 取消暂停埋藏 | 菜单替代对话框、查找替换少了字段下拉与"只看选中笔记"、取消暂停会顺带恢复埋藏 | `qt/aqt/browser/browser.py` 对应段落 |
-| 5.9 | ⚠️ | 导出到 profile 目录的拦截 | 上游会拒绝并提示换个位置 | `qt/aqt/import_export/exporting.py:132-138` |
+| 5.1 | ⚠️ | **查找重复** | 已实现（浏览器「更多」→ 页面内 `FindDuplicatesModal`）：字段下拉、可选筛选器、搜索、分组报告、点一组跳到那些笔记（切笔记模式 + `nid:` 搜索）、一键打 `browsing-duplicate` 标签，全部有断言。**更正**：判重不是调后端的 `col.find_dupes()`，而是在页面里用 `buildSearchString` + `searchNotes` + 逐条 `getNote` + `stripHtml` 重实现的（语义等价，但大集合是 N+1 次 RPC）。**还差**：Qt 是独立非模态对话框；搜索框无历史；点组之后没有「保留/删除」等后续动作 | `qt/aqt/browser/find_duplicates.py` |
+| 5.2 | ⚠️ | **管理笔记类型** | 已实现（`ts/routes/notetypes/`）：列表「名字 [笔记数]」、添加两步走、重命名、删除（守护 + 两种确认文案）、「字段…」「卡片…」两个按钮走宿主端点，都有断言。入口暂时挂在浏览器窗口的「更多」菜单（上游是主窗口菜单 + 侧栏 Note Types 右键）。**还差**：Qt 的「选项」按钮（开老的 `ModelAdvanced`）。**验证缺口**：只验了「没人用」的删除文案分支，in-use 分支未验 | `qt/aqt/models.py` |
+| 5.3 | ⚠️ | 导出的 CSV / 纯文本 | 已实现：笔记/卡片纯文本（`.txt`，制表符 CSV）、勾选项与初值照 `forms/exporting.ui`，有真文件头与内容断言。**更正**：牌组下拉**有**（牌组列表的齿轮导出会传 deck 范围），只是从浏览器打开时只有「选中的笔记 / 全部集合」。**还差**：没有独立"选列"对话框；没有逐个牌组导出；colpkg 无端到端断言 | `qt/aqt/import_export/exporting.py` |
+| 5.4 | ⚠️ | 编辑区位置 | Qt 把编辑区嵌在浏览器窗口内（QSplitter）；外壳是独立窗口（`/editor/` 的 CSP 不允许 iframe），双击才打开 → 不能与结果表并排，分割位置记忆也随之丢失 | `qt/aqt/browser/browser.py:608-630` |
+| 5.5 | ⚠️ | 侧栏 | **实际只有 2 个分区**（Decks + Note Types，外加「当前牌组/全部集合」两个按钮），Qt 是 **7 个**（Saved Searches / Today / Card State / Flags / Tags / Decks / Note Types）。**还差**：五个分区、折叠状态、修饰键组合搜索（Ctrl/Alt/Shift+点击）、节点右键菜单（所以「管理笔记类型」只能挪到「更多」）。**验证缺口**：只断言了"侧栏里有默认牌组" | `qt/aqt/browser/sidebar/tree.py` |
+| 5.6 | ⚠️ | 加标签对话框 | 纯输入框，**没有补全、没有最近标签**（上游用 QCompleter + 最近标签列表）；标签分隔/校验规则也没对齐 | `qt/aqt/tagedit.py` |
+| 5.7 | ⚠️ | 列设置的存储位置 | 列宽/顺序存在**外壳自己的 profile 配置**里（`tauriBrowserColumnWidths`，JSON），Qt 存 QHeaderView 的二进制状态 → 两边交替使用不通用（显示哪些列走集合配置，与 Qt 同键）。断言覆盖拖动换序/写回/不错位/卡片与笔记各一份，但**没有"重启后还在"的持久化断言** | `qt/aqt/utils.py:849-852` |
+| 5.8 | ⚠️ | 立即评分 / 查找替换 / 取消暂停埋藏 | 立即评分拆成 4 个菜单项（有断言）；查找替换**缺字段下拉、缺"只看选中笔记"、缺历史**；取消暂停会顺带恢复埋藏（`restoreBuriedAndSuspendedCards` vs Qt 的 `unsuspend_cards`） | `qt/aqt/browser/browser.py` 对应段落 |
+| 5.9 | ❌ | 导出到 profile 目录的拦截 | **零实现**：保存对话框只回路径，`exporting.ts` 也没有前缀校验；上游会拒绝并提示换个位置。**验证也没有对应用例** | `qt/aqt/import_export/exporting.py:132-138` |
 
 验收：`tauri/tools/verify-browser.ps1` + `browser-check.mjs`，每项都要有真集合断言。
+**现状**：浏览器主流程（列/排序/多选/笔记模式/批量动作/导出/查找重复/预览）断言很扎实，
+但侧栏、加标签补全、列设置持久化、导出目录拦截是空的。
 
 ## 6. 系统集成与媒体
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 6.1 | ⚠️ | **同步** | **登录 / 同步入口 / 状态 / 媒体同步 / 取消 / 自动同步有了**：牌组列表工具栏最右的「同步」（`Y` 键）+ **复习界面工具栏的同步链接**（宿主的 `sync` 命令，状态用 `window.__ankiSyncStatus()` 写回工具栏）→ 未登录弹登录框 → `syncLogin` → `syncKey`/`syncUser` 存进 **profile 配置**（`prefs21.db`，与桌面版同一批键）→ `syncStatus` → `syncCollection` →（`syncMedia` 开着时）`syncMedia` + 轮询 `mediaSyncStatus`；需要完整同步时给「上传 / 下载」二选一；同步中再点一次 = 取消（`abortSync`/`abortMediaSync`）；宿主侧还有**自动同步**线程（`tauri/src/autosync.rs`：启动时整份同步一次 + 之后按 `autoSyncMediaMinutes` 做媒体同步）。验证：`decks-check.mjs` 5i/5j 与 `reviewer-menu-check.mjs`（假同步服务器）。**差**：「AnkiWeb 冲突」的完整处理（只做了上传/下载入口）、同步进度条（只有文字）、关闭时同步（外壳没有优雅关闭的钩子） | `qt/aqt/sync.py`、`qt/aqt/main.py:1120-1129,1534-1569`、`qt/aqt/toolbar.py:410-419`、`rslib/src/sync` |
-| 6.2 | ✅ | 备份与恢复 | **自动备份**（`tauri/src/backup.rs`：启动时 + 每 5 分钟，`force=False`，目录与文件名与桌面版一致 `<profile>/backups/backup-*.colpkg`，份数由后端瘦身）、**手动「创建备份」入口**（菜单 文件 → 创建备份）、**还原备份**（文件 → 还原备份…：原生文件对话框默认开在备份目录 + 原生确认框 + 宿主关集合 → `importCollectionPackage` → 重开集合 → 回牌组列表）。**差**：没有「打开备份文件夹」这一项 | `qt/aqt/main.py:_backup`、`qt/aqt/main.py:441-477`、`qt/aqt/profiles.py` |
-| 6.3 | ⚠️ | 检查数据库 / 检查媒体 / 空卡片 | **有入口了**：牌组列表的菜单「工具」→ 检查数据库 / 检查媒体 / 空卡片，各自调 RPC 并弹出报告框（对照 `qt/aqt/dbcheck.py` / `mediacheck.py` / `emptycards.py`）。**差**：空卡片报告这里只显示文本（上游会渲染卡片列表并给「删除」按钮）、检查媒体的「删除未使用文件 / 恢复回收站」按钮 | Anki 主窗口 Tools 菜单 |
-| 6.4 | ❌ | 录音格式 | 直接给 WAV；Anki 用外部 `lame` 转 MP3（装了的话） | `qt/aqt/sound.py` 的 `encode_audio` |
-| 6.5 | ✅ | 原生取色器 | **已实现**：Windows 上用系统取色对话框（`ChooseColorW`，与 Qt 在 Windows 上用的是同一个），16 个自定义色槽写进集合配置 `customColorPickerPalette`（与上游 `mediasrv.save_custom_colours` 同一把键，页面用后端的 `getCustomColours` 读）。页面侧 `<input type="color">` 的点击改走 `pickColour:<当前颜色>` 桥接命令（老宿主没有能力标记 `window.__ankiHostColourPicker` 时照旧用自带取色器）。**差**：非 Windows 平台没有等价的原生对话框（Android 上仍是页面自带的） | `qt/aqt/mediasrv.py:1122-1128` |
-| 6.6 | ❌ | **addon（插件）支持** | 完全没有。装了插件的用户会明显觉得不一样 | `qt/aqt/addons.py` |
-| 6.7 | ⚠️ | 文件关联 | **拖入文件已通**：主窗口保留 Tauri 的拖放拦截，`DragDropEvent` → `importing::on_drop`（`main.py:112-137`）；**差**双击 `.apkg` 打开（要 Windows 文件关联，属 M4 打包）与命令行带文件启动 | `qt/aqt/main.py` 的命令行参数处理 |
-| 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（已对齐）；但列宽这类"外壳自己的"配置不互通（见 5.7） | —— |
+| 6.1 | ⚠️ | **同步** | 登录 / 同步入口（牌组列表工具栏 + 复习界面工具栏）/ 状态 / 集合同步 / 媒体同步 / 取消 / 自动同步线程都有，假同步服务器下的断言覆盖：真打 `/sync/hostKey`+`/sync/meta`、host key 落 profile、完整同步的「上传/下载」二选一、点下载打到 `/sync/download`、挂起时再点 = 取消、自动同步定时器发起 `/msync/*`。**还差**：① `syncCollection` 与媒体同步的**成功路径零覆盖**（假服务器只到 meta，之后全 500）；② 冲突只有上传/下载二选一，缺 Qt 的分支确认与"空集合"防误触，完成后也不刷新/不关其它窗口；③ 进度只有文字（Qt 有进度条 + Abort）；④ **关闭时同步缺失**（`quit` 直接 `app.exit(0)`）；⑤ 没有 `restoring_backup`/safeMode 守卫；⑥ **启动那一次整份同步从未被断言**（启动时没有凭据，日志只有"还没登录"） | `qt/aqt/sync.py`、`qt/aqt/main.py:1120-1129,1534-1569` |
+| 6.2 | ⚠️ | 备份与恢复 | 三条都是真的：自动备份（启动 + 每 5 分钟，`force=False`，目录与文件名与桌面版一致）、手动「创建备份」、**还原备份**（原生对话框开在备份目录 + 原生确认框 + 关集合 → `importCollectionPackage` → 重开 → 回牌组列表），产物与"关集合→导入→重开"都有断言。**还差**：**没有「打开备份文件夹」**；退出时 Qt 还会做 `pragma quick_check` + 损坏警告，这里零收尾；还原后没有 Qt 的 `restoring_backup`（会禁用自动同步/备份）；原生对话框在自动化里都被钩子顶掉，只能手工 | `qt/aqt/main.py:441-477,716-745`、`qt/aqt/forms/profiles.ui:87` |
+| 6.3 | ⚠️ | 检查数据库 / 检查媒体 / 空卡片 | 三个入口都在菜单里，真的调 RPC 并弹报告（断言了方法名与报告非空）。**还差**：① **检查媒体缺 Qt 的删除未使用 / 清空回收站 / 恢复回收站 / 给缺失媒体打标签 / 渲染 LaTeX / 查看文件**（`tauri/src` 里没有 `trash`/`restoreTrash` 的调用）；② 空卡片报告是 `@html` 渲染，但用户看到的是字面量 `[anki:nid:123]`（Qt 会变成可点链接并补 `.allempty` 样式），也没有"保留笔记"勾选与删除按钮；③ 空卡片只断言"弹了框"，报告内容未断言 | `qt/aqt/mediacheck.py:123-259`、`qt/aqt/emptycards.py:54-74` |
+| 6.4 | ❌ | 录音格式 | 直接给 WAV（`hound`），Anki 用外部 `lame` 转 MP3（装了的话）。代价：约 5MB/分钟，且与桌面版录出的媒体格式不同 | `qt/aqt/sound.py` 的 `encode_audio` |
+| 6.5 | ✅ | 原生取色器 | Windows 上用系统取色对话框（`ChooseColorW`，与 Qt 在 Windows 上用的是同一个），16 个自定义色槽写进 `customColorPickerPalette`（与上游同一把键）；页面侧 `<input type="color">` 的点击改走 `pickColour:<当前颜色>`，老宿主没有能力标记时照旧用自带取色器；端点与调色板落库都有断言。**注**：真正的 `ChooseColorW` 从未被自动触发（检查里用 `ANKI_PICK_COLOUR` 短路），只能手工点一次；非 Windows 没有等价实现（见 6.5 备注） | `qt/aqt/mediasrv.py:1122-1128` |
+| 6.6 | ❌ | **addon（插件）支持** | 完全没有：`tauri/src` 里没有 addon 加载、没有 `gui_hooks`（只有 CSP 里留了 `_addons/` 前缀）。装了插件的用户会明显觉得不一样 | `qt/aqt/addons.py` |
+| 6.7 | ❌ | 文件关联 | **名不副实**：① 双击 `.apkg` = 不存在（`tauri.conf.json` 没有 `fileAssociations`，上游 NSIS 会注册 apkg/colpkg/anki/addon）；② 命令行带文件启动 = 不存在（`tauri/src` 里没有 `env::args()`，只有 `ANKI_*` 环境变量）；③ 「拖到主窗口导入」只有 `drop_path` 单测，**没有任何端到端** | `qt/aqt/main.py` 命令行处理、`qt/installer/app/pyproject.toml:94-99` |
+| 6.8 | ⚠️ | 配置同步 | 直接读写 `prefs21.db`（与桌面版同一批键，`syncKey`/`syncUser` 落库有断言）。**还差**：① 唯一的跨实现验证（`make-prefs21-fixture.py` + `check-prefs21.mjs`）**没接进任何 `verify-*.ps1`**，纯手工；② **写的是 JSON null 而不是删键** → 桌面版的 `autoSyncMediaMinutes` 等读到 None 会当 falsy，**周期媒体同步被静默关掉**（当前产物里就是 `None`）；③ `meta.defaultLang` 从未被读（语言只看 `ANKI_LANG`，见 8.4） | `qt/aqt/profiles.py:721-722` |
 
 验收：需要真机/真账号（同步）；其余可用 RPC + 界面断言。
+**现状**：备份/还原、检查三项、取色器是真的；同步只验到"登录 + 取消 + 自动媒体同步请求"；
+addon、文件关联、录音格式为零。
 
 ## 7. 打包、Android 与工程化
 
 | # | 状态 | 项 | 差距 |
 | --- | --- | --- | --- |
-| 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做并验证**：`tauri/tools/package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致），`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`。`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标）也写好了。**差**：真正生成 NSIS/MSI 需要联网下载 Tauri CLI 与 WiX/NSIS（本环境没有）；代码签名未做。详见 `tauri/PACKAGING.md` |
-| 7.2 | ❌ | Android | `tauri android init/build` 未做；录音（`cpal`/oboe vs `MediaRecorder`）、SAF、路径（`getFilesDir()`）都要过；需要 Android SDK/NDK 与 Gradle 依赖下载 |
-| 7.3 | ❌ | 构建流程 | 静态资源仍靠手工命令，未接 `just` |
-| 7.4 | ❌ | `capabilities/` 与图标 | 目录缺失、图标是 favicon 副本 |
+| 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做实并验证**：`package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致，实测 exe 43.9MB、web 25 文件、sveltekit 151 文件），`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`；`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标 + currentUser 安装）也写好了。**还差**：① 安装器**从未生成过**（本机没有 `cargo-tauri`/`@tauri-apps/cli`/NSIS/WiX）；② 无代码签名；③ **没有 `bundle.fileAssociations`** → 即使装了安装包，"双击 .apkg" 仍不成立；④ 元数据不全（FileVersion 0.1.0、无 LegalCopyright/publisher/category）；⑤ **网络其实是通的**（实测 crates.io / api.github.com 都 200），卡的是工具链未安装与首次下载。详见 `tauri/PACKAGING.md` |
+| 7.2 | ❌ | Android | 零行 Android 代码：没有 `tauri/gen/android/`、没有 `lib.rs`/`mobile_entry_point`，非 Windows 的路径推断走 `$HOME`（不是应用私有目录）。需要：`tauri android init`、四个 rustup android target、SAF 版导入导出、录音（oboe vs MediaRecorder）、`getFilesDir()`、localhost 明文 HTTP 放行；**必须真机/模拟器**。本机 SDK + NDK 28.2 + JDK 已就位，缺 rustup target（联网）、Tauri CLI、Gradle 发行包 |
+| 7.3 | ⚠️ | 构建流程 | 静态资源本来有官方路径（`just build` → `out/sveltekit` + `qt/_aqt/data/web`，正是 `package.ps1` 用的两处），但 **`justfile` 里没有任何 tauri 配方，CI 里也没有外壳的 `cargo check/build`** —— 外壳改动目前完全没有自动回归。缺 `just tauri-build / tauri-run / tauri-package / tauri-verify` 与 descriptors → web/sveltekit → cargo build 的依赖链 |
+| 7.4 | ⚠️ | `capabilities/` 与图标 | `tauri/capabilities/` 不存在、`gen/schemas/capabilities.json` 是空数组，但前端不经 IPC（没有 `#[tauri::command]`/`invoke`），**现在无害**，加插件时才需要。图标是真问题：`tauri/icons/icon.ico` 与 `qt/aqt/data/web/imgs/favicon.ico` 逐字节相同，且只有 1 帧 32×32；上游真图标 `qt/installer/app/resources/anki.ico` 有 7 帧。另缺 `.icns`/`.png`（Android/macOS 无图标可用） |
 
 ---
 
-## 推进顺序（建议）
+## 8. 清单原先没覆盖、但用户可见的缺口（本次核查新增）
 
-1. ~~**2.1 复习界面「更多」菜单**~~ —— **已补**（13 项 + 旗标子菜单 + 两个表单对话框；
-   页面画菜单、宿主拼数据与执行动作，见 `tauri/README.md` 的「复习界面」）
-2. **3.1–3.6 既有页面接入**（牌组选项 / 统计 / 偏好 / 导入 / 遮挡 / 自定义学习）——
-仓库里都有页面，只差入口，性价比最高。**六项都已补**：牌组选项（复习菜单
-「选项」+ 牌组列表的齿轮）、统计（主窗口 `t`）、设置（主窗口 `Ctrl+P`）、
-导入（牌组列表底部的「导入文件」+ 主窗口拖入）、图像遮挡（编辑器里的「遮挡」按钮，
-这个版本是内嵌的掩码编辑器，没有独立窗口）、自定义学习（新写的
-`ts/routes/custom-study/`）；验证分别在 `verify-editor.ps1` / `verify-decks.ps1`
-3. **1.1–1.6 主窗口与牌组列表** —— **1.1 已补**（`ts/routes/decks/`，启动默认页；
-   概览做成了同页面板，`d`/`s` 快捷键一并接上；齿轮里也补了**导出**）、
-   **1.2 的两条工具栏都有了**（复习界面由宿主注入 `assets/reviewer-toolbar.js`）、
-   **1.3 经核对 Qt v3 并没有状态栏**（已按对齐处理）。剩下的：1.2 的同步链接与菜单栏、
-   1.4 的 `y`/`Ctrl+E`、1.1 的牌组描述与拖拽排序、1.5 启动行为（检查/备份/打开上次的牌组）、
-   1.6 收尾核对
-4. **4.1–4.4 编辑器** —— 4.1/4.2 两个对话框与 4.4 拖入文件都补完了（验证都在
-   `verify-editor.ps1`）；**4.3「更多」菜单经核对上游并不存在**（工具栏已迁到 TS，
-   `editor.py` 没有 `onMore`），剩下的只有 4.5 未保存拦截 / `EditorState`
-5. **~~5.1–5.3 浏览器余项~~** —— **全部补完**：5.1 查找重复（`FindDuplicatesModal.svelte`）、
-   5.2 管理笔记类型（`ts/routes/notetypes/`）、5.3 CSV / 纯文本导出（`ExportDialog.svelte`）；
-   验证都在 `verify-browser.ps1`（`browser-check.mjs` / `notetypes-check.mjs`）。
-   浏览器只剩 5.5–5.9 那几条小差异（侧栏分区、加标签补全、列设置存储、导出目录拦截…）
-6. **6.x 系统集成**（同步、备份、addon 是硬骨头）
-7. **7.x 打包与 Android**
+| # | 状态 | 项 | 差距 | 上游参考 |
+| --- | --- | --- | --- | --- |
+| 8.1 | ❌ | **偏好设置对话框（8 个分页）** | 见 3.3：`Ctrl+P` 只打开 Labs 实验页。界面语言、主题/夜间、复习上限与时间盒、下一日时间、自动备份份数、网络与自定义同步服务器、自定义答案键、第三方服务**全部改不了** —— 这是"日常必用却完全缺失"里最大的一块 | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
+| 8.2 | ❌ | **多 profile 管理** | 没有 ProfileManager 窗口，也没有「切换配置」（`Ctrl+Shift+P`）：`paths.rs` 只推断 `Anki2/User 1`（或用 `ANKI_COLLECTION` 覆盖）→ 多档案/共用电脑用户既不能切换、也不能新建/改名/删除 profile | `qt/aqt/profiles.py:128,473-499`、`qt/aqt/main.py:358-437` |
+| 8.3 | ❌ | **夜间模式 / 主题 / `standard_css`** | `tauri/src` 里 `night`/`theme` 0 命中：没有 `theme.py` 的读写，也没有 `add_dynamic_styling_and_props_then_show` 那套（注入 `night-mode`/`nightMode` body class、窗口背景色、动态字体与缩放）。前端只有靠 URL `#night` 的开关，而外壳生成的 URL 从不带 hash → **深色模式整条链路失效**，字体大小/缩放也没了动态值 | `qt/aqt/theme.py:60-102`、`qt/aqt/webview.py:910-1037` |
+| 8.4 | ❌ | **界面语言选择** | 固定 `en-US`，只认 `ANKI_LANG`（`main.rs` 里有显式 TODO）；没有首次运行/新建 profile 的语言框（`setlang.ui`），偏好设置里也没有语言下拉 → 中文用户打开就是英文 | `qt/aqt/profiles.py:473-499`、`qt/aqt/preferences.py:442-466` |
+| 8.5 | ❌ | **异常/错误对话框** | 后端异常只落 `tracing::error!` 与终端日志：没有 `show_exception` 那种对话框、没有 Copy debug info 按钮、没有错误提示文件、没有 panic hook → 用户看不到原因，也没有可粘贴的排障信息 | `qt/aqt/errors.py:31,177-208` |
+| 8.6 | ❌ | **集合打不开 / 过新 / 损坏的启动提示** | 打开集合失败时只记日志并继续启动（`media_folder` 置空）→ 用户拿到一个功能残缺的窗口，既不知道原因，也没有「降级并退出」 | `qt/aqt/main.py:648-660,745`、`qt/aqt/profiles.py:224-227` |
+| 8.7 | ❌ | **schema 改动「需要整合同步」确认框** | 改字段/卡片模板/笔记类型后，Qt 会弹「需要一次性整合同步」的确认；外壳完全没有（只有"删除卡片模板"这类确认） | `qt/aqt/main.py:1688-1705` |
+| 8.8 | ❌ | **卡片中的视频播放** | `SoundOrVideo` 一律丢给音频解码（`rodio`），没有 mpv 那套 → 含 `[sound:clip.mp4]` 的牌组只显示空白，日志走"播放失败"分支 | `qt/aqt/sound.py:105-129`、`qt/aqt/mpv.py` |
+| 8.9 | ⚠️ | **同步日志 / 媒体同步对话框** | 只有工具栏文字状态，没有 `MediaSyncDialog`（进度 + 日志 + 失败原因） | `qt/aqt/mediasync.py:113-149` |
+| 8.10 | ⚠️ | **可取消的进度对话框** | 检查数据库/检查媒体/还原备份只有一个 `busy` 标志，没有进度、不能取消；宿主也没有进度通道 | `qt/aqt/progress.py:340`、`qt/aqt/taskman.py:27` |
+| 8.11 | ❌ | **浏览器的侧栏显隐 / 缩放 / 布局 / 全屏 / `Ctrl+G`** | `ts/routes/browser/+page.svelte` 里 `filteredDeck`/`toggleSidebar`/`zoom`/`Ctrl+G` 全无命中 → 从搜索结果一键建筛选牌组的捷径没了，侧栏收不起来，浏览器内也不能缩放/改布局/全屏 | `qt/aqt/browser/browser.py:312-387,843-848` |
+| 8.12 | ⚠️ | **自定义 URL scheme 白名单与放行确认** | 卡片里的非 http(s) 链接既不询问也不拦截，直接 `opener::open`；用户也无法维护放行列表 | `qt/aqt/url_schemes.py:18-60` |
+
+已核查**不是**缺口的：TTS（`allTtsVoices`/`writeTtsStream` + 缓存，与上游 Windows 路径一致）；
+FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己也没挂进 `IMPORTERS`）。
+
+## 9. 验证体系的缺口（文档里的「✅」就来自这些脚本）
+
+跑回归的正确姿势：**一次一个脚本**（见 §0 的顺序耦合问题）。当前断言强度分四档：
+
+1. **恒真/无效断言**：`cards-check.mjs:175` 的 `check(..., true)`；`reviewer-menu-check.mjs:309`
+   的「more 命令被接受」；`editor-check.mjs` 的字段级取色只剩 `console.log`。
+2. **半覆盖**：`drop-check.mjs` 只测图片分支；`occlusion-check.mjs` 不存遮挡笔记；
+   `fields-check.mjs` 不验字体/RTL/排序字段/重定位/删除守卫；`notetypes-check.mjs` 只验
+   "没人用"的删除分支；`browser-check.mjs` 对侧栏只验"有默认牌组"。
+3. **靠钩子顶掉原生交互**：`ANKI_SAVE_PATH`/`ANKI_PICK_COLOUR`/`ANKI_RESTORE_PATH`/`ANKI_BACKUP_NOW`
+   → 真对话框（保存、确认、取色、还原）路径全靠手工。
+4. **0 断言的主要功能**：键盘快捷键（只验了 F11/Ctrl+E/`f`）、计时器与时间盒、答完队列/congrats、
+   埋藏·暂停·重置·副本·删除笔记、同步成功路径、TTS 播放链路、`prefs21` 桌面版↔外壳互操作、
+   文件关联与命令行、`just`/CI（根本没有）。
+
+另外两处**测试自身**的问题：`visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移、
+且把 maxTime 写死 0）；`verify-*.ps1` 与 `*-check.mjs` 共用同一份集合，脚本间有顺序依赖。
+
+## 10. 推进顺序（建议）
+
+1. **首选项真页面（8.1）+ profile 管理（8.2）+ 夜间模式/`standard_css`（8.3）+ 语言（8.4）**
+   —— 一次消掉"日常必用却完全缺失"和最大的文档落差
+2. **复习键盘（空格/回车/1–4 等，2.x 附）+ Congratulations 收尾（1.6）+ 时间盒（2.6）**
+3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
+   筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
+4. **音频显示与语义（2.3）+ 自动前进（2.4）+ 上一张卡片信息（2.2）**
+5. **同步成功率路径与冲突分支、进度条（6.1/8.9）**；**打包** fileAssociations + 签名 + 图标
+   （7.1/7.4）；`just` + CI（7.3）；Android（7.2）
+
+环境依赖：同步成功路径要**真 AnkiWeb 账号**；Android/录音/剪贴板/原生对话框要**真机**；
+签名要**证书**；`tauri-cli`/NSIS/`rustup target`/Gradle 要**联网**（网络本身是通的）。
 
 每补齐一项：更新本文件的标记 → 在 `tauri/README.md` 改差异表 → 补/改验证脚本 →
 在 `TAURI_HANDOVER.md` 的 §6 与 §9 里同步进度。
+
+> 遗留的文档同步工作：`tauri/README.md`（同步链接状态色、偏好设置、"拖入已通"、
+> 启动整份同步、空卡片渲染等描述）与 `TAURI_HANDOVER.md` 的 §7 缺口列表仍按旧状态写，
+> 需要按本文件的更正一起改。
