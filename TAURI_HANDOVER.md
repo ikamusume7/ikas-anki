@@ -1135,6 +1135,23 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
 
 ### 5.46 capabilities 与图标：图标换成上游安装包那份；权限一个都不给
 ### 5.48 同步进度条：后端只给本地化文案，做不出百分比
+### 5.49 增量同步测出两个真 bug：`NORMAL_SYNC` 被当成"要完整同步"、媒体同步期间进度条已消失
+
+用真同步服务器跑"加一张卡 → 再同步"（`NORMAL_SYNC` 分支）时暴露出两个页面侧的 bug：
+
+1. `ts/routes/decks/+page.svelte` 的 `runSync` 原来写的是
+   `if (status.required !== NO_CHANGES) { 弹「上传/下载」 }` —— 把 `NORMAL_SYNC`（有本地改动、
+   直接跑增量同步就行）也当成了"两边分叉"。实测：登录并整份上传之后，**再加一张卡点同步就会弹
+   那个二选一对话框**（而同步其实完全可以增量完成）。现在只在 `FULL_SYNC` 时弹。
+2. `syncState = "idle"` 原来写在**媒体同步之前**，于是进度条（`#sync-progress`）在媒体同步开始时
+   就已经消失 —— 而媒体同步往往是整个同步里最慢的一段（本次实测 150 个文件 ≈ 473 个
+   `/msync/uploadChanges` 请求）。现在等媒体也结束才回 `idle`。
+
+验证上的经验：真同步在本机是一瞬间的事，"点完再等选择器/采样"会漏判（我在这里失败过三次）。
+**"同步中显示进度条"这条断言改在 `decks-check.mjs` 里做** —— 那里的假服务器把 `/sync/download`
+挂住，`syncState` 被钉在 `syncing` 上，断言是确定的；`verify-sync.ps1` 只断言真同步**结束后**
+进度条消失。
+
 
 `ts/routes/decks/+page.svelte` 在 `syncState === "syncing"` 时显示一根进度条（`#sync-progress`），
 媒体同步期间页面轮询 `mediaSyncStatus` 把 `progress.checked/added/removed`（**后端已经本地化好的

@@ -405,16 +405,9 @@ try {
     }
 
     // 再点一次同步：这次集合同步没有变化，媒体同步会把新文件推上去。
-    // 同步期间应该有进度条（对照 `qt/aqt/mediasync.py` 的 `MediaSyncDialog`），同步完消失。
+    // "同步中显示进度条"那条断言在 `decks-check.mjs`：那里假服务器把请求挂住、状态被钉在
+    // syncing 上，断言确定；真同步在本机是一瞬间的事，这里只断言同步结束后进度条消失。
     await page.locator("#sync").click();
-    check(
-        "同步期间出现进度条（#sync-progress）",
-        await page
-            .waitForSelector("#sync-progress", { state: "visible", timeout: 10_000 })
-            .then(() => true)
-            .catch(() => false),
-        await page.locator("#sync-progress").count(),
-    );
     const client1Media = collection1 ? path.join(mediaDirOf(collection1), storedName) : "";
     check(
         "第一个客户端的媒体夹里有它",
@@ -450,6 +443,60 @@ try {
             "第二个客户端也拿到了这个媒体文件",
             await waitFor("client2 media", () => fs.existsSync(client2Media), 90_000),
             client2Media,
+        );
+    }
+    // 6. **增量同步**（`NORMAL_SYNC` 分支，不是整份同步）：两个客户端都已经与服务器对齐之后，
+    //    第一个客户端再加一张卡 → 点同步 → 应当走增量协议（`/sync/start` … `/sync/finish`，
+    //    不再弹「上传/下载」）→ 第二个客户端同步后能拿到这张新卡。
+    const startsBefore = syncLog().split("/sync/start").length - 1;
+    const finishesBefore = syncLog().split("/sync/finish").length - 1;
+    const incrementalMarker = `TauriIncremental ${Date.now() % 1_000_000}`;
+    await rpc(
+        "addNote",
+        new AddNoteRequest({
+            note: new Note({ notetypeId: notetype.id, fields: [incrementalMarker, "增量同步"] }),
+            deckId,
+        }).toBinary(),
+    );
+    await page.locator("#sync").click();
+    check(
+        "增量同步走了协议（/sync/start + /sync/finish）",
+        await waitFor(
+            "incremental sync",
+            () =>
+                syncLog().split("/sync/start").length - 1 > startsBefore &&
+                syncLog().split("/sync/finish").length - 1 > finishesBefore,
+            90_000,
+        ),
+        (syncLog().match(/"\/sync\/[a-zA-Z]+"/g) ?? []).slice(-8).join(" / "),
+    );
+    check(
+        "增量同步没有弹「上传/下载」",
+        (await page.locator("#sync-download").isVisible().catch(() => false)) === false,
+        `#sync-download 可见=${await page.locator("#sync-download").isVisible().catch(() => false)}`,
+    );
+
+    if (port2) {
+        await page2.locator("#sync").click();
+        check(
+            "第二个客户端增量同步后拿到了新卡",
+            await waitFor(
+                "incremental note on client2",
+                async () =>
+                    SearchResponse.fromBinary(
+                        await rpcOn(
+                            base2,
+                            "searchNotes",
+                            new SearchRequest({ search: incrementalMarker }).toBinary(),
+                        ),
+                    ).ids.length > 0,
+                90_000,
+            ),
+            incrementalMarker,
+        );
+        check(
+            "第二个客户端也没有弹「上传/下载」",
+            (await page2.locator("#sync-download").isVisible().catch(() => false)) === false,
         );
     }
 } catch (error) {

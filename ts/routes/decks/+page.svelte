@@ -573,8 +573,13 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
         syncCancelled = false;
         try {
             const status = await syncStatus(auth);
-            if (status.required !== SyncStatusResponse_Required.NO_CHANGES) {
-                // 需要完整同步（上传或下载）：上游会弹一个二选一对话框
+            // `syncStatus` 有三个值（`proto/anki/sync.proto` 的 `Required`）：
+            //   `NO_CHANGES`  → 没什么可同步的
+            //   `NORMAL_SYNC` → 有本地改动，**直接跑增量同步**（`syncCollection`）
+            //   `FULL_SYNC`   → 两边分叉了，弹「上传/下载」二选一
+            // 之前这里把 `NORMAL_SYNC` 也当成"需要完整同步"，于是**每次有本地改动都会弹那个
+            // 对话框**（实测：加一张卡再点同步就弹）。只有 `FULL_SYNC` 才该弹。
+            if (status.required === SyncStatusResponse_Required.FULL_SYNC) {
                 syncState = "idle";
                 syncMessage = tr.syncConflictExplanation();
                 syncFullModal.show();
@@ -592,12 +597,14 @@ New / Learning / To Review 计数与「学习」按钮（`overview.py:228-266` �
                 syncFullModal.show();
                 return;
             }
-            syncState = "idle";
             syncMessage = result.serverMessage || tr.syncMediaComplete();
-            // 集合同步完成后才轮到媒体（对照 `sync.py` 的 `sync()`）
+            // 集合同步完成后才轮到媒体（对照 `sync.py` 的 `sync()`）。`syncState` 要等**媒体也
+            // 结束**才回到 idle —— 否则进度条在媒体同步开始时就已经消失（媒体往往是整个同步里
+            // 最慢的一段），用户看着像"同步完了"。
             if (await getProfileConfig("syncMedia")) {
                 await runMediaSync(auth);
             }
+            syncState = "idle";
         } catch (problem) {
             if (syncCancelled) {
                 // 我们主动取消的：当作正常结束

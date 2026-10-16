@@ -1102,6 +1102,13 @@ try {
         (await page.locator("#sync[data-sync-state='syncing']").count()) === 1,
         await page.locator("#sync").getAttribute("data-sync-state"),
     );
+    // 进度条（PARITY 8.9）只在 `syncState === "syncing"` 时渲染。真同步在本机是一瞬间的事，
+    // 抓不稳；这里假服务器把 `/sync/download` 挂住，状态被"钉"在 syncing 上，断言才确定。
+    check(
+        "同步中显示进度条（#sync-progress）",
+        await page.locator("#sync-progress").isVisible().catch(() => false),
+        `#sync-progress 数量=${await page.locator("#sync-progress").count()}`,
+    );
     check(
         "挂住的下载请求打到了 /sync/download",
         syncPaths.includes("/sync/download"),

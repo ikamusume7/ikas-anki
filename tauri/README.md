@@ -485,6 +485,9 @@ WebView2 的 `<input type="color">` 是 **Chromium 自带**的取色器，宿主
 后端本地化好的「Checked / Added / Removed」，结束后进度条消失、失败时状态行给出失败原因
 （对照 `qt/aqt/mediasync.py:113-149` 的 `MediaSyncDialog`；我们是内联状态而不是独立对话框，
 进度是**不确定**的——后端的 `MediaSyncStatus.progress` 只有本地化文案，没有总数/已完成数值）。
+进度条在**整个同步期间**都在（集合同步 + 媒体同步，`syncState` 等媒体结束才回 `idle`）；
+"同步中显示进度条"由 `decks-check.mjs` 断言（假服务器把请求挂住、状态钉在 `syncing`），
+`verify-sync.ps1` 只断言真同步结束后它消失。
 
 **成功路径**另有一条真服务器的端到端：`verify-sync.ps1` + `sync-check.mjs` 用仓库自带的
 `anki-sync-server`（本机可跑，不需要 AnkiWeb 账号）—— 登录打到真 `/sync/hostKey`、
