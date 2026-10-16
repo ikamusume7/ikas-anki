@@ -28,6 +28,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
+# 关窗契约要点名截「编辑当前」那个窗口（标题来自 ftl `editing-edit-current`）
+$editCurrentTitle = if ($Lang -like "zh*") { "编辑当前" } else { "Edit Current" }
 Set-Location $root
 
 $exePath = Join-Path $root $Exe
@@ -77,6 +79,23 @@ function Wait-LogPattern {
     while ((Get-Date) -lt $deadline) {
         if ((Read-Log $logPath) -match $Pattern) { return $true }
         Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+# 某个片段在日志里出现过几次（判断"有没有**新的**一条"必须用它，`Wait-LogPattern`
+# 会被旧行骗过）
+function Count-Log {
+    param([string]$Pattern)
+    return ([regex]::Matches((Read-Log $logPath), $Pattern)).Count
+}
+
+function Wait-LogCount {
+    param([string]$Pattern, [int]$Minimum, [int]$TimeoutSeconds)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ((Count-Log $Pattern) -ge $Minimum) { return $true }
+        Start-Sleep -Milliseconds 400
     }
     return $false
 }
@@ -216,6 +235,32 @@ try {
         $passed = $false
     } else {
         Write-Host "关闭流程正常" -ForegroundColor Green
+    }
+
+    # 真·标题栏 ×（WM_CLOSE）：宿主必须先把请求交给页面落库，再关窗
+    # （对照 `editcurrent.py:45-46`；用 close-window.ps1 发的是与用户点 × 同一条路径）
+    Write-Host "验证「编辑当前」的 × 关窗契约（WM_CLOSE）…"
+    Send-Bridge -Window "main" -Command "edit" | Out-Null
+    if (-not (Wait-LogPattern "编辑器已载入 note" 40)) {
+        Write-Host "重新打开编辑器失败" -ForegroundColor Red
+        $passed = $false
+    } else {
+        $handoffs = Count-Log "edit-current 收到关闭请求，交给页面保存后自行请求关闭"
+        $closes = Count-Log "关闭窗口: edit-current"
+        & (Join-Path $PSScriptRoot "close-window.ps1") -ProcessName "anki-tauri" `
+            -TitleLike $editCurrentTitle | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "没有找到「编辑当前」窗口" -ForegroundColor Red
+            $passed = $false
+        } elseif (-not (Wait-LogCount "edit-current 收到关闭请求，交给页面保存后自行请求关闭" ($handoffs + 1) 20)) {
+            Write-Host "× 没有走页面的关窗判定（详见 $logPath）" -ForegroundColor Red
+            $passed = $false
+        } elseif (-not (Wait-LogCount "关闭窗口: edit-current" ($closes + 1) 20)) {
+            Write-Host "× 之后窗口没有关掉（可能卡在拦截里）" -ForegroundColor Red
+            $passed = $false
+        } else {
+            Write-Host "× 关窗契约正常（先落库再关）" -ForegroundColor Green
+        }
     }
 
     # 改字段 → 保存：这一步要真的敲键盘，所以走 Playwright（见脚本注释）

@@ -64,7 +64,7 @@
 
 | # | 状态 | 项 | 差距 | 上游参考 |
 | --- | --- | --- | --- | --- |
-| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② **× 关窗丢改动**：Qt 会 `evt.ignore()` + 问 `anki.deckOptionsPendingChanges()`，这里只拦「添加卡片」的关闭，改完点 × 直接丢、没有确认；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
+| 3.1 | ⚠️ | **牌组选项** | 三个入口都有（牌组列表齿轮、复习菜单「选项」、概览 `O`），窗口能开。**还差**：① **筛选牌组点「选项」会开到报错窗口** —— Qt 对 dyn 牌组开 `FilteredDeckConfigDialog`，这里一律开 `deck-options/<did>`，而 rslib 对筛选牌组会直接报错，用户既看不到筛选条件也改不了；② ~~**× 关窗丢改动**~~ → **宿主已补拦截**（`windows::DECK_OPTIONS_CLOSE_REQUEST_JS`：`CloseRequested` 时 `prevent_close` + 让页面跑 `anki.deckOptionsPendingChanges()`；页面里的确认框改成走宿主 `askUser`，测试钩子 `ANKI_CONFIRM_YES` 才管用）——**断言待补**：`verify-decks.ps1` 目前跑不到那一步（见 §9「decks-check 的夹具前提」）；③ 标题少了牌组名（Qt 是 `actions-options-for(val=名字)`）；④ 只有「开窗」级断言，没有"页面加载成功 + 改动落库"断言 | `qt/aqt/deckoptions.py:62-67,125-134` |
 | 3.2 | ⚠️ | **统计图** | 入口两处都有（牌组列表工具栏「统计」、复习页 `t`/`Shift+t`），页面 `graphs/` 默认 `initialSearch="deck:current"`（等于 Qt 的 `_selectedDeck()`，**按当前牌组打开已经成立**）。**还差**：① Qt 的 NewDeckStats 顶部有**牌组下拉**（换牌组 = 设当前牌组 + 刷新），这里换牌组只能靠页面里的「牌组/集合/自定义搜索」；② 没有 **Save PDF**（Qt 是原生按钮 + `printToPdf`）；③ 窗口标题用 `qt-misc-stats`（「统计」），Qt 用 `statistics-title`（「统计数据」）；④ 没有"请先选一个牌组"的兜底 | `qt/aqt/stats.py:52-66,95-123`、`forms/stats.ui:14` |
 | 3.3 | ⚠️ | **偏好设置** | **已重写成真首选项页面**（`ts/routes/preferences/`）：七个分页照 `forms/preferences.ui`（显示 / 复习 / 编辑 / 同步 / 备份 / 第三方服务 / 实验功能）+ 底部的**帮助**与**关闭**；纯前端就能落库的都接了 —— 语言（`meta.defaultLang`，选项来自宿主 `languages` 命令，54 种）、主题（发 `theme:` 命令，宿主落库 + 广播）、界面缩放、上下工具栏隐藏、减少动效、极简模式、检查更新两项（只落库）、调度三项（`rollover`/`learnAheadSecs`/`timeLim`）、reviewer 四项、`renderLatex`、编辑五项、同步五项（含 `customSyncUrl` 连带清 `currentSyncUrl`）、备份四项。**还差**：AnkiWeb 的登录/登出还留在牌组列表工具栏（没搬进来）、「媒体同步日志」窗口、`answer_keys` 自定义答案键（pickle 字典键是整数，现有端点读不出来）、`resetWindowSizes`（需要 prefs21 删键端点）、视频驱动（WebView2 无此概念）、AnkiHub（addon 系统已移除）；「干扰项」这几项目前只落库、外壳还没消费。验证：`verify-prefs.ps1` + `prefs-check.mjs`（七页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） | `qt/aqt/preferences.py:39-77`、`forms/preferences.ui` |
 | 3.4 | ⚠️ | **导入** | 三条入口都通（牌组列表底部「导入文件」、主窗口拖入、`ANKI_OPEN_PATH` 顶掉对话框），扩展名分流正确，`.apkg` 有端到端断言（造夹具 → 页面导入 → RPC 复查牌组与笔记回来 → `importDone`）。**还差**：`.csv/.tsv/.txt` → `import-csv` 只有单测，没有页面级/落库断言；「拖到主窗口导入」只有 `drop_path` 单测，没有合成 `DragDropEvent` 的端到端；`.colpkg`/`collection.apkg`/`backup-*.apkg` 与 Mnemosyne `.db` 仍只提示不支持（见 6.7） | `qt/aqt/import_export/importing.py`、`qt/aqt/main.py:112-137` |
@@ -82,7 +82,7 @@
 | 4.2 | ⚠️ | **「卡片…」对话框** | 已实现（`ts/routes/cards/`）：三个编辑区、添加字段、翻转、卡片类型增删改重排、恢复默认、浏览器外观、牌组覆盖、复制信息、`RenderUncommittedCard` 预览（正/背面 + 填充空字段 + 夜间模式），保存走 `updateNotetype`。**还差**：帮助按钮、系统字体下拉、模板下拉里没有 Qt 的「序号: 名字: 字段摘要」、重排是数字框、复制信息后没有提示。**验证缺口**：翻转/删除/重排/恢复默认/浏览器外观/牌组覆盖/复制信息/夜间模式全无断言，`cards-check.mjs:175` 还是恒真断言 `check(..., true)`。**注**：`Ctrl+L` 在本外壳无效（`NotetypeButtons.svelte:71` 无条件发 `bridgeCommand("cards")`，宿主不处理），但**上游这版同样没处理 `cards`**（`qt/aqt/editor.py` 的 `_links` 只有 paste/cut/copy/saved）→ 属上游同款问题，不算迁移差异；`tauri/src/server/api.rs:75-77` 的注释说错了 | `qt/aqt/clayout.py` |
 | 4.3 | ✅ | 编辑器「更多」菜单 | **不存在对齐对象**（已核对）：这一版编辑器工具栏整个迁到了 TS，按钮只有 笔记类型 / 齿轮选项 / 行内格式 / 块格式 / 模板 / 填空题 / 遮挡；`qt/aqt/editor.py` 里没有 `onMore`，`_links` 也只有 paste / cut / copy / saved | — |
 | 4.4 | ⚠️ | **拖入文件（HTML5 drop）** | 已实现：`WindowSpec::html5_drops` → `disable_drag_drop_handler()`，编辑器/浏览器编辑区/预览/编辑当前都开了，主窗口刻意保留 Tauri 拦截用于 `.apkg` 拖入；断言覆盖"编辑器窗口关了拦截 + 主窗口没关"。**还差**：**浏览器「复制笔记」开的添加卡片窗口漏了 `.html5_drops(true)`**（`editor.rs` 的 `open_add_cards_with_note`）→ 该路径拖放又被 Tauri 顶掉；`drop-check.mjs` 只测图片分支，音频/URL/文本/HTML 四支无断言；「操作系统 → WebView2」这一步只能真机手工确认 | `qt/aqt/editor.py:120`、`qt/aqt/webview.py:550-552` |
-| 4.5 | ⚠️ | 未保存拦截 / `EditorState` | 页面有等价物（600ms 去抖保存、`saveNow`、`shouldPromptBeforeClosing`、`closeAddCards`/`closeEditCurrent`），**但宿主只拦「添加卡片」**（标题栏 × 与 Alt+F4 会问、有断言）。**还差**：**编辑当前 / 浏览器编辑区的原生 × 完全不拦**，页面里 600ms 内未落库的编辑直接丢（上游是 `call_after_note_saved`）；`editorState:` 命令宿主只记日志，没有 addon 回调语义 | `qt/aqt/editcurrent.py:45-46`、`qt/aqt/editor.py` 的 `EditorState` |
+| 4.5 | ⚠️ | 未保存拦截 / `EditorState` | 页面有等价物（600ms 去抖保存、`saveNow`、`shouldPromptBeforeClosing`、`closeAddCards`/`closeEditCurrent`），**但宿主只拦「添加卡片」**（标题栏 × 与 Alt+F4 会问、有断言）。**已补**：**编辑当前 / 浏览器编辑区的原生 × 先落库再关**（`windows::EDITOR_CLOSE_REQUEST_JS` → 页面 `closeEditorWindow()`；关浏览器先让编辑区落库再连带关闭，对照 `browser.py:415-425`），`verify-editor.ps1` / `verify-browser.ps1` 用 `close-window.ps1` 真发 WM_CLOSE 断言。**还差**：`editorState:` 命令宿主只记日志，没有 addon 回调语义 | `qt/aqt/editcurrent.py:45-46`、`qt/aqt/editor.py` 的 `EditorState` |
 
 验收：编辑器验证脚本里加"改字段 → 保存 → 集合内容正确"的既有链路 + 新界面的人工/自动核对。
 
@@ -172,6 +172,13 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
 
 另外两处**测试自身**的问题：`visual-check.mjs` 的底栏 HTML 是手抄副本（会与 `reviewer.rs` 漂移、
 且把 maxTime 写死 0）；`verify-*.ps1` 与 `*-check.mjs` 共用同一份集合，脚本间有顺序依赖。
+
+**2026-10-16 新发现（关窗契约那一轮）**：`decks-check.mjs` 的概览断言**有状态前提** —— 它断言
+概览里有「学习」按钮，但概览在「今天没有可学卡片」时画的是 Congratulations（PARITY 1.6），
+没有那个按钮。集合里没有到期卡片时 `verify-decks.ps1` 会从这一项开始连锁失败（本轮实测：
+概览学习按钮 → 齿轮选项没开窗 → 导出没走钩子 → 导入/还原备份/自动同步全挂）。修法是让
+`decks-check.mjs` 先给要打开的牌组补一张到期卡片（同 `verify-reviewer.ps1` 的补卡思路），
+或者把断言改成「学习按钮 XOR Congratulations 面板」。
 
 ## 10. 推进顺序（建议）
 

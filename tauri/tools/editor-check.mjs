@@ -186,7 +186,32 @@ try {
         }`,
     );
 
-    // 4. 还原，避免反复运行把测试笔记改花。
+    // 4. 关窗契约（编辑当前 / 浏览器编辑区）：`closeEditorWindow()` 必须先把还没去抖
+    //    保存的那次改动落库，再请宿主关窗（对照 `editcurrent.py:45-46` 的
+    //    `call_after_note_saved`）。这里**不等 600ms 去抖**，敲完立刻调它。
+    const closeMarker = `关闭前改动${Date.now() % 100_000}`;
+    await editor.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(closeMarker);
+    const hasCloseHook = await page.evaluate(() => typeof window.closeEditorWindow === "function");
+    check("页面暴露了关窗钩子 closeEditorWindow", hasCloseHook);
+    if (hasCloseHook) {
+        await page.evaluate(() => window.closeEditorWindow());
+        await page.waitForTimeout(800);
+        const afterClose = Note.fromBinary(
+            await rpc("getNote", new NoteId({ nid: card.noteId }).toBinary()),
+        );
+        check(
+            "关窗前的那次改动已落库",
+            afterClose.fields[0].includes(closeMarker),
+            `正面现在是「${afterClose.fields[0]}」`,
+        );
+        const closeCalls = await page.evaluate(() => window.__bridgeCalls ?? []);
+        check("关窗钩子请求了宿主关窗", closeCalls.includes("close"), closeCalls.join("、"));
+        saved.fields[0] = afterClose.fields[0];
+    }
+
+    // 5. 还原，避免反复运行把测试笔记改花。
     // 注意方法名是 `updateNotes`（复数，`notes.proto:21` 的 `rpc UpdateNotes`）
     saved.fields[0] = original;
     await rpc("updateNotes", new UpdateNotesRequest({ notes: [saved] }).toBinary());

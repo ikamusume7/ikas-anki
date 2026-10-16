@@ -245,17 +245,51 @@ pub fn open(state: &AppState, spec: &WindowSpec) -> Result<()> {
     let state_for_event = state.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {
-            // 「添加卡片」必须先问过页面：标题栏的 × 与 Alt+F4 走的是这条路，
-            // 绕过它就等于用户可以无声丢掉正在输入的内容（Qt 用
-            // `addcards.py:85-89` 的 `closeEvent → ifCanClose` 兜住同一条路径）。
-            // 页面那边 `closeAddCards()` 会 `saveNow()` 后再把判定结果交给宿主。
-            if label == ADD_CARDS && !consume_programmatic_close(&label) {
-                api.prevent_close();
-                tracing::debug!("add-cards 收到关闭请求，交给页面判定未保存输入");
-                eval(&state_for_event, &label, ADD_CARDS_CLOSE_REQUEST_JS);
-                return;
+            // 三种窗口必须先问过页面：标题栏的 × 与 Alt+F4 走的是这条路，
+            // 绕过它就等于用户可以无声丢掉正在输入/改动的内容（Qt 用
+            // `addcards.py:85-89` 的 `closeEvent → ifCanClose`、
+            // `editcurrent.py:45-46` 的 `call_after_note_saved`、
+            // `deckoptions.py:62-68` 的 `deckOptionsPendingChanges` 兜住同一条路径）。
+            // 页面那边会先 `saveNow()` 再把判定结果/关闭请求交回来。
+            if !consume_programmatic_close(&label) {
+                match label.as_str() {
+                    ADD_CARDS => {
+                        api.prevent_close();
+                        tracing::debug!("add-cards 收到关闭请求，交给页面判定未保存输入");
+                        eval(&state_for_event, &label, ADD_CARDS_CLOSE_REQUEST_JS);
+                        return;
+                    }
+                    // 「编辑当前」与浏览器的编辑区：先落库再关（上游没有确认框，
+                    // 只是把 600ms 去抖窗口里还没写完的那次保存补上）
+                    EDIT_CURRENT | BROWSER_EDITOR => {
+                        api.prevent_close();
+                        tracing::debug!("{label} 收到关闭请求，交给页面保存后自行请求关闭");
+                        eval(&state_for_event, &label, EDITOR_CLOSE_REQUEST_JS);
+                        return;
+                    }
+                    // 牌组选项：页面自己判断有没有未保存改动（并负责弹确认框）
+                    DECK_OPTIONS => {
+                        api.prevent_close();
+                        tracing::debug!("deck-options 收到关闭请求，交给页面判定未保存改动");
+                        eval(&state_for_event, &label, DECK_OPTIONS_CLOSE_REQUEST_JS);
+                        return;
+                    }
+                    // 浏览器的编辑区是独立窗口：关浏览器之前先让它落库
+                    // （对照 `browser.py:415-425` 的 `editor.call_after_note_saved(self._closeWindow)`）
+                    BROWSER if state_for_event
+                        .app
+                        .get_webview_window(BROWSER_EDITOR)
+                        .is_some() =>
+                    {
+                        api.prevent_close();
+                        tracing::debug!("browser 收到关闭请求，先让编辑区落库");
+                        eval(&state_for_event, BROWSER_EDITOR, EDITOR_SAVE_THEN_CLOSE_BROWSER_JS);
+                        return;
+                    }
+                    _ => {}
+                }
             }
-            // 非「添加卡片」窗口不走拦截，顺手清掉可能残留的标记
+            // 其余窗口不拦截，顺手清掉可能残留的标记
             consume_programmatic_close(&label);
 
             let Some(window) = app_handle.get_webview_window(&label) else {
@@ -336,6 +370,45 @@ pub fn close(state: &AppState, label: &str) {
 const ADD_CARDS_CLOSE_REQUEST_JS: &str = r#"(function () {
     if (typeof closeAddCards === "function") {
         closeAddCards();
+        return;
+    }
+    pycmd("close");
+})();"#;
+
+/// 标题栏 × 关闭「编辑当前」/「浏览器编辑区」时注入的脚本。
+///
+/// 对照 `editcurrent.py:45-46` 的 `closeEvent → editor.call_after_note_saved(cleanup)`：
+/// 上游**不弹确认框**，只是等编辑器把当前 note 存完再关。页面里的 `closeEditorWindow()`
+/// 就是这件事（`saveNow()` → `pycmd("close")`）。
+const EDITOR_CLOSE_REQUEST_JS: &str = r#"(function () {
+    if (typeof closeEditorWindow === "function") {
+        closeEditorWindow();
+        return;
+    }
+    pycmd("close");
+})();"#;
+
+/// 关闭浏览器窗口时，让编辑区先落库再请宿主关浏览器（见 `browser.py:415-425`）。
+const EDITOR_SAVE_THEN_CLOSE_BROWSER_JS: &str = r#"(function () {
+    var saving = typeof saveNow === "function" ? saveNow() : null;
+    Promise.resolve(saving).then(
+        function () {
+            pycmd("closeBrowser");
+        },
+        function () {
+            pycmd("closeBrowser");
+        },
+    );
+})();"#;
+
+/// 标题栏 × 关闭「牌组选项」时注入的脚本。
+///
+/// 对照 `deckoptions.py:62-68`：宿主只负责让页面跑它自己的判断
+/// （`anki.deckOptionsPendingChanges()`），页面要么直接 `deckOptionsRequireClose`，
+/// 要么弹确认框后再说。页面还没挂载完时退化成直接请求宿主关窗。
+const DECK_OPTIONS_CLOSE_REQUEST_JS: &str = r#"(function () {
+    if (globalThis.anki && typeof globalThis.anki.deckOptionsPendingChanges === "function") {
+        globalThis.anki.deckOptionsPendingChanges();
         return;
     }
     pycmd("close");

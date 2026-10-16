@@ -426,6 +426,13 @@ async fn dispatch_secondary(state: &AppState, window: &str, command: &str) -> Op
             windows::close(state, window);
             None
         }
+        // 浏览器的编辑区在独立窗口里：它存完自己那份 note 之后请宿主关浏览器
+        // （对照 `browser.py:415-425`，见 `windows::EDITOR_SAVE_THEN_CLOSE_BROWSER_JS`）。
+        // 注意这条来自**编辑区窗口**，所以必须在 secondary 这一侧处理。
+        "closeBrowser" => {
+            windows::close(state, windows::BROWSER);
+            None
+        }
         // 录音对话框的「保存 / 取消」（对照 `RecordDialog.accept` / `reject`）
         "saveRecording" => {
             state.recorder.finish(record::Outcome::Save);

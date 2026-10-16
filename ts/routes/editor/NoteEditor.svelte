@@ -484,6 +484,19 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
         await closeEditCurrentBackend({});
     }
 
+    /**
+     * 关窗契约（「编辑当前」与浏览器的编辑区）：先落库，再请宿主关掉**本窗口**。
+     *
+     * 对照 `qt/aqt/editcurrent.py:45-46` 的 `closeEvent →
+     * editor.call_after_note_saved(cleanup)`：上游不弹确认框，只是确保 600ms 去抖窗口里
+     * 还没写完的那次保存先落地。宿主在 `CloseRequested` 里注入它（见
+     * `windows::EDITOR_CLOSE_REQUEST_JS`）。
+     */
+    async function closeEditorWindow() {
+        await saveNow();
+        bridgeCommand("close");
+    }
+
     async function onClose() {
         if (mode === "add") {
             await closeAddCards();
@@ -1338,6 +1351,7 @@ License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
             setClozeHint,
             saveNow,
             closeAddCards,
+            closeEditorWindow,
             focusIfField,
             getNoteId,
             setNoteId,

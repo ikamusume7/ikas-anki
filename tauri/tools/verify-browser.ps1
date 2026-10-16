@@ -346,11 +346,28 @@ try {
         Write-Host "browserSearch：图表 → 浏览器搜索" -ForegroundColor Green
     }
 
-    # 关掉浏览器 → 编辑区窗口与预览窗口都是它带出来的，应一起关掉
-    $status = Send-Bridge -Window "browser" -Command "close"
-    if ($status -ne "200") { throw "close 命令未被接受：HTTP $status" }
-    if (-not (Wait-LogPattern "关闭窗口: browser" 20)) {
-        throw "浏览器窗口没有关闭（详见 $logPath）"
+    # 关掉浏览器 → 编辑区窗口与预览窗口都是它带出来的，应一起关掉。
+    #
+    # 这里用**真·标题栏 ×（WM_CLOSE）**而不是 `close` 桥接命令：× 走的是 Tauri 的
+    # `CloseRequested`，也是「关窗前先让编辑区落库」那条契约（对照 `browser.py:415-425`
+    # 的 `editor.call_after_note_saved(self._closeWindow)`）。两条路径最后都进同一个
+    # Destroyed 收尾，所以连带关闭的断言对两者同样成立。
+    Write-Host "验证浏览器的 × 关窗契约（WM_CLOSE）…"
+    $handoffs = Count-Log "browser 收到关闭请求，先让编辑区落库"
+    $browserCloses = Count-Log "关闭窗口: browser"
+    & (Join-Path $PSScriptRoot "close-window.ps1") -ProcessName "anki-tauri" `
+        -TitleLike $browseTitle | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "没有找到浏览器窗口" -ForegroundColor Red
+        $passed = $false
+    } elseif (-not (Wait-LogCount "browser 收到关闭请求，先让编辑区落库" ($handoffs + 1) 20)) {
+        Write-Host "× 没有先让编辑区落库（详见 $logPath）" -ForegroundColor Red
+        $passed = $false
+    } elseif (-not (Wait-LogCount "关闭窗口: browser" ($browserCloses + 1) 20)) {
+        Write-Host "× 之后浏览器窗口没有关掉（可能卡在拦截里）" -ForegroundColor Red
+        $passed = $false
+    } else {
+        Write-Host "× 关窗契约正常（先让编辑区落库再关）" -ForegroundColor Green
     }
     foreach ($dependent in @("browser-editor", "preview", "card-info")) {
         if (-not (Wait-LogPattern "关闭窗口: $dependent" 20)) {
