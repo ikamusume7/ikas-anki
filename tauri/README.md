@@ -160,6 +160,15 @@ cargo build
 ```
 
 ### 4.5 图标与 capabilities（PARITY 7.4）
+### 4.6 Android 与代码签名（PARITY 7.2 / 7.1，环境受限）
+
+- **Android**：代码为 0（没有 `tauri/gen/android/`、没有 `src/lib.rs`/`mobile_entry_point`，
+  非 Windows 的路径推断走 `$HOME`）。本机 Android SDK/NDK 已装，但 `ANDROID_HOME`/`NDK_HOME`
+  未设、`rustup` 没有 android target、`cargo tauri` 未装 → 要开工得先装 Tauri CLI（联网）、
+  `cargo tauri android init`（联网拉 Gradle）、四个 rustup target；最后必须真机/模拟器验证。
+- **代码签名**：`tauri.conf.json` 里没有任何签名配置，仓库里也没有 `.pfx`/`.p12`；要采购/申请
+  证书 + 联网时间戳服务。安装包本身要 `tauri build`（联网拿 Tauri CLI/NSIS），本机没跑。
+
 
 - **图标**：`tauri/icons/icon.ico` 用上游安装包自带的应用图标（`qt/installer/app/resources/anki.ico`，
   16/20/24/32/48/128/256 七个尺寸），另有同源的 `icon.png`（176×176）；两者都写在

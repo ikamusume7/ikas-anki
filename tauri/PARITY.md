@@ -127,8 +127,8 @@ addon、文件关联、录音格式为零。
 
 | # | 状态 | 项 | 差距 |
 | --- | --- | --- | --- |
-| 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做实并验证**：`package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致，实测 exe 43.9MB、web 25 文件、sveltekit 151 文件），`tauri.conf.json` 的 `bundle.fileAssociations` 已补（apkg/colpkg/ankiaddon，见 6.7）；`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`；`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标 + currentUser 安装）也写好了。**还差**：① 安装器**从未生成过**（本机没有 `cargo-tauri`/`@tauri-apps/cli`/NSIS/WiX）；② 无代码签名；③ **没有 `bundle.fileAssociations`** → 即使装了安装包，"双击 .apkg" 仍不成立；④ 元数据不全（FileVersion 0.1.0、无 LegalCopyright/publisher/category）；⑤ **网络其实是通的**（实测 crates.io / api.github.com 都 200），卡的是工具链未安装与首次下载。详见 `tauri/PACKAGING.md` |
-| 7.2 | ❌ | Android | 零行 Android 代码：没有 `tauri/gen/android/`、没有 `lib.rs`/`mobile_entry_point`，非 Windows 的路径推断走 `$HOME`（不是应用私有目录）。需要：`tauri android init`、四个 rustup android target、SAF 版导入导出、录音（oboe vs MediaRecorder）、`getFilesDir()`、localhost 明文 HTTP 放行；**必须真机/模拟器**。本机 SDK + NDK 28.2 + JDK 已就位，缺 rustup target（联网）、Tauri CLI、Gradle 发行包 |
+| 7.1 | ⚠️ | Windows 安装包 | **可分发目录已做实并验证**：`package.ps1` 打出 `anki-tauri.exe + web/ + sveltekit/`（与 `paths.rs` 的 `for_resource_dir()` 一致，实测 exe 43.9MB、web 25 文件、sveltekit 151 文件），`tauri.conf.json` 的 `bundle.fileAssociations` 已补（apkg/colpkg/ankiaddon，见 6.7）；`verify-package.ps1` 用 `ANKI_RESOURCE_DIR` 强制打包模式跑 release 产物 + 完整 `decks-check`；`tauri.conf.json` 的 bundle 配置（NSIS + 资源映射 + 图标 + currentUser 安装）也写好了。**还差**：① 安装器**从未生成过**（本机没有 `cargo-tauri`/`@tauri-apps/cli`/NSIS/WiX）；② ~~无代码签名~~ → **仍然没有**：`tauri.conf.json` 里没有任何签名配置（`certificateThumbprint`/`signCommand`/`digestAlgorithm`/`timestampUrl` 全无），仓库里也找不到 `.pfx`/`.p12`；代码签名证书属于**环境不允许**（要采购/申请证书 + 联网时间戳服务），如实记在这里；③ ~~**没有 `bundle.fileAssociations`**~~ → **已补**（apkg/colpkg/ankiaddon，见 6.7；`tauri build` 才会写进注册表）；④ 元数据不全（FileVersion 0.1.0、无 LegalCopyright/publisher/category）；⑤ **网络其实是通的**（实测 crates.io / api.github.com 都 200），卡的是工具链未安装与首次下载。详见 `tauri/PACKAGING.md` |
+| 7.2 | ❌ | Android | **零行 Android 代码**：没有 `tauri/gen/android/`、没有 `lib.rs`/`mobile_entry_point`，非 Windows 的路径推断走 `$HOME`（不是应用私有目录）。本机 **SDK 已装**（`%LOCALAPPDATA%\Android\Sdk`，含 `ndk 28.2.13676358`、platforms、build-tools、emulator），但**环境变量没设**（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`NDK_HOME` 全空）、`rustup target list --installed` 里**没有** android target、`cargo tauri` 也**没装**（`no such command: tauri`）。要开工的每一步：① 装 Tauri CLI（联网）；② `cargo tauri android init`（联网拉 Gradle 发行包）；③ 四个 rustup android target（联网）；④ 设 `ANDROID_HOME`/`NDK_HOME`；⑤ 加移动入口（`src/lib.rs` + `#[cfg_attr(mobile, tauri::mobile_entry_point)]`）；⑥ `paths.rs` 的非 Windows 分支改用应用私有目录；⑦ SAF 版导入/导出、录音（oboe vs MediaRecorder）、localhost 明文 HTTP 放行；⑧ **必须真机/模拟器**才能验证。即：代码为 0、工具链缺 3 样、验证必须真机 —— 本轮没有动它 |
 | 7.3 | ⚠️ | 构建流程 | 静态资源本来有官方路径（`just build` → `out/sveltekit` + `qt/_aqt/data/web`，正是 `package.ps1` 用的两处），但 ~~**`justfile` 里没有任何 tauri 配方，CI 里也没有外壳的 `cargo check/build`**~~ → **2026-10-16 已补**：`tauri/justfile`（`check`/`check-quick`/`test`/`build`/`web`/`verify <name>`/`verify-all`/`package`）、`tauri/tools/check-all.ps1`（本地门禁一条命令：cargo build/test/clippy + yarn build + eslint + svelte-check，`-RunVerify` 追加全部一键脚本）、`.github/workflows/tauri.yml`（windows-2022 上跑同一个脚本，`paths` 只认 `tauri/ts/rslib/proto`）。**本机实测**：`check-all.ps1` 全绿（6/6，退出码 0）；workflow 的 YAML 解析通过、两个 action 的 SHA 与仓库现有 workflow 一致。本机实测：`just --list` 列出 9 个配方、`just check-quick` **真的跑通**（4 项全绿，退出码 0；`just` 由 `cargo install just` 装上）。**环境限制**：Actions 没法在这里触发（没有 Windows runner），所以 workflow 本身只做了静态审查（YAML 解析 + action SHA 对齐）。缺 `just tauri-build / tauri-run / tauri-package / tauri-verify` 与 descriptors → web/sveltekit → cargo build 的依赖链 |
 | 7.4 | ⚠️ | `capabilities/` 与图标 | ~~`tauri/capabilities/` 不存在、`gen/schemas/capabilities.json` 是空数组~~ → **已补** `tauri/capabilities/default.json`（`windows: ["*"]`、**`permissions: []`** —— 外壳不用 IPC，所以一个权限都不授予；以后加插件只改这一个文件），`cargo build` 后 `tauri/gen/schemas/capabilities.json` 从 `[]` 变成完整的 capability 对象（实测）。~~图标是真问题~~ → **图标也换了**：`tauri/icons/icon.ico` 现在是上游安装包自带的那份应用图标（`qt/installer/app/resources/anki.ico`，**7 个尺寸**：16/20/24/32/48/128/256），另加同源的 `icon.png`（176×176）并一起写进 `bundle.icon`；与 `qt/aqt/data/web/imgs/favicon.ico`（只有 32×32）不再相同（sha256 不同，实测），且只有 1 帧 32×32；上游真图标 `qt/installer/app/resources/anki.ico` 有 7 帧。另缺 `.icns`/`.png`（Android/macOS 无图标可用） |
 
@@ -216,6 +216,23 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
    麦克风的机器上手工确认（与 `verify-m2.ps1` 的 `recordAudio` 同一条限制）
 5. **同步成功率路径与冲突分支、进度条（6.1/8.9）**；**打包** fileAssociations + 签名 + 图标
    （7.1/7.4）；`just` + CI（7.3）；Android（7.2）
+
+### 5. 本轮（2026-10-16，7 个提交）推进小结
+
+- **①同步**：用仓库自带的 `anki-sync-server`（不需要 AnkiWeb 账号）把**成功路径**端到端测起来 ——
+  登录（真 `/sync/hostKey`）、整份**上传**（服务器侧真的出现 `collection.anki2`）、
+  「上传/下载」**二选一 UI** + 整份**下载**（第二个客户端独立目录、空集合 → 下载后集合与服务器
+  侧大小一致且含第一份的卡）、**媒体同步**成功路径（`addMediaFile` → `/msync/uploadChanges` →
+  服务器 `media/` → 第二个客户端下载到）。`verify-sync.ps1` 全绿（16/16）。**还没做**：
+  进度条 / Abort（8.9）、增量冲突/服务端消息分支。
+- **②打包**：`fileAssociations` 补齐（apkg/colpkg/ankiaddon）、**命令行带文件启动**做通并验证
+  （`verify-cli-open.ps1`，双击 `.apkg` 走与拖入同一条路）、应用图标换成上游那份七尺寸 ICO、
+  `capabilities/default.json` 补上（权限为空）。**环境受限**：装安装包/签名要 Tauri CLI + 证书
+  （联网/采购），本机没跑。
+- **③构建流程**：`check-all.ps1`（本地门禁一条命令）+ `tauri/justfile`（9 个配方，实测
+  `just check-quick` 全绿）+ `.github/workflows/tauri.yml`（CI 调同一个脚本；本机没法触发 Actions）。
+- **④Android**：仍是 ❌ —— SDK/NDK 本机有，但缺 CLI/target/环境变量，代码为 0，且必须真机验证
+  （详见 7.2 的清单）。
 
 环境依赖：~~同步成功路径要**真 AnkiWeb 账号**~~ → **不需要**：仓库自带的 `anki-sync-server` 本机就能跑（`verify-sync.ps1` 已经在用它验上传方向）；只有需要 AnkiWeb 特有行为（真实账号的冲突/服务端消息）时才受限。剩下的：Android/录音/剪贴板/原生对话框要**真机**；
 签名要**证书**；`tauri-cli`/NSIS/`rustup target`/Gradle 要**联网**（网络本身是通的）。

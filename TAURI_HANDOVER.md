@@ -1134,6 +1134,19 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    `GenericString`。
 
 ### 5.46 capabilities 与图标：图标换成上游安装包那份；权限一个都不给
+### 5.47 Android / 签名的现状（环境受限，避免重复排查）
+
+- **Android**：本机 `%LOCALAPPDATA%\Android\Sdk` **有**（含 `ndk 28.2.13676358`、platforms、
+  build-tools、emulator），但 `ANDROID_HOME`/`ANDROID_SDK_ROOT`/`NDK_HOME` **全空**、
+  `rustup target list --installed` 里**没有** android target、`cargo tauri` **没装**
+  （`no such command: tauri`）。所以卡点不是设备，而是**三样没装的东西**（Tauri CLI / Gradle
+  发行包 / rustup target）+ 环境变量；代码侧还完全没有 Android 入口（没有 `src/lib.rs`、
+  `Cargo.toml` 里没有 `[lib]`/`crate-type`、`paths.rs` 非 Windows 走 `$HOME`）。最后仍然**必须有
+  真机或模拟器**才能验证。
+- **签名**：`tauri.conf.json` 里没有任何签名配置（`certificateThumbprint`/`signCommand`/
+  `digestAlgorithm`/`timestampUrl` 全无），仓库里也没有 `.pfx`/`.p12`。代码签名证书要采购/申请 +
+  联网时间戳服务 —— 属于环境不允许，不该记成"待办代码"。
+
 
 - `tauri/icons/icon.ico` 以前是 `qt/aqt/data/web/imgs/favicon.ico` 的副本（**只有 32×32**，PARITY 7.4
   记的就是这条）。现在换成上游安装包自带的 `qt/installer/app/resources/anki.ico`
