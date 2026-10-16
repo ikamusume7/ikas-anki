@@ -89,6 +89,7 @@
 | `tauri/tools/verify-theme.ps1` | 主题 / 夜间模式：`meta theme=2` 启动 → 真实窗口平均亮度 → 发 `theme:1` 切浅色 → 切回深色 → 复习界面 legacy 页 → `theme-check.mjs`（两条注入通道的 `--canvas`） |
 | `tauri/tools/verify-prefs.ps1` | 首选项页面：隔离集合启动 → 打开首选项窗口 + 截图 → `prefs-check.mjs`（七个分页结构 + 每页代表控件的「改 → RPC 复查 → 还原」） |
 | `tauri/tools/verify-profiles.ps1` | 多 profile：`ANKI_BASE` 隔离 base → 打开「账户」窗口 + 截图 → `profiles-check.mjs`（列表/新建/非法名/重命名/删除）→ **真切换**（重启后的新进程打开 Second 并建出集合） |
+| `tauri/tools/verify-cli-open.ps1` | 命令行带文件启动（双击 `.apkg`）：两阶段（造夹具 → 带参数重启）+ `cli-open-check.mjs` 的日志断言 |
 | `tauri/tools/check-all.ps1` | 本地门禁（cargo build/test/clippy + yarn build + eslint + svelte-check；`-RunVerify` 追加全部一键脚本）；`tauri/justfile` 与 `.github/workflows/tauri.yml` 都调它 |
 | `tauri/tools/verify-sync.ps1` | 同步成功路径：起仓库自带的真同步服务器（`anki-sync-server`）+ 专用集合/profile 的外壳 → `sync-check.mjs`（登录 `/sync/hostKey`、整份上传、服务器侧 `collection.anki2` 与链路 200 断言） |
 | `tauri/tools/verify-timebox.ps1` | 时间盒：**两次**启动外壳（`ANKI_TIMEBOX_CHOICE=finish` / `continue`）→ `timebox-check.mjs`（时间盒设 1 秒 → 造卡 → `study` → 评分 → 断言「结束回牌组列表 / 继续重新渲染」+ 真实窗口截图） |
@@ -1132,6 +1133,27 @@ $: studyMatching = studyCandidates().filter((name) => matchesFilter(name, studyF
    （导入时得 `import { String as GenericString }`），Rust 侧那边的别名才是
    `GenericString`。
 
+### 5.45 命令行带文件启动：与拖入同一个入口；`quote()` 把反斜杠也编码
+
+`main.rs` 的 `cli_file_paths()` 只收"存在且是文件"的参数（Tauri/WebView2 自己会塞 `-` 开头的
+开关），然后走与拖入**完全相同**的 `importing::on_drop` → `open_for_path` —— 路由与拖入一样是
+`import-anki-package/<quote(path)>`，而且 `.apkg` 开的是**独立导入窗口**（`windows::open(IMPORT)`），
+不是主窗口导航：
+
+```
+命令行传入文件: D:\...\import-fixture.apkg
+打开导入窗口: import-anki-package/D%3A%5CWorkspace%5Cikas-anki%5Cout%5Ccli-open%5Cimport-fixture.apkg
+打开窗口: import -> http://127.0.0.1:40051/import-anki-package/D%3A%5C...
+```
+
+两个坑：
+
+1. **`quote()` 编码的是整条路径**（`import_dialog.py:68` 的 `f"{ts_page}/{quote(path)}"`）：
+   Windows 的反斜杠变成 `%5C`、盘符冒号变成 `%3A`，所以**没有** `/` 分隔的路径段。检查脚本里
+   如果先把 `\` 换成 `/` 再 `encodeURIComponent`，会得到 `D%3A/Workspace/...`，跟日志对不上。
+2. 宿主原来的"主窗口拖入文件"日志写在 `on_drop` 里 —— 命令行也走这里，于是命令行那条会打出
+   "拖入"字样。现在 `on_drop` 只记中立的「开始导入文件」，"拖入"由 `main.rs` 的
+   `WindowEvent::DragDrop` 分支记，两个来源可以区分。
 ### 5.44 同步的**成功路径**用仓库自带的本地服务器测，不需要 AnkiWeb 账号
 
 `rslib/sync/main.rs` 就是一个可跑的同步服务器（workspace member `anki-sync-server`）：

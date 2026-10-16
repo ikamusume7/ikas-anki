@@ -1800,6 +1800,9 @@ browserSearch：图表 → 浏览器搜索
 | `capture-window.ps1` | 截取 WebView2 的真实渲染（PrintWindow / 屏幕两种方式）；多窗口模型下用 `-TitleLike` 指定要截哪个窗口 |
 | `auto-advance-check.mjs` | `verify-reviewer.ps1` 调用的自动前进检查：把牌组配置改成 1 秒 → 没开开关不会自己翻 → 打开后自动翻答案并自动评「良好」→ 关掉就停（收尾还原配置与临时笔记） |
 | `sync-check.mjs` | 同步成功路径的页面级检查（由 `verify-sync.ps1` 调用）：登录 + 整份上传 + 服务器侧产物断言。**注意**：Playwright 加载的页面必须带 API 凭据与窗口身份的 fetch shim，否则页面自身的 `/_anki/*` 全 401（`has_api_access` 只认 `Authorization: Bearer <key>`） |
+| `verify-cli-open.ps1` | 一键：命令行带文件启动（双击 `.apkg`）。**两个阶段**：起外壳造一份真 `.apkg` 夹具 → 停掉 → 把夹具路径当**命令行参数**起外壳 → `cli-open-check.mjs` 断言「命令行传入文件」日志、打开 `import-anki-package/…` 导入窗口、且没走拖入那条路 |
+| `cli-open-check.mjs` | 命令行打开检查（由 `verify-cli-open.ps1` 调用，纯日志断言）。注意 `quote()` 会把 Windows 的反斜杠也编成 `%5C`（整条路径是一段），断言里不能先把 `\` 换成 `/` |
+| `make-import-fixture.mjs` | 造一份真的 `.apkg`（临时牌组 + 一张卡 → `exportAnkiPackage` → 删临时牌组），供 `verify-cli-open.ps1` 用；最后一行输出 `MARKER=<牌组名>` |
 | `check-all.ps1` | 本地门禁一条命令跑完（`cargo build/test/clippy` + `yarn build` + `eslint` + `svelte-check`；`-RunVerify` 再加全部一键脚本）。**CI（`.github/workflows/tauri.yml`）调的就是它** |
 | `sync-server.ps1` | 起/停一个**真的**本地同步服务器（仓库自带的 `anki-sync-server`，`SYNC_BASE`/`SYNC_HOST`/`SYNC_PORT`/`SYNC_USER1`）；`-Stop` 收尾。用于把同步的**成功路径**测起来（不依赖真 AnkiWeb 账号） |
 | `focus-window.ps1` | 把外壳的某个窗口切到前台（自动前进的焦点判定 / 需要真实焦点的场景用）；`-TitleLike` 选窗口 |

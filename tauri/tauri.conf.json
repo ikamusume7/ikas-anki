@@ -16,6 +16,29 @@
         "active": true,
         "targets": ["nsis"],
         "icon": ["icons/icon.ico"],
+        "fileAssociations": [
+            {
+                "ext": ["apkg"],
+                "name": "Anki Deck Package",
+                "description": "Anki deck package",
+                "mimeType": "application/x-apkg",
+                "role": "Editor"
+            },
+            {
+                "ext": ["colpkg"],
+                "name": "Anki Collection Package",
+                "description": "Anki collection package",
+                "mimeType": "application/x-colpkg",
+                "role": "Editor"
+            },
+            {
+                "ext": ["ankiaddon"],
+                "name": "Anki Add-on Package",
+                "description": "Anki add-on package",
+                "mimeType": "application/x-ankiaddon",
+                "role": "Editor"
+            }
+        ],
         "resources": {
             "../qt/_aqt/data/web/": "web/",
             "../out/sveltekit/": "sveltekit/"

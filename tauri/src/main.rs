@@ -182,6 +182,15 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     let state_for_drop = state.clone();
     main_window.on_window_event(move |event| {
         if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+            tracing::info!(
+                "主窗口拖入 {} 个文件: {}",
+                paths.len(),
+                paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             if let Err(error) = importing::on_drop(&state_for_drop, paths) {
                 tracing::warn!("处理拖入文件失败: {error:#}");
             }
@@ -189,9 +198,45 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     });
     tracing::info!("主窗口: 保留 Tauri 的拖放拦截（拖入文件交给 crate::importing）");
 
+    // 命令行带文件启动（双击 `.apkg` / `anki file.apkg`，对照 `main.py` 的命令行处理）。
+    // 与拖入走**同一套**接受规则与同一个入口（`importing::on_drop` → 同一个路由页），
+    // 差别只是来源。延迟一下再导：窗口此刻还在加载起始页，立刻导航会被它覆盖掉。
+    let cli_paths = cli_file_paths(std::env::args_os().skip(1));
+    if !cli_paths.is_empty() {
+        tracing::info!(
+            "命令行传入文件: {}",
+            cli_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let state_for_cli = state.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            if let Err(error) = importing::on_drop(&state_for_cli, &cli_paths) {
+                tracing::warn!("处理命令行传入的文件失败: {error:#}");
+            }
+        });
+    }
+
     open_extra_windows(&state);
 
     Ok(())
+}
+
+/// 命令行里**存在且像文件**的参数（对照 `main.py` 的命令行处理）。
+///
+/// 只收真实存在的文件：Tauri/WebView2 自己也会塞一些以 `-` 开头的开关，路径里也可能
+/// 有已经失效的文件（上游在文件不存在时会提示"请用 文件→导入"，这里直接忽略）。
+fn cli_file_paths<I>(args: I) -> Vec<std::path::PathBuf>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    args.into_iter()
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file())
+        .collect()
 }
 
 /// `prefs21.db` 的 `_global` 行里 `meta["defaultLang"]`（桌面版偏好设置里选的语言，
@@ -233,4 +278,33 @@ fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("anki_tauri=debug,info"));
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+#[cfg(test)]
+mod test {
+    use super::cli_file_paths;
+    use std::ffi::OsString;
+
+    #[test]
+    fn cli_paths_keep_existing_files_only() {
+        let dir = std::env::temp_dir();
+        let file = dir.join("anki-cli-args-test.apkg");
+        std::fs::write(&file, b"x").unwrap();
+        let missing = dir.join("anki-cli-args-missing.apkg");
+        let _ = std::fs::remove_file(&missing);
+        let args: Vec<OsString> = vec![
+            // 不存在的文件
+            missing.clone().into_os_string(),
+            // Tauri/WebView2 自己的开关
+            OsString::from("--some-flag"),
+            // 存在的文件
+            file.clone().into_os_string(),
+            // 目录（不算可导入）
+            dir.clone().into_os_string(),
+        ];
+        assert_eq!(cli_file_paths(args), vec![file.clone()]);
+        // 一个都没有时返回空，不会去动导入流程
+        assert!(cli_file_paths(Vec::<OsString>::new()).is_empty());
+        let _ = std::fs::remove_file(&file);
+    }
 }

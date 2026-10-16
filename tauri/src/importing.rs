@@ -169,7 +169,8 @@ pub fn on_drop(state: &AppState, paths: &[PathBuf]) -> Result<()> {
         tracing::info!("拖入的文件里没有可导入的（{} 个）", paths.len());
         return Ok(());
     };
-    tracing::info!("主窗口拖入文件: {}", path.display());
+    // 中立措辞：拖入与命令行带文件都走这里，来源的区分在各自的调用点记
+    tracing::info!("开始导入文件: {}", path.display());
     open_for_path(state, &path)
 }
 
