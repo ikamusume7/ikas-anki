@@ -133,6 +133,15 @@
                 event.preventDefault();
                 window.pycmd("rev:replayAudio");
                 return;
+            // `v` / `Shift+V` → 重播录音 / 录音（`reviewer.py:630-631`）
+            case "v":
+                event.preventDefault();
+                window.pycmd("rev:replayRecorded");
+                return;
+            case "V":
+                event.preventDefault();
+                window.pycmd("rev:recordVoice");
+                return;
             // Shift+A → 自动前进开关（`reviewer.py:640`）
             case "A":
                 event.preventDefault();

@@ -52,6 +52,7 @@ use anki_proto::scheduler::CardAnswer;
 use anki_proto::scheduler::GetQueuedCardsRequest;
 use anki_proto::scheduler::QueuedCards;
 use anki_i18n::I18n;
+use prost::Message as _;
 use tauri::Manager as _;
 use anki_proto::scheduler::SchedulingStates;
 use anki_proto::config::Preferences;
@@ -115,6 +116,8 @@ struct Session {
     /// Qt 的 `_answerCard()` 有 `if self.state != "answer": return` 守卫，
     /// 所以「问题面按 1」不会评分。评分按钮由 `show_answer()` 画出，这里同步记录。
     answer_shown: bool,
+    /// 刚录的那份录音（`Shift+V` 录、`V` 重播；对照 Qt 的 `self._recordedAudio`）
+    last_recording: Option<std::path::PathBuf>,
     /// 问题面 / 答案面的音频标签（按渲染顺序），`play:q:N` 与「重播音频」用
     question_tags: Vec<AvTag>,
     answer_tags: Vec<AvTag>,
@@ -1182,6 +1185,71 @@ pub(crate) async fn play_clicked_audio(state: &AppState, question_side: bool, in
             "没有第 {index} 个{}音频标签",
             if question_side { "问题面" } else { "答案面" }
         ),
+    }
+}
+
+/// 录制自己的声音（`Shift+V`；对照 `reviewer.py:1100-1105` 的 `onRecordVoice`）。
+///
+/// 复用编辑器那条录音链路（`platform/record.rs` 开录音对话框、保存进媒体夹）；
+/// 录完把路径记进会话并**立刻重播一遍**（与 Qt 的 `after_record` 一致）。
+pub(crate) async fn record_voice(state: &AppState) {
+    tracing::info!("录音: 打开录音对话框");
+    let state_for_task = state.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::platform::record::record(&state_for_task)
+    })
+    .await;
+    let path = match result {
+        Ok(Ok(bytes)) => GenericString::decode(bytes.as_slice())
+            .ok()
+            .map(|response: GenericString| response.val)
+            .filter(|value| !value.is_empty()),
+        Ok(Err(error)) => {
+            tracing::warn!("录音失败: {error}");
+            None
+        }
+        Err(error) => {
+            tracing::warn!("录音任务失败: {error}");
+            None
+        }
+    };
+    let Some(path) = path else {
+        tracing::info!("录音被取消或失败，没有可重播的录音");
+        return;
+    };
+    tracing::info!("录音已保存: {path}");
+    state.reviewer.session().last_recording = Some(std::path::PathBuf::from(&path));
+    replay_recorded(state).await;
+}
+
+/// 重播刚才的录音（`V`；对照 `reviewer.py:1107-1115` 的 `onReplayRecorded`）。
+///
+/// 测试钩子：`ANKI_LAST_RECORDING` 指向一个文件时，把它当作"刚录的那份"——
+/// 这台机器没有麦克风（`recordAudio` 会以 `HTTP 500 找不到可用的录音设备` 失败），
+/// 没有这个钩子就没法端到端断言重播这条链路。
+pub(crate) async fn replay_recorded(state: &AppState) {
+    let stored = state.reviewer.session().last_recording.clone();
+    let path = stored.or_else(|| {
+        std::env::var("ANKI_LAST_RECORDING")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+    });
+    match path {
+        Some(path) => {
+            tracing::info!("重播录音: {}", path.display());
+            if let Err(error) = crate::platform::audio::play_files(vec![path]) {
+                tracing::warn!("重播录音失败: {error}");
+            }
+        }
+        None => {
+            // 对照 Qt：还没录过就提示一句（`studying-you-havent-recorded-your-voice-yet`）
+            tracing::info!("还没有录过音");
+            toast(
+                state,
+                &state.backend.i18n().studying_you_havent_recorded_your_voice_yet(),
+            );
+        }
     }
 }
 

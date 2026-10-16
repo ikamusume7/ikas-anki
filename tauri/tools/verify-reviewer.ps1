@@ -55,6 +55,9 @@ $env:ANKI_LANG = $Lang
 # 所以给它一个测试钩子（`ANKI_AUTO_ADVANCE_IGNORE_FOCUS`，与 `ANKI_CONFIRM_YES` 同一套路）。
 # 注意必须在 Start-Process 之前设 —— 环境变量是进程级的，起完外壳再改对它没用。
 $env:ANKI_AUTO_ADVANCE_IGNORE_FOCUS = "1"
+# 录音那条链路：这台机器没有麦克风（PARITY §9），重播录音用钩子指到 audio-check 写的 WAV。
+# 同样必须在 Start-Process 之前设。
+$env:ANKI_LAST_RECORDING = (Join-Path $root "out/tauri-test/collection.media/tauri-audio-check.wav")
 
 function Read-Log {
     param([string]$Path)

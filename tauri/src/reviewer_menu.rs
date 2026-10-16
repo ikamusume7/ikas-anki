@@ -113,6 +113,9 @@ pub async fn show(state: &AppState) {
             // 重播当前这一面的音频（对照 `reviewer.py:1043`，快捷键 `R`）。
             // 暂停 / ±5 秒 / 录音 / 重播录音还没做（播放器要加 pause/seek，见 PARITY 2.3）
             { "label": tr.translate("actions-replay-audio", None), "shortcut": "R", "action": "replayAudio" },
+            // 录音 / 重播录音（对照 `reviewer.py:1047-1048`；`Shift+V` 录、`V` 重播）
+            { "label": tr.translate("studying-record-own-voice", None), "shortcut": "Shift+V", "action": "recordVoice" },
+            { "label": tr.translate("studying-replay-own-voice", None), "shortcut": "V", "action": "replayRecorded" },
             { "label": tr.translate("studying-pause-audio", None), "shortcut": "5", "action": "pauseAudio" },
             { "label": tr.translate("studying-audio-5s", None), "shortcut": "6", "action": "seekBack" },
             { "label": tr.translate("studying-audio-and5s", None), "shortcut": "7", "action": "seekForward" },
@@ -181,6 +184,15 @@ pub async fn handle(state: &AppState, command: &str) {
     }
     if action == "seekForward" {
         crate::reviewer::seek_relative(SEEK_SECS);
+        return;
+    }
+    // 录音 / 重播录音（对照 `reviewer.py:1100-1115`）：同样不依赖当前卡片
+    if action == "recordVoice" {
+        crate::reviewer::record_voice(state).await;
+        return;
+    }
+    if action == "replayRecorded" {
+        crate::reviewer::replay_recorded(state).await;
         return;
     }
 

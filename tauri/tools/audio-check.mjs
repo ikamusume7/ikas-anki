@@ -222,6 +222,20 @@ try {
         (readLog().match(/音频: 跳到[^\n]*/g) ?? ["（没有日志）"]).slice(-2).join(" / "),
     );
 
+    // 4c. 录音 / 重播录音（`Shift+V` / `V`）：这台机器没有麦克风，采集那一步只能断言
+    //     「命令到了录音链路」；重播用 `ANKI_LAST_RECORDING` 钩子指到本检查写的那个 WAV
+    const records = countLog("录音: 打开录音对话框");
+    await bridge("rev:recordVoice");
+    check("rev:recordVoice 到了录音链路", await waitLogAbove("录音: 打开录音对话框", records), logPath);
+    const recorded = countLog("重播录音: ");
+    await bridge("rev:replayRecorded");
+    check("rev:replayRecorded 重播了那份录音", await waitLogAbove("重播录音: ", recorded), logPath);
+    check(
+        "重播的是钩子指定的文件",
+        readLog().includes(mediaName),
+        (readLog().match(/重播录音: [^\n]*/) ?? ["（没有日志）"]).at(-1),
+    );
+
     // 5. `r`/F5/菜单的「重播音频」：重播当前这一面
     const replays = countLog("重播音频（");
     await bridge("rev:replayAudio");
