@@ -1722,9 +1722,10 @@ browserSearch：图表 → 浏览器搜索
     （`showQuestion(button, maxTime)`，`maxTime` 取自牌组的 `timer` / `maxTaken`）、
     按钮上的**下次间隔**（`describeNextStates`）与牌组的 `stopTimerOnAnswer`。
     评分按钮固定四个 —— v3 调度器下 Qt 也是四个（`Scheduler.answerButtons()`
-    恒返回 4，2/3 个按钮是 v2 的遗留）。**时间盒整块没做**（没有 `timeboxReached`，也没有
-    到点的「继续 / 结束」对话框），计时器本身也**没有任何自动断言**
-    （`set-deck-timer.mjs` 不在任何 verify 脚本里，`visual-check.mjs` 把 maxTime 写死 0）。
+    恒返回 4，2/3 个按钮是 v2 的遗留）。**时间盒已实现**（`startTimebox` /
+    `timeboxReached` + 到点的「继续 / 结束」框，见「时间盒」），计时器本身仍然
+    **没有任何自动断言**（`set-deck-timer.mjs` 不在任何 verify 脚本里，
+    `visual-check.mjs` 把 maxTime 写死 0）。
     答完队列后的收尾**已实现**：队列空了清会话 + 回概览，概览改画 Congratulations
     （下次学习时间、每日上限两句、取消埋藏链接、自定义学习提示），见「答完队列的收尾
     （Congratulations）」。
