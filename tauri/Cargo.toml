@@ -64,6 +64,8 @@ serde-pickle = "1"
 # `src/platform/colours.rs`）；其余是 `CF_HDROP` 剪贴板那套。
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    # `GetUserDefaultLocaleName`：界面语言跟随系统时的探测（`src/i18n_lang.rs`）
+    "Win32_Globalization",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_UI_Controls_Dialogs",

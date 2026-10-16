@@ -6,6 +6,7 @@
 #
 # 用法（在仓库根目录执行）：
 #   py tauri/tools/make-prefs21-fixture.py init out/prefs21.db tauri-test
+#   py tauri/tools/make-prefs21-fixture.py init out/prefs21.db "User 1" en_US   # 可选第 4 参：界面语言
 #   py tauri/tools/make-prefs21-fixture.py show out/prefs21.db tauri-test
 #   py tauri/tools/make-prefs21-fixture.py show out/prefs21.db _global
 #
@@ -23,7 +24,7 @@ CREATE = (
 )
 
 
-def init(path: str, profile: str) -> None:
+def init(path: str, profile: str, lang: str = "zh_CN") -> None:
     conn = sqlite3.connect(path)
     conn.execute(CREATE)
 
@@ -53,7 +54,7 @@ def init(path: str, profile: str) -> None:
         lastMsg=0,
         suppressUpdate=False,
         firstRun=False,
-        defaultLang="zh_CN",
+        defaultLang=lang,
     )
     conn.execute(
         "insert or replace into profiles values (?, ?)",
@@ -80,11 +81,12 @@ def show(path: str, name: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         raise SystemExit(__doc__)
     action, db_path, name = sys.argv[1], sys.argv[2], sys.argv[3]
     if action == "init":
-        init(db_path, name)
+        # 第 4 个参数是 meta["defaultLang"]（下划线形态，如 zh_CN / en_US）
+        init(db_path, name, sys.argv[4] if len(sys.argv) == 5 else "zh_CN")
     elif action == "show":
         show(db_path, name)
     else:

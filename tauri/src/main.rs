@@ -15,6 +15,7 @@ mod backup;
 mod bridge;
 mod browser;
 mod editor;
+mod i18n_lang;
 mod importing;
 mod legacy;
 mod main_window;
@@ -37,6 +38,8 @@ use tauri::WebviewWindowBuilder;
 
 use crate::backend::AppBackend;
 use crate::paths::AppPaths;
+use crate::platform::prefs21::Prefs21;
+use crate::platform::prefs21::Store;
 use crate::state::AppState;
 
 fn main() -> Result<()> {
@@ -54,13 +57,14 @@ fn main() -> Result<()> {
 fn bootstrap(app: &AppHandle) -> Result<()> {
     let paths = AppPaths::resolve(app)?;
 
-    // 界面语言。TODO: 应像 aqt 那样探测系统语言，目前用环境变量覆盖、默认英文。
-    //
-    // 注意：`ftl/` 下的目录用连字符（`zh-CN`），而 Anki 的设置里用下划线
-    // （`zh_CN`），这里统一转成连字符形式。
-    let lang = std::env::var("ANKI_LANG")
-        .unwrap_or_else(|_| "en-US".to_string())
-        .replace('_', "-");
+    // 界面语言（PARITY 1.5 / 8.4）。优先级：
+    //   `ANKI_LANG`（测试钩子）> `meta["defaultLang"]`（桌面版偏好设置写的）>
+    //   系统语言 > `en-US`。换算法则见 `crate::i18n_lang`（对照 `pylib/anki/lang.py`）。
+    // 改语言需要重启进程，与 Qt 一致（`preferences.py:461-463`）。
+    let lang = match std::env::var("ANKI_LANG") {
+        Ok(value) if !value.trim().is_empty() => i18n_lang::to_disk_lang(&value),
+        _ => i18n_lang::resolve(stored_default_lang(&paths).as_deref()),
+    };
     tracing::info!("界面语言: {lang}");
     let backend = AppBackend::new(vec![lang], String::new(), false)
         .context("初始化 rslib 后端失败")?;
@@ -160,6 +164,17 @@ fn bootstrap(app: &AppHandle) -> Result<()> {
     open_extra_windows(&state);
 
     Ok(())
+}
+
+/// `prefs21.db` 的 `_global` 行里 `meta["defaultLang"]`（桌面版偏好设置里选的语言，
+/// 形如 `zh_CN`）。文件不存在、没有这一项、或值不是字符串时返回 `None`，由调用方
+/// 退回系统语言。
+fn stored_default_lang(paths: &AppPaths) -> Option<String> {
+    let prefs = Prefs21::locate(&paths.profile().dir)?;
+    match prefs.get(Store::Meta, "defaultLang") {
+        Ok(Some(serde_json::Value::String(lang))) => Some(lang),
+        _ => None,
+    }
 }
 
 /// 开发/测试入口：把需要窗口的页面直接开出来
