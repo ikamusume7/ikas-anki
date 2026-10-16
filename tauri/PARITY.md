@@ -174,8 +174,12 @@ FrontendService 的 27 个 RPC 都有落点；`.anki-json` 导入（上游自己
 
 ## 10. 推进顺序（建议）
 
-1. **首选项真页面（8.1）+ profile 管理（8.2）+ 夜间模式/`standard_css`（8.3）+ 语言（8.4）**
-   —— 一次消掉"日常必用却完全缺失"和最大的文档落差
+1. ~~**首选项真页面（8.1）+ profile 管理（8.2）+ 夜间模式/`standard_css`（8.3）+ 语言（8.4）**~~
+   —— **本轮已做**（2026-10-16，四个提交）：`ts/routes/preferences/` 七个分页、
+   `tauri/src/profiles.rs` + `ts/routes/profiles/`（文件 → 切换配置 `Ctrl+Shift+P`）、
+   `tauri/src/theme.rs`、`tauri/src/i18n_lang.rs`；四个一键脚本 `verify-prefs` /
+   `verify-profiles` / `verify-theme` / `verify-i18n` 全绿。剩下的尾巴记在 3.3 / 8.1 / 8.2
+   （媒体日志窗口、`answer_keys`、`resetWindowSizes`、「干扰项」的消费方等）
 2. **复习键盘（空格/回车/1–4 等，2.x 附）+ Congratulations 收尾（1.6）+ 时间盒（2.6）**
 3. **数据安全三项**：关窗契约（3.1 牌组选项 / 4.5 编辑当前与浏览器编辑区）、
    筛选牌组「选项」（3.1）、导出目录拦截（5.9）；顺手把 6.8 的写 null 改成删键
